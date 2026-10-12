@@ -8,20 +8,15 @@ import {
   Pencil,
   Tv,
   Zap,
-  AlertTriangle,
   ChevronDown,
-  ChevronUp,
   ChevronRight,
   ArrowUpRight,
-  Play,
   Sparkles,
   Info,
   FileArchive,
   FileVideo,
   Layers,
-  Film,
   ExternalLink,
-  Copy,
   Flag,
 } from 'lucide-react';
 import { CustomLink, TitleDetails } from '@/types';
@@ -186,6 +181,174 @@ export function filterReleasesForEpisode(
   return releases.filter((rel) =>
     activeChips.every((chip) => releaseMatchesChip(rel, chip))
   );
+}
+
+export interface QualityCombinationDef {
+  key: string;
+  label: string;
+  resolution?: '2160p' | '1080p' | '720p' | '480p';
+  dynamicRange?: 'DV' | 'HDR' | 'SDR';
+  codec?: 'H.265' | 'H.264';
+}
+
+export const QUALITY_COMBINATIONS: QualityCombinationDef[] = [
+  // 4K Combinations
+  { key: '4K', label: '4K', resolution: '2160p' },
+  { key: '4K_DV', label: '4K + DV', resolution: '2160p', dynamicRange: 'DV' },
+  { key: '4K_HDR', label: '4K + HDR', resolution: '2160p', dynamicRange: 'HDR' },
+  { key: '4K_DV_H265', label: '4K + DV + H.265', resolution: '2160p', dynamicRange: 'DV', codec: 'H.265' },
+  { key: '4K_SDR', label: '4K + SDR', resolution: '2160p', dynamicRange: 'SDR' },
+
+  // 1080P Combinations
+  { key: '1080P', label: '1080P', resolution: '1080p' },
+  { key: '1080P_DV', label: '1080P + DV', resolution: '1080p', dynamicRange: 'DV' },
+  { key: '1080P_HDR', label: '1080P + HDR', resolution: '1080p', dynamicRange: 'HDR' },
+  { key: '1080P_SDR', label: '1080P + SDR', resolution: '1080p', dynamicRange: 'SDR' },
+
+  // 720P Combinations
+  { key: '720P', label: '720P', resolution: '720p' },
+
+  // Standalone Codecs (matching prompt)
+  { key: 'H265', label: 'H.265', codec: 'H.265' },
+  { key: 'H264', label: 'H.264', codec: 'H.264' },
+
+  // 480P Combinations
+  { key: '480P', label: '480P', resolution: '480p' },
+];
+
+export function isValidDestinationUrl(url?: string): boolean {
+  if (!url || typeof url !== 'string') return false;
+  const trimmed = url.trim();
+  if (!trimmed || trimmed === '#' || trimmed === 'javascript:void(0)') return false;
+  return trimmed.startsWith('http://') || trimmed.startsWith('https://');
+}
+
+export function matchesQualityCombination(
+  release: EnrichedLink,
+  combo: QualityCombinationDef
+): boolean {
+  // 1. Resolution check
+  if (combo.resolution) {
+    if (combo.resolution === '2160p') {
+      if (!releaseMatchesChip(release, '4K')) return false;
+    } else if (combo.resolution === '1080p') {
+      if (!releaseMatchesChip(release, '1080P')) return false;
+    } else if (combo.resolution === '720p') {
+      const title = (release.title || '').toLowerCase();
+      const quality = (release.quality || '').toLowerCase();
+      const resolution = (release.resolution || '').toLowerCase();
+      const url = (release.url || '').toLowerCase();
+      const combined = `${title} ${quality} ${resolution} ${url}`;
+      const is720p =
+        release.manualOverrides?.resolution === '720p' ||
+        release.resolution === '720p' ||
+        /(?:720p|\bhd\b)/i.test(combined);
+      if (!is720p) return false;
+    } else if (combo.resolution === '480p') {
+      const title = (release.title || '').toLowerCase();
+      const quality = (release.quality || '').toLowerCase();
+      const resolution = (release.resolution || '').toLowerCase();
+      const url = (release.url || '').toLowerCase();
+      const combined = `${title} ${quality} ${resolution} ${url}`;
+      const is480p =
+        release.manualOverrides?.resolution === '480p' ||
+        release.resolution === '480p' ||
+        /(?:480p|\bsd\b)/i.test(combined);
+      if (!is480p) return false;
+    }
+  }
+
+  // 2. Dynamic Range check
+  if (combo.dynamicRange) {
+    if (combo.dynamicRange === 'DV') {
+      if (!releaseMatchesChip(release, 'DV')) return false;
+    } else if (combo.dynamicRange === 'HDR') {
+      if (!releaseMatchesChip(release, 'HDR')) return false;
+    } else if (combo.dynamicRange === 'SDR') {
+      if (!releaseMatchesChip(release, 'SDR')) return false;
+    }
+  }
+
+  // 3. Codec check
+  if (combo.codec) {
+    if (combo.codec === 'H.265') {
+      if (!releaseMatchesChip(release, 'H.265')) return false;
+    } else if (combo.codec === 'H.264') {
+      if (!releaseMatchesChip(release, 'H.264')) return false;
+    }
+  }
+
+  return true;
+}
+
+export function getReleaseFidelityScore(release: EnrichedLink): number {
+  let score = 0;
+
+  // Resolution weight
+  if (releaseMatchesChip(release, '4K')) score += 1000;
+  else if (releaseMatchesChip(release, '1080P')) score += 500;
+  else if (release.resolution === '720p' || /(?:720p)/i.test(release.title || '')) score += 200;
+
+  // Dynamic range weight: DV HDR (40) > HDR (30) > SDR (10)
+  const dyn = (release.manualOverrides?.dynamicRange || release.dynamicRange || '').toUpperCase();
+  if (dyn.includes('DV') || releaseMatchesChip(release, 'DV')) {
+    score += 40;
+  } else if (dyn.includes('HDR') || releaseMatchesChip(release, 'HDR')) {
+    score += 30;
+  } else if (dyn === 'SDR' || releaseMatchesChip(release, 'SDR')) {
+    score += 10;
+  }
+
+  // Codec weight: H.265 (20) > H.264 (10)
+  if (releaseMatchesChip(release, 'H.265')) {
+    score += 20;
+  } else if (releaseMatchesChip(release, 'H.264')) {
+    score += 10;
+  }
+
+  // Audio weight: Atmos/5.1/Dual (5)
+  const audio = (release.audioLanguage || release.title || '').toLowerCase();
+  if (audio.includes('atmos') || audio.includes('5.1') || audio.includes('dual')) {
+    score += 5;
+  }
+
+  return score;
+}
+
+export function resolveDeterministicRelease(
+  matchingReleases: EnrichedLink[]
+): EnrichedLink | null {
+  const validReleases = matchingReleases.filter((r) => isValidDestinationUrl(r.url));
+  if (validReleases.length === 0) return null;
+
+  const sorted = [...validReleases].sort((a, b) => {
+    const scoreB = getReleaseFidelityScore(b);
+    const scoreA = getReleaseFidelityScore(a);
+    if (scoreB !== scoreA) {
+      return scoreB - scoreA;
+    }
+    // Stable deterministic tie-breaker
+    const idA = a.id || a.url || a.title || '';
+    const idB = b.id || b.url || b.title || '';
+    return idA.localeCompare(idB);
+  });
+
+  return sorted[0];
+}
+
+export function resolveDestinationForQuality(
+  releases: EnrichedLink[],
+  combo: QualityCombinationDef
+): { release: EnrichedLink; url: string } | null {
+  const matching = releases.filter((rel) => matchesQualityCombination(rel, combo));
+  const deterministic = resolveDeterministicRelease(matching);
+  if (!deterministic || !isValidDestinationUrl(deterministic.url)) {
+    return null;
+  }
+  return {
+    release: deterministic,
+    url: deterministic.url,
+  };
 }
 
 // Extract rich release profiles including 4K SDR vs 4K DV HDR vs 1080p DV HDR vs 1080p SDR
@@ -496,33 +659,6 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
   const [verifiedEpisodesMap, setVerifiedEpisodesMap] = useState<Map<number, { title: string; overview?: string }>>(new Map());
   const [isLoadingVerifiedEpisodes, setIsLoadingVerifiedEpisodes] = useState<boolean>(false);
 
-  // Compact Quality Filters State per Episode
-  const [episodeFilters, setEpisodeFilters] = useState<Record<number, QualityFilterChip[]>>({});
-  const [expandedEpisodeCards, setExpandedEpisodeCards] = useState<Record<number, boolean>>({});
-
-  const toggleEpisodeFilter = (epNum: number, chip: QualityFilterChip) => {
-    setEpisodeFilters((prev) => {
-      const current = prev[epNum] || [];
-      const next = current.includes(chip)
-        ? current.filter((c) => c !== chip)
-        : [...current, chip];
-      return { ...prev, [epNum]: next };
-    });
-    // Auto-expand this episode so user immediately sees matching releases
-    setExpandedEpisodeCards((prev) => ({ ...prev, [epNum]: true }));
-  };
-
-  const resetEpisodeFilters = (epNum: number) => {
-    setEpisodeFilters((prev) => {
-      const next = { ...prev };
-      delete next[epNum];
-      return next;
-    });
-  };
-
-  const toggleExpandedEpisode = (epNum: number) => {
-    setExpandedEpisodeCards((prev) => ({ ...prev, [epNum]: !prev[epNum] }));
-  };
 
   // Dynamically calculate all seasons in ascending order (Season 1, Season 2, Season 3...) matching screenshot
   const seasonsList = useMemo(() => {
@@ -771,8 +907,6 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
   const handleSelectSeason = (seasonNum: number) => {
     setSelectedSeason(seasonNum);
     setOpenSlideId(null);
-    setExpandedEpisodeCards({});
-    setEpisodeFilters({});
   };
 
   // Fetch verified official episode metadata for the effective season
@@ -1284,289 +1418,192 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
           )}
         </div>
 
-        {/* EPISODE CARDS WITH COMPACT CLICKABLE QUALITY FILTERS */}
+        {/* EPISODE CARDS WITH DIRECT ONE-CLICK QUALITY BUTTONS */}
         <div className="space-y-4">
           {seasonEpisodes.length > 0 ? (
             seasonEpisodes.map((ep) => {
-              const isExpanded = Boolean(expandedEpisodeCards[ep.episodeNumber]);
-              const activeChips = episodeFilters[ep.episodeNumber] || [];
-              const filteredReleases = filterReleasesForEpisode(ep.releases, activeChips);
-              const hasActiveFilters = activeChips.length > 0;
+              const availableButtons = QUALITY_COMBINATIONS.map((combo) => {
+                const result = resolveDestinationForQuality(ep.releases, combo);
+                return result ? { combo, ...result } : null;
+              }).filter((item): item is NonNullable<typeof item> => item !== null);
+
+              // Fallback for releases with non-standard qualities
+              let buttonsToRender = availableButtons;
+              if (buttonsToRender.length === 0 && ep.releases.length > 0) {
+                const validReleases = ep.releases.filter((r) => isValidDestinationUrl(r.url));
+                if (validReleases.length > 0) {
+                  const best = resolveDeterministicRelease(validReleases);
+                  if (best) {
+                    buttonsToRender = [
+                      {
+                        combo: {
+                          key: 'DEFAULT_RELEASE',
+                          label: best.quality || best.resolution || 'Download Episode',
+                        },
+                        release: best,
+                        url: best.url,
+                      },
+                    ];
+                  }
+                }
+              }
 
               return (
                 <div
                   key={ep.episodeNumber}
-                  className="rounded-2xl sm:rounded-3xl overflow-hidden border border-white/10 shadow-xl transition-all duration-300 bg-[#0e1322]/95 hover:bg-[#12182c]/95"
+                  className="rounded-2xl sm:rounded-3xl overflow-hidden border border-white/10 shadow-xl transition-all duration-300 bg-[#0e1322]/95 hover:bg-[#12182c]/95 p-4 sm:p-5 space-y-3.5"
                 >
-                  {/* Card Header & Filter Section */}
-                  <div className="p-4 sm:p-5 space-y-3">
-                    {/* Header Row: S01E01 · Title and Expand Chevron */}
-                    <div
-                      onClick={() => toggleExpandedEpisode(ep.episodeNumber)}
-                      className="flex items-start sm:items-center justify-between gap-4 cursor-pointer select-none group"
-                    >
-                      <div className="space-y-1 min-w-0 flex-1">
-                        <h4 className="text-base sm:text-lg font-bold text-white group-hover:text-blue-400 transition-colors flex items-center gap-2 flex-wrap">
-                          <span>{ep.heading}</span>
-                          {!ep.isVerified && (
-                            <span
-                              className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/25 font-semibold"
-                              title="Unverified title. Administrator can verify via Trakt/TMDB."
-                            >
-                              Unverified
-                            </span>
-                          )}
-                        </h4>
-                        <p className="text-xs text-zinc-400 font-medium">
-                          Available quality &amp; formats · Tap to filter
-                        </p>
-                      </div>
-
-                      <button
-                        type="button"
-                        aria-expanded={isExpanded}
-                        aria-label={`Toggle releases for ${ep.sTag}`}
-                        className="text-zinc-400 hover:text-white shrink-0 p-1 rounded-lg hover:bg-white/5 transition-colors cursor-pointer"
-                      >
-                        {isExpanded ? (
-                          <ChevronUp className="w-5 h-5 text-zinc-300 transition-transform duration-200" />
-                        ) : (
-                          <ChevronDown className="w-5 h-5 text-zinc-400 transition-transform duration-200" />
-                        )}
-                      </button>
-                    </div>
-
-                    {/* The 7 Filter Chips matching media_1791796102840_4c86c0a4.png */}
-                    <div
-                      className="flex flex-wrap items-center gap-2 pt-0.5"
-                      role="toolbar"
-                      aria-label={`Quality filters for ${ep.sTag}`}
-                    >
-                      {QUALITY_FILTER_CHIPS.map((chip) => {
-                        const isChipActive = activeChips.includes(chip);
-                        return (
-                          <button
-                            key={chip}
-                            type="button"
-                            role="button"
-                            aria-pressed={isChipActive}
-                            aria-label={`Filter by ${chip}`}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              toggleEpisodeFilter(ep.episodeNumber, chip);
-                            }}
-                            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer select-none border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 ${
-                              isChipActive
-                                ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white border-blue-400 shadow-[0_0_12px_rgba(59,130,246,0.5)] scale-[1.02]'
-                                : 'bg-[#131724] text-zinc-300 hover:text-white border-white/10 hover:border-blue-400/40 hover:bg-[#1a2133]'
-                            }`}
+                  {/* Header Row: S01E01 · Title and Report Button */}
+                  <div className="flex items-start sm:items-center justify-between gap-4">
+                    <div className="space-y-1 min-w-0 flex-1">
+                      <h4 className="text-base sm:text-lg font-bold text-white flex items-center gap-2 flex-wrap">
+                        <span>{ep.heading}</span>
+                        {!ep.isVerified && (
+                          <span
+                            className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/25 font-semibold"
+                            title="Unverified title. Administrator can verify via Trakt/TMDB."
                           >
-                            {chip}
-                          </button>
-                        );
-                      })}
-                    </div>
-
-                    {/* Filter Status Text & Reset Button */}
-                    <div className="flex items-center justify-between gap-3 text-xs text-zinc-400 pt-0.5 flex-wrap">
-                      <div>
-                        {!hasActiveFilters ? (
-                          <span>No filters selected · All available releases shown ({ep.releases.length})</span>
-                        ) : (
-                          <span>
-                            Showing <strong className="text-blue-400 font-mono">{filteredReleases.length}</strong> of{' '}
-                            <strong className="text-zinc-300 font-mono">{ep.releases.length}</strong> release(s) matching{' '}
-                            <span className="text-blue-300 font-semibold">{activeChips.join(' + ')}</span>
+                            Unverified
                           </span>
                         )}
-                      </div>
-
-                      {hasActiveFilters && (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            resetEpisodeFilters(ep.episodeNumber);
-                          }}
-                          className="text-xs font-bold text-sky-400 hover:text-sky-300 hover:underline transition-colors cursor-pointer select-none"
-                        >
-                          Reset filters
-                        </button>
-                      )}
+                      </h4>
+                      <p className="text-xs text-zinc-400 font-medium">
+                        Direct 1-Click Downloads · Opens destination in new tab
+                      </p>
                     </div>
 
-                    {/* Episode Overview (if available from TMDB/Trakt) */}
-                    {ep.overview && (
-                      <p className="text-[11px] text-zinc-400/90 line-clamp-2 leading-relaxed pt-1">
-                        {ep.overview}
-                      </p>
+                    {/* Report Broken Link Flag */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setReportingLink({
+                          movieId: titleDetails.id,
+                          mediaTitle: titleDetails.name || titleDetails.title || 'TV Series',
+                          mediaType: 'tv',
+                          posterPath: titleDetails.poster_path,
+                          linkTitle: ep.heading,
+                          reportedUrl: ep.releases[0]?.url || '',
+                          quality: 'TV Episode',
+                        });
+                      }}
+                      className="p-2 rounded-xl bg-[#141824] hover:bg-[#1d2335] text-zinc-400 hover:text-rose-400 border border-white/5 hover:border-rose-500/30 transition-colors cursor-pointer shrink-0"
+                      title="Report broken or defective link for this episode"
+                    >
+                      <Flag className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
+                  {/* Episode Overview (if available from TMDB/Trakt) */}
+                  {ep.overview && (
+                    <p className="text-[11px] text-zinc-400/90 line-clamp-2 leading-relaxed">
+                      {ep.overview}
+                    </p>
+                  )}
+
+                  {/* DIRECT ONE-CLICK QUALITY BUTTONS (No Release Drawer / No Second Screen) */}
+                  <div
+                    className="flex flex-wrap items-center gap-2.5 pt-0.5"
+                    role="toolbar"
+                    aria-label={`Direct download links for ${ep.sTag}`}
+                  >
+                    {buttonsToRender.length > 0 ? (
+                      buttonsToRender.map(({ combo, release: rel, url }) => {
+                        const server = detectServer(url);
+                        const serverName = server.name || 'Server';
+                        const detectedSz =
+                          rel.size ||
+                          detectSize(rel.title) ||
+                          detectSize(undefined, undefined, rel.url) ||
+                          '';
+
+                        // Badge styling by quality tier
+                        let badgeStyle =
+                          'bg-[#131724] text-zinc-200 hover:text-white border-white/10 hover:border-blue-400/50 hover:bg-[#1a2133]';
+                        if (combo.resolution === '2160p') {
+                          if (combo.dynamicRange === 'DV') {
+                            badgeStyle =
+                              'bg-gradient-to-r from-purple-950/70 to-indigo-950/70 text-purple-200 hover:text-white border-purple-500/35 hover:border-purple-400 hover:from-purple-900/80 hover:to-indigo-900/80 shadow-[0_0_12px_rgba(168,85,247,0.18)]';
+                          } else if (combo.dynamicRange === 'HDR') {
+                            badgeStyle =
+                              'bg-gradient-to-r from-cyan-950/70 to-blue-950/70 text-cyan-200 hover:text-white border-cyan-500/35 hover:border-cyan-400 hover:from-cyan-900/80 hover:to-blue-900/80 shadow-[0_0_12px_rgba(6,182,212,0.18)]';
+                          } else if (combo.dynamicRange === 'SDR') {
+                            badgeStyle =
+                              'bg-[#181d2c] text-amber-200 hover:text-white border-amber-500/30 hover:border-amber-400 hover:bg-[#20273c]';
+                          } else {
+                            badgeStyle =
+                              'bg-gradient-to-r from-amber-950/60 to-yellow-950/60 text-amber-200 hover:text-white border-amber-500/35 hover:border-amber-400 hover:from-amber-900/70 hover:to-yellow-900/70 shadow-[0_0_12px_rgba(245,158,11,0.18)]';
+                          }
+                        } else if (combo.resolution === '1080p') {
+                          if (combo.dynamicRange === 'DV') {
+                            badgeStyle =
+                              'bg-gradient-to-r from-purple-950/60 to-blue-950/60 text-purple-200 hover:text-white border-purple-500/35 hover:border-purple-400';
+                          } else if (combo.dynamicRange === 'HDR') {
+                            badgeStyle =
+                              'bg-gradient-to-r from-cyan-950/60 to-blue-950/60 text-cyan-200 hover:text-white border-cyan-500/35 hover:border-cyan-400';
+                          } else {
+                            badgeStyle =
+                              'bg-[#12192e] text-blue-200 hover:text-white border-blue-500/35 hover:border-blue-400 hover:bg-[#18223e]';
+                          }
+                        } else if (combo.resolution === '720p') {
+                          badgeStyle =
+                            'bg-[#18152c] text-indigo-200 hover:text-white border-indigo-500/35 hover:border-indigo-400 hover:bg-[#221e3c]';
+                        } else if (combo.codec === 'H.265') {
+                          badgeStyle =
+                            'bg-gradient-to-r from-purple-950/60 to-indigo-950/60 text-purple-200 hover:text-white border-purple-500/35 hover:border-purple-400 hover:bg-[#1f1933]';
+                        } else if (combo.codec === 'H.264') {
+                          badgeStyle =
+                            'bg-[#131d2e] text-sky-200 hover:text-white border-sky-500/35 hover:border-sky-400 hover:bg-[#1a273e]';
+                        }
+
+                        return (
+                          <a
+                            key={combo.key}
+                            href={sanitizeSafeUrl(url)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className={`group inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all select-none border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 hover:scale-[1.02] shadow-sm cursor-pointer ${badgeStyle}`}
+                            title={`Direct Download: ${combo.label} on ${serverName}${detectedSz ? ` (${detectedSz})` : ''}`}
+                          >
+                            <Download className="w-3.5 h-3.5 shrink-0 opacity-80 group-hover:opacity-100 group-hover:scale-110 transition-transform" />
+                            <span>{combo.label}</span>
+                            {detectedSz && (
+                              <span className="text-[10px] text-zinc-400 font-mono font-normal bg-black/40 px-1.5 py-0.5 rounded border border-white/5">
+                                {detectedSz}
+                              </span>
+                            )}
+                            <ExternalLink className="w-3 h-3 opacity-60 group-hover:opacity-100 transition-opacity" />
+                          </a>
+                        );
+                      })
+                    ) : (
+                      <div className="flex items-center gap-3 text-xs text-zinc-500 italic py-1">
+                        <span>No direct download links available for this episode yet.</span>
+                        <button
+                          type="button"
+                          onClick={() => setIsRequestModalOpen(true)}
+                          className="text-xs font-bold text-sky-400 hover:text-sky-300 not-italic hover:underline cursor-pointer"
+                        >
+                          Request format
+                        </button>
+                      </div>
                     )}
                   </div>
 
-                  {/* Expandable Releases Section (Destination Links Hidden Until Opened) */}
-                  {isExpanded && (
-                    <div className="bg-[#090c15] p-4 sm:p-5 space-y-3 border-t border-white/10 animate-fadeIn">
-                      {filteredReleases.length > 0 ? (
-                        <div className="space-y-2">
-                          {filteredReleases.map((rel, rIdx) => {
-                            const destinationUrl = rel.url || '#';
-                            const server = detectServer(destinationUrl);
-                            const serverName = server.name || 'Server';
-                            const cleanRelTitle = rel.title || `Release #${rIdx + 1}`;
-                            const prof = extractReleaseProfile(cleanRelTitle, rel.quality, titleDetails, rel.url, rel.manualOverrides);
-                            const detectedSz = rel.size || detectSize(cleanRelTitle) || detectSize(undefined, undefined, rel.url) || '';
-
-                            return (
-                              <div
-                                key={rel.id || rIdx}
-                                className="group relative rounded-xl bg-[#0e111a] hover:bg-[#131724] border border-white/5 hover:border-blue-500/40 p-3 sm:p-3.5 transition-all shadow-md flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs"
-                              >
-                                {/* Release Filename & Badges */}
-                                <div className="min-w-0 flex-1 space-y-1">
-                                  <div className="flex items-center gap-2">
-                                    <span className="px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-400 font-mono text-[10px]">
-                                      #{rIdx + 1}
-                                    </span>
-                                    <span className="font-mono text-zinc-200 font-semibold text-xs truncate block" title={cleanRelTitle}>
-                                      {cleanRelTitle}
-                                    </span>
-                                  </div>
-
-                                  {/* Badges: Resolution, Dynamic Range, Codec, Bit Depth, Size, Audio, Server */}
-                                  <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-zinc-400">
-                                    <span className="font-semibold text-blue-400 font-mono">
-                                      {prof.resolution} {prof.source}
-                                    </span>
-                                    {prof.dynamicRange && (
-                                      <span
-                                        className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
-                                          prof.dynamicRange === 'Conflict'
-                                            ? 'bg-red-500/20 text-red-300 border border-red-500/40'
-                                            : 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/30'
-                                        }`}
-                                      >
-                                        {prof.dynamicRange}
-                                      </span>
-                                    )}
-                                    {prof.bitDepth && (
-                                      <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
-                                        {prof.bitDepth}
-                                      </span>
-                                    )}
-                                    {prof.codec && (
-                                      <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-purple-500/15 text-purple-300 border border-purple-500/30">
-                                        {prof.codec}
-                                      </span>
-                                    )}
-                                    {detectedSz && (
-                                      <span className="font-mono text-zinc-400 bg-white/5 px-2 py-0.5 rounded-md border border-white/5">
-                                        {detectedSz}
-                                      </span>
-                                    )}
-                                    {rel.audioLanguage && (
-                                      <span className="text-zinc-500">
-                                        🔊 {rel.audioLanguage}
-                                      </span>
-                                    )}
-                                    <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-blue-500/15 text-blue-400 border border-blue-500/30">
-                                      {serverName}
-                                    </span>
-                                  </div>
-                                </div>
-
-                                {/* Direct Download Button & Action Icons */}
-                                <div className="flex items-center gap-2 shrink-0 self-end md:self-center">
-                                  <a
-                                    href={sanitizeSafeUrl(destinationUrl)}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="px-4 py-1.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs shadow-md shadow-blue-500/20 hover:scale-105 transition-all flex items-center gap-1.5 cursor-pointer"
-                                    title={`Download on ${serverName}`}
-                                  >
-                                    <Download className="w-3.5 h-3.5" />
-                                    <span>Download</span>
-                                    <ExternalLink className="w-3 h-3 opacity-70" />
-                                  </a>
-
-                                  {/* Flag Broken Link */}
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setReportingLink({
-                                        linkId: rel.id,
-                                        movieId: titleDetails.id,
-                                        mediaTitle: titleDetails.name || titleDetails.title || 'TV Series',
-                                        mediaType: 'tv',
-                                        posterPath: titleDetails.poster_path,
-                                        linkTitle: cleanRelTitle,
-                                        reportedUrl: destinationUrl,
-                                        quality: prof.resolution,
-                                        server: serverName,
-                                      });
-                                    }}
-                                    className="p-2 rounded-xl bg-[#141824] hover:bg-[#1d2335] text-zinc-400 hover:text-rose-400 border border-white/5 hover:border-rose-500/30 transition-colors cursor-pointer shrink-0"
-                                    title="Report broken or defective link"
-                                  >
-                                    <Flag className="w-3.5 h-3.5" />
-                                  </button>
-
-                                  {/* Admin controls */}
-                                  {(isEffectiveAdmin || isAdmin) && (
-                                    <div className="flex items-center gap-1.5 shrink-0">
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleStartEdit(rel);
-                                        }}
-                                        className="p-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-amber-400 border border-zinc-700 transition-colors cursor-pointer"
-                                        title="Admin: Edit link"
-                                      >
-                                        <Pencil className="w-3.5 h-3.5" />
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleDelete(rel.id);
-                                        }}
-                                        className="p-2 rounded-xl bg-rose-950 hover:bg-rose-900 text-rose-400 border border-rose-900/50 transition-colors cursor-pointer"
-                                        title="Admin: Delete link"
-                                      >
-                                        <Trash2 className="w-3.5 h-3.5" />
-                                      </button>
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      ) : (
-                        /* Empty State when no releases match selected filter */
-                        <div className="p-6 rounded-xl bg-[#0c0d13] border border-white/5 text-center space-y-2.5">
-                          <p className="text-xs sm:text-sm text-zinc-300 font-medium">
-                            No releases match the selected filters ({activeChips.join(' + ')}).
-                          </p>
-                          <div className="flex items-center justify-center gap-3 pt-1">
-                            <button
-                              type="button"
-                              onClick={() => resetEpisodeFilters(ep.episodeNumber)}
-                              className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs transition-colors cursor-pointer"
-                            >
-                              Reset filters
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setIsRequestModalOpen(true)}
-                              className="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 font-bold text-xs transition-colors cursor-pointer"
-                            >
-                              Request this format
-                            </button>
-                          </div>
-                        </div>
-                      )}
+                  {/* Admin link: Full release management, editing, and deletion in the Admin Panel */}
+                  {(isEffectiveAdmin || isAdmin) && (
+                    <div className="pt-2 border-t border-white/5 mt-3 flex items-center justify-between text-xs text-zinc-400">
+                      <span className="flex items-center gap-1.5 text-zinc-400 font-medium">
+                        <Pencil className="w-3.5 h-3.5 text-amber-400" />
+                        {ep.releases.length} release(s) configured
+                      </span>
+                      <a
+                        href={`/admin?title=${encodeURIComponent(titleDetails.name || titleDetails.title || '')}&id=${titleDetails.id}&season=${effectiveSeason}`}
+                        className="text-xs font-bold text-amber-400 hover:text-amber-300 hover:underline flex items-center gap-1"
+                        title="Manage, edit, or delete full release records in the Admin Panel"
+                      >
+                        <span>Manage in Admin Panel</span>
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
                     </div>
                   )}
                 </div>
