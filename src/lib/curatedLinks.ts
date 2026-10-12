@@ -407,3 +407,67 @@ export async function deleteAllGlobalCustomLinks(movieId: number | string): Prom
   }
 }
 
+/**
+ * Updates an episode title for a specific TV series and episode.
+ * Keeps all destination links, URLs, qualities, and servers 100% unchanged.
+ */
+export async function updateGlobalEpisodeTitle(
+  movieId: number | string,
+  params: {
+    seasonNumber: number;
+    episodeNumber: number;
+    episodeTitle: string;
+    linkId?: string;
+  }
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const key = String(movieId);
+
+    // Update local storage if present
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = safeGetLocalStorage('cinefuel_custom_links');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (parsed[key] && Array.isArray(parsed[key])) {
+            parsed[key] = parsed[key].map((l: CustomLink) => {
+              const matches = params.linkId
+                ? l.id === params.linkId
+                : Number(l.seasonNumber) === Number(params.seasonNumber) &&
+                  Number(l.episodeNumber) === Number(params.episodeNumber);
+              if (matches) {
+                return { ...l, episodeTitle: params.episodeTitle.trim() };
+              }
+              return l;
+            });
+            safeSetLocalStorage('cinefuel_custom_links', JSON.stringify(pruneCustomLinksCache(parsed)));
+            window.dispatchEvent(new Event('cinefuel_links_updated'));
+          }
+        }
+      } catch {}
+    }
+
+    const res = await fetch('/api/curated-links', {
+      method: 'POST',
+      headers: getAdminHeaders(),
+      body: JSON.stringify({
+        movieId: key,
+        action: 'update_episode_title',
+        seasonNumber: params.seasonNumber,
+        episodeNumber: params.episodeNumber,
+        episodeTitle: params.episodeTitle.trim(),
+        linkId: params.linkId,
+      }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) {
+      return { success: false, error: data.error || `HTTP ${res.status}` };
+    }
+    return { success: true };
+  } catch (err: any) {
+    console.error('Failed to update episode title:', err);
+    return { success: false, error: err?.message || 'Network error' };
+  }
+}
+

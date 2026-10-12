@@ -178,34 +178,56 @@ export async function getLinksFromDatabase(
   // 1. Try MongoDB Atlas if connected (or upstream proxy on Cloudflare Workers)
   try {
     const isCloudflare = typeof (globalThis as any).WebSocketPair !== 'undefined' || getEnv('WORKER_NAME');
-    if (isCloudflare && movieId) {
+    if (isCloudflare) {
       try {
         const upstreamBase = getEnv('UPSTREAM_API_URL') || 'https://cinephile-app.vercel.app';
-        const upstreamUrl = `${upstreamBase}/api/curated-links?movieId=${encodeURIComponent(String(movieId))}`;
+        const queryParams = new URLSearchParams();
+        if (movieId) queryParams.set('movieId', String(movieId));
+        if (pagination?.page) queryParams.set('page', String(pagination.page));
+        if (pagination?.limit) queryParams.set('limit', String(pagination.limit));
+        if (pagination?.q && pagination.q.trim()) queryParams.set('q', pagination.q.trim());
+        if (pagination?.category && pagination.category !== 'All') queryParams.set('category', pagination.category);
+
+        const upstreamUrl = `${upstreamBase}/api/curated-links?${queryParams.toString()}`;
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 3500);
-        const res = await fetch(upstreamUrl, {
-          signal: controller.signal,
-          headers: { 'User-Agent': 'Cloudflare-Worker-CineFuel' },
-        });
-        clearTimeout(timeoutId);
-        if (res.ok) {
+        const timeoutId = setTimeout(() => controller.abort(), 4500);
+        let res: Response | null = null;
+        try {
+          res = await fetch(upstreamUrl, {
+            signal: controller.signal,
+            headers: { 'User-Agent': 'Cloudflare-Worker-CineFuel' },
+          });
+        } finally {
+          clearTimeout(timeoutId);
+        }
+
+        if (res && res.ok) {
           const remoteJson: any = await res.json();
-          if (remoteJson?.success && Array.isArray(remoteJson.links)) {
-            let links = remoteJson.links;
-            const redis = getRedisClient();
-            if (redis && links.length > 0) {
-              try {
-                const checks = await Promise.all(
-                  links.map((l: any) => redis.sismember(REDIS_DELETED_KEY, l.id))
-                );
-                links = links.filter((_: any, idx: number) => !checks[idx]);
-              } catch {}
+          if (remoteJson?.success) {
+            if (movieId && Array.isArray(remoteJson.links)) {
+              let links = remoteJson.links;
+              const redis = getRedisClient();
+              if (redis && links.length > 0) {
+                try {
+                  const checks = await Promise.all(
+                    links.map((l: any) => redis.sismember(REDIS_DELETED_KEY, l.id))
+                  );
+                  links = links.filter((_: any, idx: number) => !checks[idx]);
+                } catch {}
+              }
+              return { links, source: 'mongodb_atlas' as any };
+            } else if (remoteJson.allLinks) {
+              return {
+                allLinks: remoteJson.allLinks,
+                total: typeof remoteJson.total === 'number' ? remoteJson.total : undefined,
+                source: 'mongodb_atlas' as any,
+              };
             }
-            return { links, source: 'mongodb_atlas' as any };
           }
         }
-      } catch {}
+      } catch (upstreamErr: any) {
+        console.warn('Cloudflare upstream curated-links sync error:', upstreamErr.message);
+      }
     }
 
     const db = await getDatabase();
@@ -1203,6 +1225,150 @@ export async function updateTitleMetadata(
 
   await invalidateCatalogCache().catch(() => {});
   return { success: true, updatedCount: links.length, newId: newKey };
+}
+
+/**
+ * Updates an episode title for a specific TV series and episode across MongoDB Atlas, Redis, and local storage.
+ * Strictly guarantees that destination links (url), link IDs, and technical qualities are NEVER modified, moved, or deleted.
+ * Supports updating by linkId (exact record ID) or by (movieId, seasonNumber, episodeNumber).
+ */
+export async function updateEpisodeTitleInDatabase(
+  movieId: number | string,
+  params: {
+    seasonNumber: number;
+    episodeNumber: number;
+    episodeTitle: string;
+    linkId?: string;
+  }
+): Promise<{
+  success: boolean;
+  updatedCount: number;
+  movieId: string;
+  seasonNumber: number;
+  episodeNumber: number;
+  episodeTitle: string;
+}> {
+  const key = String(movieId).trim();
+  const sNum = Math.max(0, Number(params.seasonNumber) || 0);
+  const eNum = Math.max(1, Number(params.episodeNumber) || 1);
+  const epTitle = String(params.episodeTitle || '').trim();
+
+  let updatedCount = 0;
+
+  // 1. MongoDB Atlas update
+  try {
+    const db = await getDatabase();
+    if (db) {
+      const collection = db.collection('links');
+
+      let filter: any;
+      if (params.linkId) {
+        filter = {
+          id: String(params.linkId).trim(),
+          $or: [{ movieId: key }, { movieId: Number(key) as any }],
+        };
+      } else {
+        filter = {
+          $or: [{ movieId: key }, { movieId: Number(key) as any }],
+          $and: [
+            { $or: [{ seasonNumber: sNum }, { seasonNumber: String(sNum) }] },
+            { $or: [{ episodeNumber: eNum }, { episodeNumber: String(eNum) }] },
+          ],
+        };
+      }
+
+      const updateOp = {
+        $set: {
+          episodeTitle: epTitle,
+          updatedAt: new Date(),
+        },
+      };
+
+      const result = await collection.updateMany(filter, updateOp);
+      updatedCount = result.modifiedCount || result.matchedCount || 0;
+    }
+  } catch (err: any) {
+    console.warn('MongoDB Atlas updateEpisodeTitle warning:', err.message);
+  }
+
+  // 2. Upstash Redis update
+  const redisClient = getRedisClient();
+  if (redisClient) {
+    try {
+      let current: any[] = [];
+      const fetched = await redisClient.hget<any>(REDIS_HASH_KEY, key);
+      if (Array.isArray(fetched)) current = fetched;
+      else if (typeof fetched === 'string') {
+        try { current = JSON.parse(fetched); } catch {}
+      }
+
+      if (current.length > 0) {
+        let redisModified = false;
+        const updatedLinks = current.map((link: any) => {
+          const matchLink = params.linkId
+            ? link.id === params.linkId
+            : Number(link.seasonNumber) === sNum && Number(link.episodeNumber) === eNum;
+
+          if (matchLink) {
+            redisModified = true;
+            return {
+              ...link,
+              episodeTitle: epTitle,
+              updatedAt: new Date().toISOString(),
+            };
+          }
+          return link;
+        });
+
+        if (redisModified) {
+          await redisClient.hset(REDIS_HASH_KEY, { [key]: JSON.stringify(updatedLinks) });
+        }
+      }
+    } catch (err: any) {
+      console.warn('Upstash Redis updateEpisodeTitle warning:', err.message);
+    }
+  }
+
+  // 3. Local JSON fallback update (if writable)
+  try {
+    const localData = getLocalFallbackLinks();
+    if (localData && localData[key]) {
+      let localModified = false;
+      const updatedLocal = localData[key].map((link: any) => {
+        const matchLink = params.linkId
+          ? link.id === params.linkId
+          : Number(link.seasonNumber) === sNum && Number(link.episodeNumber) === eNum;
+
+        if (matchLink) {
+          localModified = true;
+          return {
+            ...link,
+            episodeTitle: epTitle,
+            updatedAt: new Date().toISOString(),
+          };
+        }
+        return link;
+      });
+
+      if (localModified) {
+        localData[key] = updatedLocal;
+        saveLocalFallbackLinks(localData);
+      }
+    }
+  } catch (err: any) {
+    console.warn('Local fallback updateEpisodeTitle warning:', err.message);
+  }
+
+  await invalidateCatalogCache().catch(() => {});
+
+  return {
+    success: true,
+    updatedCount,
+    movieId: key,
+    seasonNumber: sNum,
+    episodeNumber: eNum,
+    episodeTitle: epTitle,
+  };
 }
 
 // Helper to detect synthetic/dummy placeholders

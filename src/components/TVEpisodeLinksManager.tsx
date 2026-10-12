@@ -99,6 +99,95 @@ interface GroupedEpisode {
   links: EnrichedLink[];
 }
 
+export type QualityFilterChip = '4K' | 'SDR' | 'HDR' | 'DV' | '1080P' | 'H.265' | 'H.264';
+export const QUALITY_FILTER_CHIPS: QualityFilterChip[] = ['4K', 'SDR', 'HDR', 'DV', '1080P', 'H.265', 'H.264'];
+
+export function releaseMatchesChip(release: EnrichedLink, chip: QualityFilterChip): boolean {
+  const title = (release.title || '').toLowerCase();
+  const url = (release.url || '').toLowerCase();
+  const quality = (release.quality || '').toLowerCase();
+  const resolution = (release.resolution || '').toLowerCase();
+  const combined = `${title} ${quality} ${resolution} ${url}`;
+
+  switch (chip) {
+    case '4K': {
+      if (
+        release.manualOverrides?.resolution === '2160p' ||
+        release.resolution === '2160p' ||
+        release.resolution?.includes('4K') ||
+        release.quality?.includes('4K')
+      ) {
+        return true;
+      }
+      return /(?:2160p|\b4k\b|\buhd\b)/i.test(combined);
+    }
+
+    case '1080P': {
+      if (
+        release.manualOverrides?.resolution === '1080p' ||
+        release.resolution === '1080p' ||
+        release.quality?.includes('1080p')
+      ) {
+        return true;
+      }
+      return /(?:1080p|\bfhd\b)/i.test(combined);
+    }
+
+    case 'SDR': {
+      // Must be explicitly verified as SDR. Never guess! (Requirement 8)
+      if (release.manualOverrides?.dynamicRange === 'SDR' || release.dynamicRange === 'SDR') {
+        return true;
+      }
+      return /\bsdr\b/i.test(title);
+    }
+
+    case 'HDR': {
+      const dyn = release.manualOverrides?.dynamicRange || release.dynamicRange || '';
+      if (dyn === 'HDR' || dyn === 'DV HDR' || dyn.includes('HDR')) {
+        return true;
+      }
+      return /\bhdr(?:10\+?)?\b/i.test(combined);
+    }
+
+    case 'DV': {
+      const dyn = release.manualOverrides?.dynamicRange || release.dynamicRange || '';
+      if (dyn === 'DV' || dyn === 'DV HDR' || dyn.includes('DV')) {
+        return true;
+      }
+      return /(?:\bdv\b|dolby\s*vision|\bdovi\b)/i.test(combined);
+    }
+
+    case 'H.265': {
+      if (release.manualOverrides?.codec === 'H.265' || release.codec === 'H.265') {
+        return true;
+      }
+      return /(?:h\.?265|x265|hevc)/i.test(combined);
+    }
+
+    case 'H.264': {
+      if (release.manualOverrides?.codec === 'H.264' || release.codec === 'H.264') {
+        return true;
+      }
+      return /(?:h\.?264|x264|avc)/i.test(combined);
+    }
+
+    default:
+      return false;
+  }
+}
+
+export function filterReleasesForEpisode(
+  releases: EnrichedLink[],
+  activeChips: QualityFilterChip[]
+): EnrichedLink[] {
+  if (activeChips.length === 0) {
+    return releases;
+  }
+  return releases.filter((rel) =>
+    activeChips.every((chip) => releaseMatchesChip(rel, chip))
+  );
+}
+
 // Extract rich release profiles including 4K SDR vs 4K DV HDR vs 1080p DV HDR vs 1080p SDR
 function extractReleaseProfile(
   title: string,
@@ -355,6 +444,7 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
         localStorage.getItem('cinefuel_admin_token') ||
         localStorage.getItem('cinefuel_id_token') ||
         '';
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setSessionAdmin(Boolean(token));
     }
   }, []);
@@ -402,6 +492,38 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
   const [selectedSeason, setSelectedSeason] = useState<number>(1);
   const [openSlideId, setOpenSlideId] = useState<string | null>(null);
 
+  // Verified official episode titles map (from DB or TMDB/Trakt API)
+  const [verifiedEpisodesMap, setVerifiedEpisodesMap] = useState<Map<number, { title: string; overview?: string }>>(new Map());
+  const [isLoadingVerifiedEpisodes, setIsLoadingVerifiedEpisodes] = useState<boolean>(false);
+
+  // Compact Quality Filters State per Episode
+  const [episodeFilters, setEpisodeFilters] = useState<Record<number, QualityFilterChip[]>>({});
+  const [expandedEpisodeCards, setExpandedEpisodeCards] = useState<Record<number, boolean>>({});
+
+  const toggleEpisodeFilter = (epNum: number, chip: QualityFilterChip) => {
+    setEpisodeFilters((prev) => {
+      const current = prev[epNum] || [];
+      const next = current.includes(chip)
+        ? current.filter((c) => c !== chip)
+        : [...current, chip];
+      return { ...prev, [epNum]: next };
+    });
+    // Auto-expand this episode so user immediately sees matching releases
+    setExpandedEpisodeCards((prev) => ({ ...prev, [epNum]: true }));
+  };
+
+  const resetEpisodeFilters = (epNum: number) => {
+    setEpisodeFilters((prev) => {
+      const next = { ...prev };
+      delete next[epNum];
+      return next;
+    });
+  };
+
+  const toggleExpandedEpisode = (epNum: number) => {
+    setExpandedEpisodeCards((prev) => ({ ...prev, [epNum]: !prev[epNum] }));
+  };
+
   // Dynamically calculate all seasons in ascending order (Season 1, Season 2, Season 3...) matching screenshot
   const seasonsList = useMemo(() => {
     const detectedSeasons = new Set<number>();
@@ -428,7 +550,7 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
       const isPack = l.manualOverrides?.linkType === 'zip_pack' || prof.isPack;
       const detectedSeason = l.manualOverrides?.seasonNumber || l.seasonNumber || prof.seasonNumber || detectSeasonNumber({ title: effectiveTitle, seasonNumber: l.seasonNumber, url: l.url });
       const detectedEp = isPack ? undefined : (l.manualOverrides?.episodeNumber || l.episodeNumber || prof.episodeNumber || detectEpisodeNumber({ title: effectiveTitle, episodeNumber: l.episodeNumber, url: l.url }));
-      const detectedType: 'zip_pack' | 'single_episode' = (l.manualOverrides?.linkType as any) || (isPack ? 'zip_pack' : 'single_episode');
+      const detectedType: 'zip_pack' | 'single_episode' = (l.manualOverrides?.linkType as 'zip_pack' | 'single_episode') || (isPack ? 'zip_pack' : 'single_episode');
       const isSceneRelease = /(?:s\d{1,2}e\d{1,2}|2160p|1080p|720p|480p|\.mkv|\.mp4|web-dl|webdl|bluray)/i.test(effectiveTitle);
       const detectedQ = l.manualOverrides?.resolution || ((isSceneRelease || !l.quality || l.quality === 'HD')
         ? detectQuality(effectiveTitle, l.quality, l.url)
@@ -632,22 +754,66 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
     return map;
   }, [seasonsList, enrichedLinks, titleDetails]);
 
-  // Auto-select season with links on initial load or default to seasonsList[0]
-  useEffect(() => {
-    if (seasonsList.length > 0 && !seasonsList.includes(selectedSeason)) {
+  // Effective season selection (auto-defaults to first season with links if selected is not present)
+  const effectiveSeason = useMemo(() => {
+    if (seasonsList.includes(selectedSeason)) return selectedSeason;
+    if (seasonsList.length > 0) {
       const firstSeasonWithLinks =
         seasonsList.find((s) => {
           const fmts = seasonGroupsMap.get(s);
           return fmts && fmts.length > 0;
         }) || seasonsList[0];
-      setSelectedSeason(firstSeasonWithLinks);
+      return firstSeasonWithLinks;
     }
+    return selectedSeason;
   }, [seasonsList, seasonGroupsMap, selectedSeason]);
 
-  // Active season packs for selectedSeason
+  const handleSelectSeason = (seasonNum: number) => {
+    setSelectedSeason(seasonNum);
+    setOpenSlideId(null);
+    setExpandedEpisodeCards({});
+    setEpisodeFilters({});
+  };
+
+  // Fetch verified official episode metadata for the effective season
+  useEffect(() => {
+    let isCancelled = false;
+    async function fetchSeasonTitles() {
+      if (!titleDetails.id) return;
+      setIsLoadingVerifiedEpisodes(true);
+      try {
+        const showTitle = titleDetails.name || titleDetails.title || '';
+        const res = await fetch(`/api/tv-episodes?id=${encodeURIComponent(titleDetails.id)}&season=${effectiveSeason}&title=${encodeURIComponent(showTitle)}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && Array.isArray(data.episodes) && !isCancelled) {
+            const map = new Map<number, { title: string; overview?: string }>();
+            data.episodes.forEach((ep: { episodeNumber?: number | string; title?: string; overview?: string }) => {
+              if (ep.episodeNumber && ep.title) {
+                map.set(Number(ep.episodeNumber), {
+                  title: ep.title.trim(),
+                  overview: ep.overview || '',
+                });
+              }
+            });
+            setVerifiedEpisodesMap(map);
+          }
+        }
+      } catch {
+        // Silently fallback to stored DB titles or Episode N
+      } finally {
+        if (!isCancelled) setIsLoadingVerifiedEpisodes(false);
+      }
+    }
+
+    fetchSeasonTitles();
+    return () => { isCancelled = true; };
+  }, [titleDetails.id, titleDetails.name, titleDetails.title, effectiveSeason]);
+
+  // Active season packs for effectiveSeason
   const activeSeasonPacks = useMemo(() => {
     const showName = titleDetails.name || titleDetails.title || 'Series';
-    const formats = seasonGroupsMap.get(selectedSeason) || [];
+    const formats = seasonGroupsMap.get(effectiveSeason) || [];
     const results: Array<{
       optionId: string;
       resolution: string;
@@ -676,7 +842,7 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
           }
           let cleanPackTitle = stripWatermarks(rawPackTitle);
           if (!cleanPackTitle || cleanPackTitle.length < 5 || /^p[0-9a-z]{10,}$/i.test(cleanPackTitle) || cleanPackTitle.startsWith('http')) {
-            cleanPackTitle = `${showName} S0${selectedSeason} Complete Pack (${fmt.resolution} ${fmt.source})`;
+            cleanPackTitle = `${showName} S0${effectiveSeason} Complete Pack (${fmt.resolution} ${fmt.source})`;
           }
           const finalPackTitle = cleanPackTitle || rawPackTitle || opt.title;
           const prof = extractReleaseProfile(finalPackTitle, first.quality, titleDetails, first.url, first.manualOverrides);
@@ -699,368 +865,65 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
     });
 
     return results;
-  }, [selectedSeason, seasonGroupsMap, titleDetails]);
+  }, [effectiveSeason, seasonGroupsMap, titleDetails]);
 
-  // Group format releases by quality into dedicated quality slides (e.g. 2160p DV HDR, 2160p SDR, 1080p, 720p, 480p)
-  const qualitySlides = useMemo(() => {
-    const formats = seasonGroupsMap.get(selectedSeason) || [];
+  // Unified Season Episodes with All Available Releases across Formats
+  const seasonEpisodes = useMemo(() => {
+    const currentSeasonLinks = enrichedLinks.filter((l) => l.seasonNumber === effectiveSeason);
+    const epMap = new Map<number, EnrichedLink[]>();
 
-    const getQualitySlideInfo = (
-      res: string,
-      source: string,
-      dynamicRange?: string,
-      codec?: string,
-      sampleTitle?: string,
-      sampleUrl?: string
-    ) => {
-      const urlFn = extractFilenameFromUrl(sampleUrl);
-      const rLower = (res || '').toLowerCase();
-      const tLower = `${sampleTitle || ''} ${urlFn}`.toLowerCase();
-      const src = source && source !== 'Unknown' ? source.replace(/[^a-zA-Z0-9-]/g, '') : 'WebDL';
+    currentSeasonLinks.forEach((link) => {
+      // Exclude true complete season packs from individual episodes list
+      const isPack = isPackMedia(link.title, link.url) || link.linkType === 'zip_pack' || link.category === 'ZipPack';
+      if (isPack && link.episodeNumber === undefined) return;
 
-      // 1. Detect Resolution
-      let resTag = '1080p';
-      let baseWeight = 200;
-      if (rLower.includes('2160') || rLower.includes('4k') || rLower.includes('uhd') || /(?:2160p|2160i|\buhd\b|\b4k\b)/i.test(tLower)) {
-        resTag = '2160p';
-        baseWeight = 400;
-      } else if (rLower.includes('1080') || rLower.includes('fhd') || /(?:1080p|1080i|\bfhd\b)/i.test(tLower)) {
-        resTag = '1080p';
-        baseWeight = 300;
-      } else if (rLower.includes('720') || rLower.includes('hd') || /(?:720p|720i|\bhd\b)/i.test(tLower)) {
-        resTag = '720p';
-        baseWeight = 200;
-      } else if (rLower.includes('480') || rLower.includes('sd') || /(?:480p|480i|\bsd\b)/i.test(tLower)) {
-        resTag = '480p';
-        baseWeight = 100;
+      const epNum = link.episodeNumber || detectEpisodeNumber(link) || 1;
+      if (epNum <= 0) return;
+
+      if (!epMap.has(epNum)) {
+        epMap.set(epNum, []);
       }
+      epMap.get(epNum)!.push(link);
+    });
 
-      // 2. Detect Dynamic Range (DV HDR vs HDR vs SDR) - NEVER DEFAULT TO SDR!
-      let dyn = (dynamicRange || '').trim();
-      if (!dyn) {
-        const parsedSample = parseReleaseDetails(sampleTitle || '', sampleUrl);
-        if (parsedSample.dynamicRangeLabel && parsedSample.dynamicRangeLabel !== 'Unknown') {
-          dyn = parsedSample.dynamicRangeLabel;
-        }
-      }
+    const epNumbers = Array.from(epMap.keys()).sort((a, b) => a - b);
 
-      // 3. Detect 10bit / HEVC
-      const is10Bit = /10bit|10-bit/i.test(tLower);
-      const isHEVC = /hevc|x265|h\.?265/i.test(tLower) || codec === 'H.265';
+    return epNumbers.map((epNum) => {
+      const epLinks = epMap.get(epNum) || [];
+      const sTag = `S${String(effectiveSeason).padStart(2, '0')}E${String(epNum).padStart(2, '0')}`;
+      const verifiedObj = verifiedEpisodesMap.get(epNum);
+      const storedTitle = epLinks.find((e) => e.episodeTitle)?.episodeTitle;
+      const officialCandidate = storedTitle || verifiedObj?.title;
 
-      // 4. Construct Key & Title per resolution:
-      if (resTag === '2160p') {
-        const codecLabel = isHEVC ? ' H.265' : '';
-        if (dyn === 'DV HDR' || dyn === 'DV') {
-          return {
-            key: '2160p_dv_hdr_h265',
-            title: `2160p 4K DV HDR${codecLabel} ${src}`,
-            badge: `2160p DV HDR${codecLabel}`,
-            resolution: '2160p / 4K',
-            accentBorder: 'border-l-4 border-l-fuchsia-500',
-            weight: 450,
-          };
-        } else if (dyn === 'HDR') {
-          return {
-            key: '2160p_hdr_h265',
-            title: `2160p 4K HDR${codecLabel} ${src}`,
-            badge: `2160p HDR${codecLabel}`,
-            resolution: '2160p / 4K',
-            accentBorder: 'border-l-4 border-l-purple-500',
-            weight: 440,
-          };
-        } else if (dyn === 'SDR') {
-          return {
-            key: '2160p_sdr_h265',
-            title: `2160p 4K SDR${codecLabel} ${src}`,
-            badge: `2160p SDR${codecLabel}`,
-            resolution: '2160p / 4K',
-            accentBorder: 'border-l-4 border-l-blue-500',
-            weight: 420,
-          };
-        } else {
-          return {
-            key: '2160p_h265',
-            title: `2160p 4K${codecLabel} ${src}`,
-            badge: `2160p${codecLabel}`,
-            resolution: '2160p / 4K',
-            accentBorder: 'border-l-4 border-l-amber-500',
-            weight: 410,
-          };
-        }
-      }
+      const isVerified = Boolean(
+        officialCandidate &&
+        officialCandidate.trim() &&
+        !officialCandidate.trim().toLowerCase().startsWith('episode ')
+      );
 
-      if (resTag === '1080p') {
-        const codecLabel = isHEVC ? ' H.265' : '';
-        if (dyn === 'DV HDR' || dyn === 'DV') {
-          return {
-            key: '1080p_dv_hdr_h265',
-            title: `1080p DV HDR${codecLabel} ${src}`,
-            badge: `1080p DV HDR${codecLabel}`,
-            resolution: '1080p',
-            accentBorder: 'border-l-4 border-l-fuchsia-400',
-            weight: 390,
-          };
-        } else if (dyn === 'HDR') {
-          return {
-            key: '1080p_hdr_h265',
-            title: `1080p HDR${codecLabel} ${src}`,
-            badge: `1080p HDR${codecLabel}`,
-            resolution: '1080p',
-            accentBorder: 'border-l-4 border-l-indigo-400',
-            weight: 380,
-          };
-        } else if (dyn === 'SDR') {
-          return {
-            key: '1080p_sdr_h265',
-            title: `1080p SDR${codecLabel} ${src}`,
-            badge: `1080p SDR${codecLabel}`,
-            resolution: '1080p',
-            accentBorder: 'border-l-4 border-l-sky-500',
-            weight: 350,
-          };
-        } else if (is10Bit && isHEVC) {
-          return {
-            key: '1080p_hevc_10bit',
-            title: `1080p 10-bit HEVC ${src}`,
-            badge: '1080p HEVC 10bit',
-            resolution: '1080p',
-            accentBorder: 'border-l-4 border-l-emerald-400',
-            weight: 360,
-          };
-        } else if (isHEVC) {
-          return {
-            key: '1080p_h265',
-            title: `1080p H.265 ${src}`,
-            badge: '1080p H.265',
-            resolution: '1080p',
-            accentBorder: 'border-l-4 border-l-purple-500',
-            weight: 340,
-          };
-        } else {
-          return {
-            key: '1080p_webdl',
-            title: `1080p ${src}`,
-            badge: '1080p',
-            resolution: '1080p',
-            accentBorder: 'border-l-4 border-l-cyan-400',
-            weight: 300,
-          };
-        }
-      }
+      const officialTitle = isVerified
+        ? officialCandidate!.trim()
+        : (extractEpisodeTitle(epLinks[0]?.title || '') || `Episode ${epNum}`);
 
-      if (resTag === '720p') {
-        const codecLabel = isHEVC ? ' HEVC' : '';
-        if (dyn === 'DV HDR' || dyn === 'DV') {
-          return {
-            key: '720p_dv_hdr',
-            title: `720p DV HDR${codecLabel} ${src}`,
-            badge: `720p DV HDR${codecLabel}`,
-            resolution: '720p',
-            accentBorder: 'border-l-4 border-l-fuchsia-400',
-            weight: 270,
-          };
-        } else if (dyn === 'HDR') {
-          return {
-            key: '720p_hdr',
-            title: `720p HDR${codecLabel} ${src}`,
-            badge: `720p HDR${codecLabel}`,
-            resolution: '720p',
-            accentBorder: 'border-l-4 border-l-indigo-400',
-            weight: 260,
-          };
-        } else if (is10Bit && isHEVC) {
-          return {
-            key: '720p_hevc_10bit',
-            title: `720p 10-bit HEVC ${src}`,
-            badge: '720p HEVC 10bit',
-            resolution: '720p',
-            accentBorder: 'border-l-4 border-l-emerald-400',
-            weight: 250,
-          };
-        } else if (isHEVC) {
-          return {
-            key: '720p_hevc',
-            title: `720p HEVC ${src}`,
-            badge: '720p HEVC',
-            resolution: '720p',
-            accentBorder: 'border-l-4 border-l-teal-400',
-            weight: 240,
-          };
-        } else {
-          return {
-            key: '720p_webdl',
-            title: `720p HD ${src}`,
-            badge: '720p',
-            resolution: '720p',
-            accentBorder: 'border-l-4 border-l-teal-400',
-            weight: 200,
-          };
-        }
-      }
+      // Dot separator ' · ' matching user mockup media_1791796102840_4c86c0a4.png
+      const heading = `${sTag} · ${officialTitle}`;
 
       return {
-        key: '480p_webdl',
-        title: `480p SD ${src}`,
-        badge: '480p',
-        resolution: '480p',
-        accentBorder: 'border-l-4 border-l-slate-400',
-        weight: 100,
+        episodeNumber: epNum,
+        sTag,
+        heading,
+        officialTitle,
+        isVerified,
+        overview: verifiedObj?.overview,
+        releases: epLinks,
       };
-    };
-
-    const slidesMap = new Map<
-      string,
-      {
-        key: string;
-        title: string;
-        resolution: string;
-        source: string;
-        dynamicRange?: string;
-        accentBorder: string;
-        weight: number;
-        options: ReleaseOption[];
-        episodes: Array<{
-          episodeNumber: number;
-          title: string;
-          episodeName: string;
-          size: string;
-          audio: string;
-          codec?: string;
-          dynamicRange?: string;
-          bitDepth?: string;
-          containerLabel?: string;
-          links: EnrichedLink[];
-        }>;
-      }
-    >();
-
-    formats.forEach((fmt) => {
-      fmt.options.forEach((opt) => {
-        const sample = opt.episodes[0] || opt.packs[0];
-        const sampleTitle = sample?.title || opt.title;
-        const prof = extractReleaseProfile(sampleTitle, sample?.quality, titleDetails, sample?.url);
-
-        const info = getQualitySlideInfo(
-          fmt.resolution,
-          fmt.source,
-          prof.dynamicRange,
-          prof.codec,
-          sampleTitle,
-          sample?.url
-        );
-
-        if (!slidesMap.has(info.key)) {
-          slidesMap.set(info.key, {
-            key: info.key,
-            title: info.title,
-            resolution: info.resolution,
-            source: fmt.source || 'WEB-DL',
-            dynamicRange: prof.dynamicRange,
-            accentBorder: info.accentBorder,
-            weight: info.weight,
-            options: [],
-            episodes: [],
-          });
-        }
-
-        slidesMap.get(info.key)!.options.push(opt);
-      });
     });
-
-    // Populate unique episodes per slide
-    slidesMap.forEach((slide) => {
-      const epMap = new Map<
-        number,
-        {
-          episodeNumber: number;
-          title: string;
-          episodeName: string;
-          size: string;
-          audio: string;
-          codec?: string;
-          dynamicRange?: string;
-          bitDepth?: string;
-          containerLabel?: string;
-          links: EnrichedLink[];
-        }
-      >();
-
-      slide.options.forEach((opt) => {
-        opt.episodes.forEach((ep) => {
-          const epNum = ep.episodeNumber || 1;
-          if (!epMap.has(epNum)) {
-            const detectedSz = ep.size || detectSize(ep.title) || detectSize(undefined, undefined, ep.url) || '';
-            const epFormattedTitle = formatEpisodeTitle(
-              ep,
-              opt,
-              titleDetails,
-              selectedSeason,
-              slide.resolution,
-              slide.source
-            );
-            const epName = extractEpisodeTitle(ep.title) || extractEpisodeTitle(epFormattedTitle);
-            const prof = extractReleaseProfile(ep.title || epFormattedTitle, ep.quality, titleDetails, ep.url, ep.manualOverrides);
-
-            epMap.set(epNum, {
-              episodeNumber: epNum,
-              title: epFormattedTitle,
-              episodeName: epName,
-              size: detectedSz,
-              audio: opt.audioLanguages,
-              codec: prof.codec,
-              dynamicRange: prof.dynamicRange || slide.dynamicRange,
-              bitDepth: prof.bitDepth,
-              containerLabel: prof.containerLabel,
-              links: [],
-            });
-          }
-          epMap.get(epNum)!.links.push(ep);
-        });
-      });
-
-      slide.episodes = Array.from(epMap.values()).sort((a, b) => a.episodeNumber - b.episodeNumber);
-    });
-
-    // If no format groups exist yet for this season, present standard 1080p and 720p slides
-    if (slidesMap.size === 0) {
-      return [
-        {
-          key: '1080p_webdl',
-          title: '1080p WebDL',
-          resolution: '1080p',
-          source: 'WEB-DL',
-          accentBorder: 'border-l-4 border-l-cyan-400',
-          weight: 300,
-          options: [],
-          episodes: [],
-        },
-        {
-          key: '720p_webdl',
-          title: '720p WebDL',
-          resolution: '720p',
-          source: 'WEB-DL',
-          accentBorder: 'border-l-4 border-l-teal-400',
-          weight: 200,
-          options: [],
-          episodes: [],
-        },
-      ];
-    }
-
-    // Sort: highest quality first (2160p DV HDR > 2160p HDR > 2160p SDR > 1080p HEVC > 1080p > 720p > 480p)
-    return Array.from(slidesMap.values()).sort((a, b) => b.weight - a.weight);
-  }, [seasonGroupsMap, selectedSeason, titleDetails]);
+  }, [enrichedLinks, effectiveSeason, verifiedEpisodesMap]);
 
   // Accordion toggle: clicking an open tab minimizes it, clicking a minimized tab maximizes it & closes other tabs
   const toggleSlide = (slideKey: string) => {
     setOpenSlideId((prev) => (prev === slideKey ? null : slideKey));
   };
-
-  // Keep all tabs minimized by default and reset to minimized when switching seasons
-  useEffect(() => {
-    setOpenSlideId(null);
-  }, [selectedSeason]);
 
   const handleStartEdit = (link: CustomLink) => {
     const prof = extractReleaseProfile(link.title, link.quality, titleDetails, link.url, link.manualOverrides);
@@ -1170,12 +1033,12 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
         </label>
         <div className="flex flex-wrap items-center gap-2.5 sm:gap-3">
           {seasonsList.map((s) => {
-            const isActive = selectedSeason === s;
+            const isActive = effectiveSeason === s;
             return (
               <button
                 key={s}
                 type="button"
-                onClick={() => setSelectedSeason(s)}
+                onClick={() => handleSelectSeason(s)}
                 className={`px-5 py-2.5 sm:px-6 sm:py-3 rounded-2xl font-black text-xs sm:text-sm tracking-wider uppercase transition-all cursor-pointer select-none ${
                   isActive
                     ? 'bg-gradient-to-r from-blue-600 via-blue-500 to-indigo-600 text-white shadow-[0_4px_24px_rgba(59,130,246,0.65)] border border-blue-400/40 scale-[1.02]'
@@ -1392,7 +1255,7 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
                     <Layers className="w-6 h-6" />
                   </div>
                   <h4 className="text-white font-bold text-base sm:text-lg">
-                    No Complete Season {selectedSeason} Zip Packs Uploaded Yet
+                    No Complete Season {effectiveSeason} Zip Packs Uploaded Yet
                   </h4>
                   <p className="text-xs sm:text-sm text-zinc-400 max-w-md mx-auto">
                     Single episodes are available in the quality slides below! You can also request a complete season pack zip archive.
@@ -1404,7 +1267,7 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
                       className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs uppercase tracking-wider shadow-lg shadow-blue-600/30 transition-all cursor-pointer"
                     >
                       <Sparkles className="w-3.5 h-3.5" />
-                      <span>Request Season {selectedSeason} Zip Pack</span>
+                      <span>Request Season {effectiveSeason} Zip Pack</span>
                     </button>
                     {isEffectiveAdmin && (
                       <a
@@ -1421,227 +1284,327 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
           )}
         </div>
 
-        {/* SLIDES: Episode-Wise Quality Slides (e.g. 2160p 4K, 1080p, 720p, 480p) */}
-        {qualitySlides.map((slide) => {
-          const isOpen = openSlideId === slide.key;
-          const episodesCount = slide.episodes.length;
+        {/* EPISODE CARDS WITH COMPACT CLICKABLE QUALITY FILTERS */}
+        <div className="space-y-4">
+          {seasonEpisodes.length > 0 ? (
+            seasonEpisodes.map((ep) => {
+              const isExpanded = Boolean(expandedEpisodeCards[ep.episodeNumber]);
+              const activeChips = episodeFilters[ep.episodeNumber] || [];
+              const filteredReleases = filterReleasesForEpisode(ep.releases, activeChips);
+              const hasActiveFilters = activeChips.length > 0;
 
-          return (
-            <div
-              key={slide.key}
-              className={`rounded-2xl sm:rounded-3xl overflow-hidden border border-white/10 ${slide.accentBorder || 'border-l-4 border-l-cyan-400'} shadow-xl transition-all duration-300 bg-[#0e1322]/95 hover:bg-[#12182c]/95`}
-            >
-              {/* Quality Card Button matching media_1790899727140.png */}
-              <button
-                type="button"
-                onClick={() => toggleSlide(slide.key)}
-                className="w-full text-left p-4 sm:p-5 flex items-center justify-between gap-4 cursor-pointer select-none focus:outline-none transition-colors"
-              >
-                <div className="flex items-center gap-3.5 sm:gap-4 min-w-0 flex-1">
-                  <div className="w-12 h-12 rounded-2xl bg-[#1c243a] border border-[#2b3756] flex items-center justify-center text-white shadow-inner shrink-0">
-                    <Play className="w-5 h-5 fill-white text-white ml-0.5" />
-                  </div>
+              return (
+                <div
+                  key={ep.episodeNumber}
+                  className="rounded-2xl sm:rounded-3xl overflow-hidden border border-white/10 shadow-xl transition-all duration-300 bg-[#0e1322]/95 hover:bg-[#12182c]/95"
+                >
+                  {/* Card Header & Filter Section */}
+                  <div className="p-4 sm:p-5 space-y-3">
+                    {/* Header Row: S01E01 · Title and Expand Chevron */}
+                    <div
+                      onClick={() => toggleExpandedEpisode(ep.episodeNumber)}
+                      className="flex items-start sm:items-center justify-between gap-4 cursor-pointer select-none group"
+                    >
+                      <div className="space-y-1 min-w-0 flex-1">
+                        <h4 className="text-base sm:text-lg font-bold text-white group-hover:text-blue-400 transition-colors flex items-center gap-2 flex-wrap">
+                          <span>{ep.heading}</span>
+                          {!ep.isVerified && (
+                            <span
+                              className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/25 font-semibold"
+                              title="Unverified title. Administrator can verify via Trakt/TMDB."
+                            >
+                              Unverified
+                            </span>
+                          )}
+                        </h4>
+                        <p className="text-xs text-zinc-400 font-medium">
+                          Available quality &amp; formats · Tap to filter
+                        </p>
+                      </div>
 
-                  <div className="space-y-1 min-w-0 flex-1">
-                    <p className="text-[11px] font-bold tracking-widest text-sky-400 uppercase">
-                      INDIVIDUAL EPISODES
-                    </p>
-                    <h4 className="text-lg sm:text-xl font-bold text-white tracking-tight leading-tight truncate">
-                      {slide.title}
-                    </h4>
-                    <p className="text-xs text-zinc-400 font-medium truncate">
-                      Episode Wise · GDrive · HubCloud · Download Links
-                    </p>
-                  </div>
-                </div>
+                      <button
+                        type="button"
+                        aria-expanded={isExpanded}
+                        aria-label={`Toggle releases for ${ep.sTag}`}
+                        className="text-zinc-400 hover:text-white shrink-0 p-1 rounded-lg hover:bg-white/5 transition-colors cursor-pointer"
+                      >
+                        {isExpanded ? (
+                          <ChevronUp className="w-5 h-5 text-zinc-300 transition-transform duration-200" />
+                        ) : (
+                          <ChevronDown className="w-5 h-5 text-zinc-400 transition-transform duration-200" />
+                        )}
+                      </button>
+                    </div>
 
-                <div className="text-zinc-400 shrink-0 p-1">
-                  {isOpen ? (
-                    <ChevronDown className="w-5 h-5 text-zinc-300 transition-transform duration-200" />
-                  ) : (
-                    <ChevronRight className="w-5 h-5 text-zinc-400 transition-transform duration-200" />
-                  )}
-                </div>
-              </button>
-
-              {/* Expanded Body for this Quality */}
-              {isOpen && (
-                <div className="bg-[#090c15] p-4 sm:p-6 space-y-5 animate-fadeIn border-t border-white/10">
-                  {episodesCount > 0 ? (
-                    <div className="space-y-2.5">
-                      {slide.episodes.map((ep) => {
-                        const primaryLink = ep.links[0];
-                        const server = primaryLink ? detectServer(primaryLink.url) : { name: 'HubCloud' };
-                        const serverName = server.name || 'HubCloud';
-
+                    {/* The 7 Filter Chips matching media_1791796102840_4c86c0a4.png */}
+                    <div
+                      className="flex flex-wrap items-center gap-2 pt-0.5"
+                      role="toolbar"
+                      aria-label={`Quality filters for ${ep.sTag}`}
+                    >
+                      {QUALITY_FILTER_CHIPS.map((chip) => {
+                        const isChipActive = activeChips.includes(chip);
                         return (
-                          <div
-                            key={ep.episodeNumber}
-                            className="group relative rounded-2xl bg-[#0e111a] hover:bg-[#131724] border border-white/5 hover:border-blue-500/40 p-3.5 sm:p-4.5 transition-all shadow-md hover:shadow-blue-500/10 flex flex-col md:flex-row md:items-center justify-between gap-3"
+                          <button
+                            key={chip}
+                            type="button"
+                            role="button"
+                            aria-pressed={isChipActive}
+                            aria-label={`Filter by ${chip}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleEpisodeFilter(ep.episodeNumber, chip);
+                            }}
+                            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer select-none border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 ${
+                              isChipActive
+                                ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white border-blue-400 shadow-[0_0_12px_rgba(59,130,246,0.5)] scale-[1.02]'
+                                : 'bg-[#131724] text-zinc-300 hover:text-white border-white/10 hover:border-blue-400/40 hover:bg-[#1a2133]'
+                            }`}
                           >
-                            {/* Direct Clickable Link to destination HubCloud / GDFlix */}
-                            <a
-                              href={sanitizeSafeUrl(primaryLink?.url)}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="flex-1 min-w-0 flex items-start sm:items-center gap-3 select-none cursor-pointer"
-                              title={`Click to open ${ep.title} on ${serverName}`}
-                            >
-                              {/* E01 Badge */}
-                              <span className="inline-flex items-center justify-center px-2.5 py-1 rounded-xl bg-gradient-to-r from-blue-600/30 to-indigo-600/30 border border-blue-500/40 text-blue-300 font-mono font-black text-xs shrink-0 shadow-inner group-hover:scale-105 transition-transform">
-                                E{ep.episodeNumber < 10 ? `0${ep.episodeNumber}` : ep.episodeNumber}
-                              </span>
-
-                              <div className="space-y-1 min-w-0 flex-1">
-                                {/* The Direct Clickable Scene Release Filename */}
-                                <div className="flex items-center gap-2">
-                                  <span className="font-mono text-xs sm:text-sm font-bold text-zinc-100 group-hover:text-blue-400 group-hover:underline transition-colors break-all line-clamp-2 md:line-clamp-1">
-                                    {ep.title}
-                                  </span>
-                                  <ExternalLink className="w-3.5 h-3.5 text-blue-400/70 group-hover:text-blue-300 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
-                                </div>
-
-                                {/* Subtext: Episode Name, Resolution, Source, Size, Codec, Dynamic Range, Audio, Server */}
-                                <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 text-[11px] text-zinc-400">
-                                  {ep.episodeName && (
-                                    <span className="font-semibold text-zinc-300">
-                                      {ep.episodeName}
-                                    </span>
-                                  )}
-                                  <span className="font-semibold text-blue-400">
-                                    {slide.resolution} {slide.source}
-                                  </span>
-                                  {ep.size && (
-                                    <span className="font-mono text-zinc-400 bg-white/5 px-2 py-0.5 rounded-md border border-white/5">
-                                      {ep.size}
-                                    </span>
-                                  )}
-                                  {ep.containerLabel && (
-                                    <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-zinc-700/50 text-zinc-200 border border-zinc-600/50">
-                                      {ep.containerLabel}
-                                    </span>
-                                  )}
-                                  {ep.dynamicRange && (
-                                    <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
-                                      ep.dynamicRange === 'Conflict'
-                                        ? 'bg-red-500/20 text-red-300 border border-red-500/40'
-                                        : 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/30'
-                                    }`}>
-                                      {ep.dynamicRange}
-                                    </span>
-                                  )}
-                                  {ep.bitDepth && (
-                                    <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
-                                      {ep.bitDepth}
-                                    </span>
-                                  )}
-                                  {ep.codec && (
-                                    <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-purple-500/15 text-purple-300 border border-purple-500/30">
-                                      {ep.codec}
-                                    </span>
-                                  )}
-                                  {ep.audio && (
-                                    <span className="text-zinc-500">
-                                      🔊 {ep.audio}
-                                    </span>
-                                  )}
-                                  <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-blue-500/15 text-blue-400 border border-blue-500/30">
-                                    {serverName}
-                                  </span>
-                                </div>
-                              </div>
-                            </a>
-
-                            {/* Report Broken Link Button (media_1790900300745.png) */}
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setReportingLink({
-                                  linkId: primaryLink?.id,
-                                  movieId: titleDetails.id,
-                                  mediaTitle: titleDetails.name || titleDetails.title || 'TV Series',
-                                  mediaType: 'tv',
-                                  posterPath: titleDetails.poster_path,
-                                  linkTitle: ep.title,
-                                  reportedUrl: primaryLink?.url || '',
-                                  quality: slide.resolution,
-                                  server: serverName,
-                                });
-                              }}
-                              className="p-2 sm:p-2.5 rounded-xl bg-[#141824] hover:bg-[#1d2335] text-zinc-400 hover:text-rose-400 border border-white/5 hover:border-rose-500/30 transition-colors cursor-pointer shrink-0 self-end md:self-center"
-                              title="Report broken or defective link"
-                            >
-                              <Flag className="w-3.5 h-3.5" />
-                            </button>
-
-                            {/* Admin Edit / Delete Actions (Only visible to admin) */}
-                            {(isEffectiveAdmin || isAdmin) && primaryLink && (
-                              <div className="flex items-center gap-1.5 shrink-0 self-end md:self-center">
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleStartEdit(primaryLink);
-                                  }}
-                                  className="p-2 sm:p-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-amber-400 border border-zinc-700 transition-colors cursor-pointer"
-                                  title="Admin: Edit link"
-                                >
-                                  <Pencil className="w-3.5 h-3.5" />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleDelete(primaryLink.id);
-                                  }}
-                                  className="p-2 sm:p-2.5 rounded-xl bg-rose-950 hover:bg-rose-900 text-rose-400 border border-rose-900/50 transition-colors cursor-pointer"
-                                  title="Admin: Delete link"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
-                            )}
-                          </div>
+                            {chip}
+                          </button>
                         );
                       })}
                     </div>
-                  ) : (
-                    <div className="p-8 rounded-2xl bg-[#0c0d13] border border-white/5 text-center space-y-3.5 shadow-xl">
-                      <div className="w-12 h-12 rounded-2xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center mx-auto text-blue-400">
-                        <FileVideo className="w-6 h-6" />
-                      </div>
-                      <h4 className="text-white font-bold text-base sm:text-lg">
-                        No {slide.title} Links for Season {selectedSeason} Yet
-                      </h4>
-                      <p className="text-xs sm:text-sm text-zinc-400 max-w-md mx-auto">
-                        Download links for this quality haven&apos;t been uploaded yet. Request below and our team will add it!
-                      </p>
-                      <div className="pt-2 flex flex-wrap items-center justify-center gap-3">
-                        <button
-                          type="button"
-                          onClick={() => setIsRequestModalOpen(true)}
-                          className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs uppercase tracking-wider shadow-lg shadow-blue-600/30 transition-all cursor-pointer"
-                        >
-                          <Sparkles className="w-3.5 h-3.5" />
-                          <span>Request {slide.resolution} Links</span>
-                        </button>
-                        {isEffectiveAdmin && (
-                          <a
-                            href={`/admin?title=${encodeURIComponent(titleDetails.name || titleDetails.title || '')}&id=${titleDetails.id}`}
-                            className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-zinc-800 border border-zinc-700 hover:border-amber-500/40 text-amber-300 hover:text-amber-200 text-xs font-bold transition-colors"
-                          >
-                            <Plus className="w-3.5 h-3.5" /> Upload in Admin ↗
-                          </a>
+
+                    {/* Filter Status Text & Reset Button */}
+                    <div className="flex items-center justify-between gap-3 text-xs text-zinc-400 pt-0.5 flex-wrap">
+                      <div>
+                        {!hasActiveFilters ? (
+                          <span>No filters selected · All available releases shown ({ep.releases.length})</span>
+                        ) : (
+                          <span>
+                            Showing <strong className="text-blue-400 font-mono">{filteredReleases.length}</strong> of{' '}
+                            <strong className="text-zinc-300 font-mono">{ep.releases.length}</strong> release(s) matching{' '}
+                            <span className="text-blue-300 font-semibold">{activeChips.join(' + ')}</span>
+                          </span>
                         )}
                       </div>
+
+                      {hasActiveFilters && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            resetEpisodeFilters(ep.episodeNumber);
+                          }}
+                          className="text-xs font-bold text-sky-400 hover:text-sky-300 hover:underline transition-colors cursor-pointer select-none"
+                        >
+                          Reset filters
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Episode Overview (if available from TMDB/Trakt) */}
+                    {ep.overview && (
+                      <p className="text-[11px] text-zinc-400/90 line-clamp-2 leading-relaxed pt-1">
+                        {ep.overview}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Expandable Releases Section (Destination Links Hidden Until Opened) */}
+                  {isExpanded && (
+                    <div className="bg-[#090c15] p-4 sm:p-5 space-y-3 border-t border-white/10 animate-fadeIn">
+                      {filteredReleases.length > 0 ? (
+                        <div className="space-y-2">
+                          {filteredReleases.map((rel, rIdx) => {
+                            const destinationUrl = rel.url || '#';
+                            const server = detectServer(destinationUrl);
+                            const serverName = server.name || 'Server';
+                            const cleanRelTitle = rel.title || `Release #${rIdx + 1}`;
+                            const prof = extractReleaseProfile(cleanRelTitle, rel.quality, titleDetails, rel.url, rel.manualOverrides);
+                            const detectedSz = rel.size || detectSize(cleanRelTitle) || detectSize(undefined, undefined, rel.url) || '';
+
+                            return (
+                              <div
+                                key={rel.id || rIdx}
+                                className="group relative rounded-xl bg-[#0e111a] hover:bg-[#131724] border border-white/5 hover:border-blue-500/40 p-3 sm:p-3.5 transition-all shadow-md flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs"
+                              >
+                                {/* Release Filename & Badges */}
+                                <div className="min-w-0 flex-1 space-y-1">
+                                  <div className="flex items-center gap-2">
+                                    <span className="px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-400 font-mono text-[10px]">
+                                      #{rIdx + 1}
+                                    </span>
+                                    <span className="font-mono text-zinc-200 font-semibold text-xs truncate block" title={cleanRelTitle}>
+                                      {cleanRelTitle}
+                                    </span>
+                                  </div>
+
+                                  {/* Badges: Resolution, Dynamic Range, Codec, Bit Depth, Size, Audio, Server */}
+                                  <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-zinc-400">
+                                    <span className="font-semibold text-blue-400 font-mono">
+                                      {prof.resolution} {prof.source}
+                                    </span>
+                                    {prof.dynamicRange && (
+                                      <span
+                                        className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
+                                          prof.dynamicRange === 'Conflict'
+                                            ? 'bg-red-500/20 text-red-300 border border-red-500/40'
+                                            : 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/30'
+                                        }`}
+                                      >
+                                        {prof.dynamicRange}
+                                      </span>
+                                    )}
+                                    {prof.bitDepth && (
+                                      <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                                        {prof.bitDepth}
+                                      </span>
+                                    )}
+                                    {prof.codec && (
+                                      <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-purple-500/15 text-purple-300 border border-purple-500/30">
+                                        {prof.codec}
+                                      </span>
+                                    )}
+                                    {detectedSz && (
+                                      <span className="font-mono text-zinc-400 bg-white/5 px-2 py-0.5 rounded-md border border-white/5">
+                                        {detectedSz}
+                                      </span>
+                                    )}
+                                    {rel.audioLanguage && (
+                                      <span className="text-zinc-500">
+                                        🔊 {rel.audioLanguage}
+                                      </span>
+                                    )}
+                                    <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-blue-500/15 text-blue-400 border border-blue-500/30">
+                                      {serverName}
+                                    </span>
+                                  </div>
+                                </div>
+
+                                {/* Direct Download Button & Action Icons */}
+                                <div className="flex items-center gap-2 shrink-0 self-end md:self-center">
+                                  <a
+                                    href={sanitizeSafeUrl(destinationUrl)}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="px-4 py-1.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs shadow-md shadow-blue-500/20 hover:scale-105 transition-all flex items-center gap-1.5 cursor-pointer"
+                                    title={`Download on ${serverName}`}
+                                  >
+                                    <Download className="w-3.5 h-3.5" />
+                                    <span>Download</span>
+                                    <ExternalLink className="w-3 h-3 opacity-70" />
+                                  </a>
+
+                                  {/* Flag Broken Link */}
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setReportingLink({
+                                        linkId: rel.id,
+                                        movieId: titleDetails.id,
+                                        mediaTitle: titleDetails.name || titleDetails.title || 'TV Series',
+                                        mediaType: 'tv',
+                                        posterPath: titleDetails.poster_path,
+                                        linkTitle: cleanRelTitle,
+                                        reportedUrl: destinationUrl,
+                                        quality: prof.resolution,
+                                        server: serverName,
+                                      });
+                                    }}
+                                    className="p-2 rounded-xl bg-[#141824] hover:bg-[#1d2335] text-zinc-400 hover:text-rose-400 border border-white/5 hover:border-rose-500/30 transition-colors cursor-pointer shrink-0"
+                                    title="Report broken or defective link"
+                                  >
+                                    <Flag className="w-3.5 h-3.5" />
+                                  </button>
+
+                                  {/* Admin controls */}
+                                  {(isEffectiveAdmin || isAdmin) && (
+                                    <div className="flex items-center gap-1.5 shrink-0">
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleStartEdit(rel);
+                                        }}
+                                        className="p-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-amber-400 border border-zinc-700 transition-colors cursor-pointer"
+                                        title="Admin: Edit link"
+                                      >
+                                        <Pencil className="w-3.5 h-3.5" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleDelete(rel.id);
+                                        }}
+                                        className="p-2 rounded-xl bg-rose-950 hover:bg-rose-900 text-rose-400 border border-rose-900/50 transition-colors cursor-pointer"
+                                        title="Admin: Delete link"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        /* Empty State when no releases match selected filter */
+                        <div className="p-6 rounded-xl bg-[#0c0d13] border border-white/5 text-center space-y-2.5">
+                          <p className="text-xs sm:text-sm text-zinc-300 font-medium">
+                            No releases match the selected filters ({activeChips.join(' + ')}).
+                          </p>
+                          <div className="flex items-center justify-center gap-3 pt-1">
+                            <button
+                              type="button"
+                              onClick={() => resetEpisodeFilters(ep.episodeNumber)}
+                              className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs transition-colors cursor-pointer"
+                            >
+                              Reset filters
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setIsRequestModalOpen(true)}
+                              className="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 font-bold text-xs transition-colors cursor-pointer"
+                            >
+                              Request this format
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
-              )}
+              );
+            })
+          ) : (
+            /* Season-Level Empty State */
+            <div className="p-8 rounded-2xl bg-[#0c0d13] border border-white/5 text-center space-y-3.5 shadow-xl">
+              <div className="w-12 h-12 rounded-2xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center mx-auto text-blue-400">
+                <FileVideo className="w-6 h-6" />
+              </div>
+              <h4 className="text-white font-bold text-base sm:text-lg">
+                No Episode Links Uploaded for Season {effectiveSeason} Yet
+              </h4>
+              <p className="text-xs sm:text-sm text-zinc-400 max-w-md mx-auto">
+                Download links for Season {effectiveSeason} haven&apos;t been uploaded yet. Request below and our team will add it!
+              </p>
+              <div className="pt-2 flex flex-wrap items-center justify-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setIsRequestModalOpen(true)}
+                  className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs uppercase tracking-wider shadow-lg shadow-blue-600/30 transition-all cursor-pointer"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>Request Season {effectiveSeason} Links</span>
+                </button>
+                {isEffectiveAdmin && (
+                  <a
+                    href={`/admin?title=${encodeURIComponent(titleDetails.name || titleDetails.title || '')}&id=${titleDetails.id}`}
+                    className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-zinc-800 border border-zinc-700 hover:border-amber-500/40 text-amber-300 hover:text-amber-200 text-xs font-bold transition-colors"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Upload in Admin ↗
+                  </a>
+                )}
+              </div>
             </div>
-          );
-        })}
+          )}
+        </div>
       </div>
 
       {/* Bottom Request Custom Quality & Report Card */}
@@ -1724,7 +1687,7 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
                   </label>
                   <select
                     value={editType}
-                    onChange={(e) => setEditType(e.target.value as any)}
+                    onChange={(e) => setEditType(e.target.value as 'zip_pack' | 'single_episode')}
                     className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
                   >
                     <option value="zip_pack">🗜️ Complete Season Zip/Pack</option>

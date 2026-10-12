@@ -295,7 +295,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
   const [managingTitle, setManagingTitle] = useState<LinkedCatalogTitle | null>(null);
   const [managingTitleLinks, setManagingTitleLinks] = useState<CustomLink[]>([]);
   const [isLoadingManagingLinks, setIsLoadingManagingLinks] = useState(false);
-  const [titleManagerTab, setTitleManagerTab] = useState<'view' | 'replace' | 'domain' | 'add' | 'edit_title'>('view');
+  const [titleManagerTab, setTitleManagerTab] = useState<'view' | 'replace' | 'domain' | 'add' | 'edit_title' | 'trakt_episodes'>('view');
   const [titleLinksSearch, setTitleLinksSearch] = useState('');
 
   // Title Metadata Direct Editing State (without TMDB search)
@@ -309,6 +309,46 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
   const [isSavingTitleMeta, setIsSavingTitleMeta] = useState(false);
   const [titleMetaMsg, setTitleMetaMsg] = useState('');
   const [titleMetaError, setTitleMetaError] = useState('');
+
+  // Trakt TV Episode Titles State
+  const [traktSeason, setTraktSeason] = useState(1);
+  const [traktEpisode, setTraktEpisode] = useState(1);
+  const [traktShowId, setTraktShowId] = useState('');
+  const [traktFetchedTitle, setTraktFetchedTitle] = useState('');
+  const [traktOverview, setTraktOverview] = useState('');
+  const [traktShowTitle, setTraktShowTitle] = useState('');
+  const [isTraktLoading, setIsTraktLoading] = useState(false);
+  const [isTraktSaving, setIsTraktSaving] = useState(false);
+  const [traktMsg, setTraktMsg] = useState('');
+  const [traktError, setTraktError] = useState('');
+  const [traktSeasonEpisodes, setTraktSeasonEpisodes] = useState<
+    Array<{ episodeNumber: number; title: string; overview?: string; traktId?: number }>
+  >([]);
+
+  // Batch Official Titles Sync & Verification State
+  const [traktViewMode, setTraktViewMode] = useState<'single' | 'batch'>('single');
+  const [batchEpisodeDiff, setBatchEpisodeDiff] = useState<
+    Array<{
+      seasonNumber: number;
+      episodeNumber: number;
+      currentEpisodeTitle: string | null;
+      sampleReleaseTitle: string;
+      linkCount: number;
+      urlsIntact: boolean;
+      proposedOfficialTitle: string;
+      proposedHeading: string;
+      source: 'tmdb' | 'trakt' | 'stored' | 'fallback';
+      isVerified: boolean;
+      status: 'clean' | 'needs_update' | 'unverified';
+      overview?: string;
+    }>
+  >([]);
+  const [isBatchVerifying, setIsBatchVerifying] = useState(false);
+  const [isBatchApplying, setIsBatchApplying] = useState(false);
+  const [batchApplySuccessMsg, setBatchApplySuccessMsg] = useState('');
+  const [batchApplyErrorMsg, setBatchApplyErrorMsg] = useState('');
+  const [batchFilterStatus, setBatchFilterStatus] = useState<'all' | 'needs_update' | 'unverified'>('all');
+  const [batchTargetSeason, setBatchTargetSeason] = useState<number | 'all'>('all');
 
   // Whole Link Replacement State
   const [replaceRawLinksText, setReplaceRawLinksText] = useState('');
@@ -1115,7 +1155,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
   }, []);
 
   // Open the dedicated Title Manager Modal for a specific title
-  const openTitleManager = (title: LinkedCatalogTitle, defaultTab: 'view' | 'replace' | 'edit_title' = 'view') => {
+  const openTitleManager = (title: LinkedCatalogTitle, defaultTab: 'view' | 'replace' | 'edit_title' | 'trakt_episodes' = 'view') => {
     setManagingTitle(title);
     setTitleManagerTab(defaultTab);
     setTitleManagerModalOpen(true);
@@ -1144,6 +1184,17 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
     setEditTitleOverview((title as any).overview || '');
     setTitleMetaMsg('');
     setTitleMetaError('');
+
+    // Initialize Trakt episode states
+    setTraktSeason(1);
+    setTraktEpisode(1);
+    setTraktShowId(String(title.id));
+    setTraktFetchedTitle('');
+    setTraktOverview('');
+    setTraktShowTitle(title.title || '');
+    setTraktMsg('');
+    setTraktError('');
+    setTraktSeasonEpisodes([]);
 
     setSelectedTargetTitle({
       id: Number(title.id),
@@ -1370,6 +1421,245 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
       setTitleMetaError(`❌ Error: ${err.message || 'Network error'}`);
     } finally {
       setIsSavingTitleMeta(false);
+    }
+  };
+
+  // Trakt Episode Titles: Fetch single episode from Trakt API
+  const handleFetchTraktEpisode = async (seasonNum?: number, episodeNum?: number) => {
+    if (!managingTitle) return;
+    const s = seasonNum !== undefined ? seasonNum : traktSeason;
+    const e = episodeNum !== undefined ? episodeNum : traktEpisode;
+    setIsTraktLoading(true);
+    setTraktError('');
+    setTraktMsg('');
+
+    try {
+      const showId = traktShowId.trim() || String(managingTitle.id);
+      const params = new URLSearchParams({
+        tmdbId: showId,
+        query: managingTitle.title,
+        season: String(s),
+        episode: String(e),
+      });
+
+      const res = await fetch(`/api/admin/trakt-episode?${params.toString()}`, {
+        headers: getAdminAuthHeaders(),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setTraktError(data.error || 'Failed to fetch episode title from Trakt.');
+      } else {
+        setTraktFetchedTitle(data.title || '');
+        setTraktOverview(data.overview || '');
+        setTraktShowTitle(data.showTitle || managingTitle.title);
+        setTraktMsg(`Retrieved title from Trakt: "${data.title}" (Season ${s}, Episode ${e})`);
+      }
+    } catch (err: any) {
+      setTraktError(`Network error fetching from Trakt: ${err?.message || err}`);
+    } finally {
+      setIsTraktLoading(false);
+    }
+  };
+
+  // Trakt Episode Titles: Fetch entire season list from Trakt API
+  const handleFetchTraktSeason = async (seasonNum?: number) => {
+    if (!managingTitle) return;
+    const s = seasonNum !== undefined ? seasonNum : traktSeason;
+    setIsTraktLoading(true);
+    setTraktError('');
+    setTraktMsg('');
+    setTraktSeasonEpisodes([]);
+
+    try {
+      const showId = traktShowId.trim() || String(managingTitle.id);
+      const params = new URLSearchParams({
+        tmdbId: showId,
+        query: managingTitle.title,
+        season: String(s),
+        seasonOnly: 'true',
+      });
+
+      const res = await fetch(`/api/admin/trakt-episode?${params.toString()}`, {
+        headers: getAdminAuthHeaders(),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setTraktError(data.error || 'Failed to fetch season episodes from Trakt.');
+      } else {
+        setTraktSeasonEpisodes(data.episodes || []);
+        setTraktShowTitle(data.showTitle || managingTitle.title);
+        setTraktMsg(`Retrieved ${data.episodes?.length || 0} episodes for Season ${s} from Trakt.`);
+      }
+    } catch (err: any) {
+      setTraktError(`Network error fetching season from Trakt: ${err?.message || err}`);
+    } finally {
+      setIsTraktLoading(false);
+    }
+  };
+
+  // Trakt Episode Titles: Save episode title to database
+  const handleSaveTraktEpisodeTitle = async (
+    customTitle?: string,
+    seasonNum?: number,
+    episodeNum?: number,
+    linkId?: string
+  ) => {
+    if (!managingTitle) return;
+    const s = seasonNum !== undefined ? seasonNum : traktSeason;
+    const e = episodeNum !== undefined ? episodeNum : traktEpisode;
+    const titleToSave = (customTitle !== undefined ? customTitle : traktFetchedTitle).trim();
+
+    if (!titleToSave) {
+      setTraktError('Episode title cannot be empty. Please enter or fetch a title before saving.');
+      return;
+    }
+
+    try {
+      setIsTraktSaving(true);
+      setTraktError('');
+      setTraktMsg('');
+
+      const res = await fetch('/api/curated-links', {
+        method: 'POST',
+        headers: getAdminAuthHeaders(),
+        body: JSON.stringify({
+          movieId: String(managingTitle.id),
+          action: 'update_episode_title',
+          seasonNumber: s,
+          episodeNumber: e,
+          episodeTitle: titleToSave,
+          linkId,
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setTraktMsg(`✅ Saved episode title "${titleToSave}" for S${s}E${e}! Destination links (URLs) remain 100% untouched.`);
+        addLog(`Admin updated episode title for "${managingTitle.title}" S${s}E${e} to "${titleToSave}"`, 'success');
+
+        // Update local state in managingTitleLinks
+        setManagingTitleLinks((prev) =>
+          prev.map((l) => {
+            const matches = linkId
+              ? l.id === linkId
+              : Number(l.seasonNumber) === s && Number(l.episodeNumber) === e;
+            if (matches) {
+              return { ...l, episodeTitle: titleToSave };
+            }
+            return l;
+          })
+        );
+      } else {
+        setTraktError(`❌ ${data.error || 'Failed to save episode title.'}`);
+      }
+    } catch (err: any) {
+      setTraktError(`❌ Error saving episode title: ${err?.message || err}`);
+    } finally {
+      setIsTraktSaving(false);
+    }
+  };
+
+  // Batch Official Episode Titles: Fetch audit diff
+  const handleFetchBatchEpisodeDiff = async (targetSeason?: number | 'all') => {
+    if (!managingTitle) return;
+    const seasonToQuery = targetSeason !== undefined ? targetSeason : batchTargetSeason;
+    setIsBatchVerifying(true);
+    setBatchApplyErrorMsg('');
+    setBatchApplySuccessMsg('');
+
+    try {
+      const showId = traktShowId.trim() || String(managingTitle.id);
+      const queryParams = new URLSearchParams({
+        movieId: showId,
+        showTitle: managingTitle.title,
+      });
+      if (seasonToQuery !== 'all') {
+        queryParams.set('season', String(seasonToQuery));
+      }
+
+      const res = await fetch(`/api/admin/verify-episode-titles?${queryParams.toString()}`, {
+        headers: getAdminAuthHeaders(),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setBatchApplyErrorMsg(data.error || 'Failed to fetch batch episode audit.');
+      } else {
+        setBatchEpisodeDiff(data.preview || []);
+        if (data.preview?.length === 0) {
+          setBatchApplySuccessMsg('No episode links found to verify for this series.');
+        } else {
+          setBatchApplySuccessMsg(`Audit loaded: ${data.totalEpisodes} episodes inspected (${data.needsUpdateCount} need title cleanup, ${data.unverifiedCount} unverified).`);
+        }
+      }
+    } catch (err: any) {
+      setBatchApplyErrorMsg(`Network error running audit: ${err?.message || err}`);
+    } finally {
+      setIsBatchVerifying(false);
+    }
+  };
+
+  // Batch Official Episode Titles: Apply verified titles safely
+  const handleApplyBatchEpisodeTitles = async (itemsToApply?: typeof batchEpisodeDiff) => {
+    if (!managingTitle) return;
+    const items = itemsToApply || batchEpisodeDiff.filter((i) => i.status === 'needs_update' || i.isVerified);
+    if (items.length === 0) {
+      setBatchApplyErrorMsg('No items selected to update.');
+      return;
+    }
+
+    setIsBatchApplying(true);
+    setBatchApplyErrorMsg('');
+    setBatchApplySuccessMsg('');
+
+    try {
+      const showId = traktShowId.trim() || String(managingTitle.id);
+      const updates = items.map((i) => ({
+        seasonNumber: i.seasonNumber,
+        episodeNumber: i.episodeNumber,
+        episodeTitle: i.proposedOfficialTitle.trim(),
+      }));
+
+      const res = await fetch('/api/admin/verify-episode-titles', {
+        method: 'POST',
+        headers: getAdminAuthHeaders(),
+        body: JSON.stringify({
+          action: 'apply',
+          movieId: showId,
+          updates,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setBatchApplyErrorMsg(data.error || 'Failed to apply batch updates.');
+      } else {
+        setBatchApplySuccessMsg(`✅ Successfully updated ${data.totalApplied} episode titles across ${data.totalLinksUpdated} links! All destination URLs remain 100% untouched.`);
+        addLog(`Admin batch-applied ${data.totalApplied} official episode titles for "${managingTitle.title}"`, 'success');
+
+        // Update local state in managingTitleLinks
+        const updateMap = new Map<string, string>();
+        updates.forEach((u) => updateMap.set(`S${u.seasonNumber}E${u.episodeNumber}`, u.episodeTitle));
+
+        setManagingTitleLinks((prev) =>
+          prev.map((l) => {
+            const key = `S${l.seasonNumber}E${l.episodeNumber}`;
+            if (updateMap.has(key)) {
+              return { ...l, episodeTitle: updateMap.get(key) };
+            }
+            return l;
+          })
+        );
+
+        // Re-run preview to refresh clean state
+        handleFetchBatchEpisodeDiff(batchTargetSeason);
+      }
+    } catch (err: any) {
+      setBatchApplyErrorMsg(`Error applying batch updates: ${err?.message || err}`);
+    } finally {
+      setIsBatchApplying(false);
     }
   };
 
@@ -4190,10 +4480,12 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                   Total Custom Links
                 </span>
                 <p className="text-3xl font-black text-purple-400 my-1">
-                  {effectiveTotalLinks > 0 ? effectiveTotalLinks.toLocaleString() : '12,083'}
+                  {effectiveTotalLinks > 0 ? effectiveTotalLinks.toLocaleString() : '13,556'}
                 </p>
               </div>
-              <span className="text-[11px] text-slate-400 font-medium">12,000+ in cloud database</span>
+              <span className="text-[11px] text-slate-400 font-medium">
+                {effectiveTotalLinks > 0 ? `${effectiveTotalLinks.toLocaleString()} in MongoDB Atlas` : 'Synced in cloud database'}
+              </span>
               {/* Bottom-right purple wave */}
               <svg className="absolute -bottom-1 -right-1 w-24 h-12 pointer-events-none opacity-40" viewBox="0 0 100 50" fill="none">
                 <path d="M0 35 C25 45, 50 10, 80 30 C90 38, 95 20, 100 15" stroke="#a855f7" strokeWidth="2.5" strokeLinecap="round" />
@@ -9184,6 +9476,21 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                 <Globe className="w-3.5 h-3.5" />
                 <span>Migrate Domain</span>
               </button>
+
+              {managingTitle.media_type === 'tv' && (
+                <button
+                  type="button"
+                  onClick={() => setTitleManagerTab('trakt_episodes')}
+                  className={`flex items-center gap-1.5 px-4 py-2.5 rounded-t-xl text-xs font-bold transition-all border-b-2 cursor-pointer ${
+                    titleManagerTab === 'trakt_episodes'
+                      ? 'border-indigo-400 text-indigo-300 bg-zinc-900/80 shadow-[0_0_15px_rgba(99,102,241,0.2)]'
+                      : 'border-transparent text-zinc-400 hover:text-zinc-200'
+                  }`}
+                >
+                  <Tv className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>📺 Trakt Episode Titles</span>
+                </button>
+              )}
             </div>
 
             {/* Modal Body with Scrolling */}
@@ -9290,9 +9597,16 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                               )}
 
                               <div className="min-w-0 space-y-0.5 flex-1">
-                                <span className="font-bold text-white block truncate" title={link.title}>
-                                  {link.title}
-                                </span>
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="font-bold text-white block truncate" title={link.title}>
+                                    {link.title}
+                                  </span>
+                                  {link.episodeTitle && (
+                                    <span className="px-2 py-0.5 rounded-md bg-indigo-500/20 text-indigo-300 text-[10px] font-semibold border border-indigo-500/30">
+                                      ✨ {link.episodeTitle}
+                                    </span>
+                                  )}
+                                </div>
                                 <span className="font-mono text-[11px] text-zinc-400 truncate block max-w-md" title={link.url}>
                                   {link.url}
                                 </span>
@@ -9300,6 +9614,23 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                             </div>
 
                             <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+                              {managingTitle.media_type === 'tv' && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setTraktSeason(link.seasonNumber || 1);
+                                    setTraktEpisode(link.episodeNumber || 1);
+                                    setTitleManagerTab('trakt_episodes');
+                                    handleFetchTraktEpisode(link.seasonNumber || 1, link.episodeNumber || 1);
+                                  }}
+                                  className="px-2 py-1 rounded-lg bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-300 border border-indigo-500/30 text-[10px] font-bold flex items-center gap-1 transition-colors cursor-pointer"
+                                  title="Fetch or Edit episode title with Trakt"
+                                >
+                                  <Tv className="w-3 h-3" />
+                                  <span>Trakt</span>
+                                </button>
+                              )}
+
                               <span className="px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-300 font-mono font-bold text-[10px] border border-amber-500/20">
                                 {link.quality || '1080p'}
                               </span>
@@ -9853,6 +10184,611 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                     </button>
                   </div>
                 </form>
+              )}
+
+              {/* TAB 6: TRAKT TV EPISODE TITLES */}
+              {titleManagerTab === 'trakt_episodes' && managingTitle && (
+                <div className="space-y-6 animate-fade-in">
+                  {/* Info Card */}
+                  <div className="p-4 rounded-2xl bg-indigo-500/10 border border-indigo-500/25 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="p-1.5 rounded-lg bg-indigo-500/20 text-indigo-300">
+                          <Tv className="w-4 h-4" />
+                        </span>
+                        <h4 className="text-sm font-bold text-white">Trakt TV Episode Title Lookup & Review</h4>
+                      </div>
+                      <p className="text-xs text-zinc-300">
+                        Retrieve official episode titles via Trakt API v2 and store them cleanly. Existing destination links (URLs) remain strictly intact and protected.
+                      </p>
+                    </div>
+                    <div className="px-3 py-1.5 rounded-xl bg-zinc-900/90 border border-emerald-500/30 text-emerald-300 text-[11px] font-mono font-bold flex items-center gap-1.5 shrink-0">
+                      <Lock className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>URLs 100% Protected</span>
+                    </div>
+                  </div>
+
+                  {/* Mode Selector */}
+                  <div className="flex items-center gap-2 p-1 bg-zinc-950 rounded-xl border border-zinc-800 w-fit">
+                    <button
+                      type="button"
+                      onClick={() => setTraktViewMode('single')}
+                      className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                        traktViewMode === 'single'
+                          ? 'bg-indigo-600 text-white shadow-md'
+                          : 'text-zinc-400 hover:text-zinc-200'
+                      }`}
+                    >
+                      <Tv className="w-3.5 h-3.5" />
+                      <span>Single Episode Lookup</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTraktViewMode('batch');
+                        if (batchEpisodeDiff.length === 0) {
+                          handleFetchBatchEpisodeDiff(batchTargetSeason);
+                        }
+                      }}
+                      className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                        traktViewMode === 'batch'
+                          ? 'bg-indigo-600 text-white shadow-md'
+                          : 'text-zinc-400 hover:text-zinc-200'
+                      }`}
+                    >
+                      <Layers className="w-3.5 h-3.5" />
+                      <span>Batch Audit & Auto-Sync (All Episodes)</span>
+                    </button>
+                  </div>
+
+                  {traktViewMode === 'single' && (
+                    <div className="space-y-6">
+                  <div className="p-5 rounded-2xl bg-zinc-950/70 border border-zinc-800 space-y-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                      {/* TMDB / Trakt Show ID */}
+                      <div>
+                        <label className="block text-[11px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5">
+                          Series TMDB / Show ID
+                        </label>
+                        <input
+                          type="text"
+                          value={traktShowId}
+                          onChange={(e) => setTraktShowId(e.target.value)}
+                          placeholder="e.g. 63351 or tt0903747"
+                          className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3.5 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500 font-mono"
+                        />
+                      </div>
+
+                      {/* Season Number */}
+                      <div>
+                        <label className="block text-[11px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5">
+                          Season Number
+                        </label>
+                        <input
+                          type="number"
+                          min="0"
+                          value={traktSeason}
+                          onChange={(e) => setTraktSeason(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                          className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-indigo-500 font-mono"
+                        />
+                      </div>
+
+                      {/* Episode Number */}
+                      <div>
+                        <label className="block text-[11px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5">
+                          Episode Number
+                        </label>
+                        <input
+                          type="number"
+                          min="1"
+                          value={traktEpisode}
+                          onChange={(e) => setTraktEpisode(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                          className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-indigo-500 font-mono"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-3 pt-2 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={() => handleFetchTraktEpisode()}
+                        disabled={isTraktLoading}
+                        className="px-4 py-2 rounded-xl bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white font-bold text-xs shadow-md shadow-indigo-500/20 transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                      >
+                        {isTraktLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Tv className="w-3.5 h-3.5" />}
+                        <span>Fetch Episode Title</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleFetchTraktSeason()}
+                        disabled={isTraktLoading}
+                        className="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold text-xs border border-zinc-700 transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                      >
+                        <Layers className="w-3.5 h-3.5 text-indigo-400" />
+                        <span>Fetch All Season {traktSeason} Titles</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Messages & Alerts */}
+                  {traktMsg && (
+                    <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/25 text-emerald-300 text-xs font-semibold flex items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                      <span>{traktMsg}</span>
+                    </div>
+                  )}
+
+                  {traktError && (
+                    <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/25 text-rose-300 text-xs font-semibold flex items-center gap-2">
+                      <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                      <span>{traktError}</span>
+                    </div>
+                  )}
+
+                  {/* Review & Manual Correction Workspace */}
+                  <div className="p-5 rounded-2xl bg-zinc-900/90 border border-indigo-500/30 space-y-4 shadow-xl">
+                    <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+                      <div className="flex items-center gap-2">
+                        <span className="px-2.5 py-1 rounded-lg bg-indigo-500/20 text-indigo-300 font-mono font-bold text-xs border border-indigo-500/30">
+                          S{String(traktSeason).padStart(2, '0')}E{String(traktEpisode).padStart(2, '0')}
+                        </span>
+                        <h4 className="text-sm font-bold text-white">
+                          Episode Title Review & Correction
+                        </h4>
+                      </div>
+                      {traktShowTitle && (
+                        <span className="text-xs text-zinc-400 font-medium">
+                          Show: {traktShowTitle}
+                        </span>
+                      )}
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-zinc-300 mb-1.5 flex items-center justify-between">
+                        <span>Verified Episode Title (Editable before saving)</span>
+                        <span className="text-[11px] text-zinc-500 font-normal">
+                          Manual corrections allowed if lookup fails
+                        </span>
+                      </label>
+                      <input
+                        type="text"
+                        value={traktFetchedTitle}
+                        onChange={(e) => setTraktFetchedTitle(e.target.value)}
+                        placeholder="e.g. Pilot, La Gran Mentira, etc."
+                        className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-4 py-2.5 text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500 font-medium shadow-inner"
+                      />
+                    </div>
+
+                    {traktOverview && (
+                      <div className="p-3 rounded-xl bg-zinc-950/60 border border-zinc-800 text-xs text-zinc-400 space-y-1">
+                        <span className="font-bold text-zinc-300 block text-[11px]">Episode Overview:</span>
+                        <p className="line-clamp-3 leading-relaxed">{traktOverview}</p>
+                      </div>
+                    )}
+
+                    {/* Target Episode Links Preview */}
+                    <div className="space-y-2 pt-2">
+                      <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider block">
+                        Existing Links for S{traktSeason}E{traktEpisode} ({
+                          managingTitleLinks.filter(
+                            (l) => Number(l.seasonNumber) === traktSeason && Number(l.episodeNumber) === traktEpisode
+                          ).length
+                        } found)
+                      </span>
+
+                      {managingTitleLinks.filter(
+                        (l) => Number(l.seasonNumber) === traktSeason && Number(l.episodeNumber) === traktEpisode
+                      ).length === 0 ? (
+                        <p className="text-xs text-zinc-500 italic py-1">
+                          No existing links found for Season {traktSeason} Episode {traktEpisode} yet. Saving this title will still record it for future episode additions.
+                        </p>
+                      ) : (
+                        <div className="space-y-1.5">
+                          {managingTitleLinks
+                            .filter(
+                              (l) => Number(l.seasonNumber) === traktSeason && Number(l.episodeNumber) === traktEpisode
+                            )
+                            .map((link) => (
+                              <div
+                                key={link.id}
+                                className="p-2.5 rounded-xl bg-zinc-950/80 border border-zinc-800 flex items-center justify-between gap-3 text-xs"
+                              >
+                                <div className="min-w-0 space-y-0.5 flex-1">
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-semibold text-zinc-200 truncate">
+                                      {link.title}
+                                    </span>
+                                    {link.episodeTitle && (
+                                      <span className="px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300 text-[10px] font-semibold border border-indigo-500/30">
+                                        ✨ {link.episodeTitle}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <span className="font-mono text-[10px] text-zinc-500 truncate block">
+                                    {link.url}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-2 shrink-0">
+                                  <span className="px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 font-mono text-[10px]">
+                                    {link.quality || '1080p'}
+                                  </span>
+                                  <span className="px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 text-[10px] font-semibold flex items-center gap-1 border border-emerald-500/20">
+                                    <Lock className="w-2.5 h-2.5" /> URL Protected
+                                  </span>
+                                </div>
+                              </div>
+                            ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex items-center justify-end gap-3 pt-3 border-t border-zinc-800">
+                      <button
+                        type="button"
+                        onClick={() => handleSaveTraktEpisodeTitle()}
+                        disabled={isTraktSaving || !traktFetchedTitle.trim()}
+                        className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-bold text-xs shadow-lg shadow-emerald-500/20 transition-all flex items-center gap-2 disabled:opacity-50 cursor-pointer"
+                      >
+                        {isTraktSaving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                        <span>Save Episode Title to Database</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Season-wide episode grid (if retrieved) */}
+                  {traktSeasonEpisodes.length > 0 && (
+                    <div className="p-5 rounded-2xl bg-zinc-950/70 border border-zinc-800 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                          <Layers className="w-4 h-4 text-indigo-400" />
+                          <span>Season {traktSeason} Episodes ({traktSeasonEpisodes.length})</span>
+                        </h4>
+                        <span className="text-xs text-zinc-400">Click any episode to inspect or save</span>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-72 overflow-y-auto pr-1">
+                        {traktSeasonEpisodes.map((ep) => (
+                          <div
+                            key={ep.episodeNumber}
+                            className={`p-3 rounded-xl border transition-all text-xs flex flex-col justify-between gap-2 ${
+                              traktEpisode === ep.episodeNumber
+                                ? 'bg-indigo-500/15 border-indigo-500/40'
+                                : 'bg-zinc-900/70 border-zinc-800 hover:border-zinc-700'
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <span className="px-2 py-0.5 rounded bg-zinc-800 text-indigo-300 font-mono font-bold text-[10px] shrink-0">
+                                E{ep.episodeNumber}
+                              </span>
+                              <span className="font-bold text-white truncate flex-1 text-left">
+                                {ep.title}
+                              </span>
+                            </div>
+                            {ep.overview && (
+                              <p className="text-[11px] text-zinc-400 line-clamp-2 leading-relaxed">
+                                {ep.overview}
+                              </p>
+                            )}
+                            <div className="flex items-center justify-end gap-2 pt-1 border-t border-zinc-800/60">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setTraktEpisode(ep.episodeNumber);
+                                  setTraktFetchedTitle(ep.title);
+                                  setTraktOverview(ep.overview || '');
+                                }}
+                                className="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-[11px] font-semibold transition-colors cursor-pointer"
+                              >
+                                Review
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setTraktEpisode(ep.episodeNumber);
+                                  setTraktFetchedTitle(ep.title);
+                                  setTraktOverview(ep.overview || '');
+                                  handleSaveTraktEpisodeTitle(ep.title, traktSeason, ep.episodeNumber);
+                                }}
+                                className="px-2.5 py-1 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 border border-indigo-500/30 text-[11px] font-bold transition-colors cursor-pointer"
+                              >
+                                Quick Save
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+                  {/* BATCH AUDIT & CLEANUP VIEW */}
+                  {traktViewMode === 'batch' && (
+                    <div className="space-y-5 animate-fade-in">
+                      {/* Control Bar: Target Season & Run Audit Button */}
+                      <div className="p-4 rounded-2xl bg-zinc-950/70 border border-zinc-800 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                        <div className="flex flex-wrap items-center gap-3 flex-1">
+                          <div className="min-w-[140px]">
+                            <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1">
+                              Target Season
+                            </label>
+                            <select
+                              value={batchTargetSeason}
+                              onChange={(e) => {
+                                const val = e.target.value === 'all' ? 'all' : parseInt(e.target.value, 10);
+                                setBatchTargetSeason(val);
+                                handleFetchBatchEpisodeDiff(val);
+                              }}
+                              className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500 font-medium"
+                            >
+                              <option value="all">All Seasons</option>
+                              {Array.from({ length: 15 }, (_, i) => i + 1).map((s) => (
+                                <option key={s} value={s}>
+                                  Season {s}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div className="flex-1 min-w-[200px]">
+                            <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1">
+                              Series Show ID / TMDB ID
+                            </label>
+                            <input
+                              type="text"
+                              value={traktShowId}
+                              onChange={(e) => setTraktShowId(e.target.value)}
+                              placeholder={`Default: ${managingTitle.id}`}
+                              className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-1.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500 font-mono"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0 self-end md:self-auto">
+                          <button
+                            type="button"
+                            onClick={() => handleFetchBatchEpisodeDiff(batchTargetSeason)}
+                            disabled={isBatchVerifying}
+                            className="px-4 py-2 rounded-xl bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white font-bold text-xs shadow-md shadow-indigo-500/20 transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                          >
+                            {isBatchVerifying ? (
+                              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <Sparkles className="w-3.5 h-3.5" />
+                            )}
+                            <span>Run Audit & Preview Diff</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Messages */}
+                      {batchApplySuccessMsg && (
+                        <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/25 text-emerald-300 text-xs font-semibold flex items-center gap-2">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                          <span>{batchApplySuccessMsg}</span>
+                        </div>
+                      )}
+
+                      {batchApplyErrorMsg && (
+                        <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/25 text-rose-300 text-xs font-semibold flex items-center gap-2">
+                          <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                          <span>{batchApplyErrorMsg}</span>
+                        </div>
+                      )}
+
+                      {/* Stats Overview */}
+                      {batchEpisodeDiff.length > 0 && (
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                          <div className="p-3 rounded-xl bg-zinc-900/80 border border-zinc-800 space-y-0.5">
+                            <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">
+                              Total Episodes
+                            </span>
+                            <p className="text-lg font-mono font-bold text-white">
+                              {batchEpisodeDiff.length}
+                            </p>
+                          </div>
+                          <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/25 space-y-0.5">
+                            <span className="text-[10px] font-bold text-amber-400 uppercase tracking-wider">
+                              Needs Cleanup
+                            </span>
+                            <p className="text-lg font-mono font-bold text-amber-300">
+                              {batchEpisodeDiff.filter((i) => i.status === 'needs_update').length}
+                            </p>
+                          </div>
+                          <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/25 space-y-0.5">
+                            <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider">
+                              Already Clean
+                            </span>
+                            <p className="text-lg font-mono font-bold text-emerald-300">
+                              {batchEpisodeDiff.filter((i) => i.status === 'clean').length}
+                            </p>
+                          </div>
+                          <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/25 space-y-0.5">
+                            <span className="text-[10px] font-bold text-rose-400 uppercase tracking-wider">
+                              Unverified
+                            </span>
+                            <p className="text-lg font-mono font-bold text-rose-300">
+                              {batchEpisodeDiff.filter((i) => i.status === 'unverified').length}
+                            </p>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Filter & Action Toolbar */}
+                      {batchEpisodeDiff.length > 0 && (
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-zinc-800 pb-2">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <button
+                              type="button"
+                              onClick={() => setBatchFilterStatus('all')}
+                              className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
+                                batchFilterStatus === 'all'
+                                  ? 'bg-zinc-800 text-white'
+                                  : 'text-zinc-400 hover:text-zinc-200'
+                              }`}
+                            >
+                              All ({batchEpisodeDiff.length})
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setBatchFilterStatus('needs_update')}
+                              className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
+                                batchFilterStatus === 'needs_update'
+                                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                                  : 'text-zinc-400 hover:text-zinc-200'
+                              }`}
+                            >
+                              Needs Update ({batchEpisodeDiff.filter((i) => i.status === 'needs_update').length})
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setBatchFilterStatus('unverified')}
+                              className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
+                                batchFilterStatus === 'unverified'
+                                  ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                                  : 'text-zinc-400 hover:text-zinc-200'
+                              }`}
+                            >
+                              Unverified ({batchEpisodeDiff.filter((i) => i.status === 'unverified').length})
+                            </button>
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleApplyBatchEpisodeTitles()}
+                              disabled={
+                                isBatchApplying ||
+                                batchEpisodeDiff.filter((i) => i.status === 'needs_update' || i.isVerified).length === 0
+                              }
+                              className="px-4 py-1.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-bold text-xs shadow-md shadow-emerald-500/20 transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                            >
+                              {isBatchApplying ? (
+                                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <CheckCircle2 className="w-3.5 h-3.5" />
+                              )}
+                              <span>
+                                Apply Verified Titles ({
+                                  batchEpisodeDiff.filter((i) => i.status === 'needs_update' || i.isVerified).length
+                                })
+                              </span>
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Diff Items Table */}
+                      {batchEpisodeDiff.length > 0 && (
+                        <div className="rounded-2xl border border-zinc-800 overflow-hidden bg-zinc-950/80">
+                          <div className="overflow-x-auto max-h-[500px]">
+                            <table className="w-full text-left border-collapse text-xs">
+                              <thead>
+                                <tr className="border-b border-zinc-800 bg-zinc-900/80 text-[10px] font-bold text-zinc-400 uppercase tracking-wider sticky top-0 z-10 backdrop-blur-sm">
+                                  <th className="p-3">Episode</th>
+                                  <th className="p-3">Current Raw / Stored</th>
+                                  <th className="p-3">Proposed Official Title</th>
+                                  <th className="p-3">Source</th>
+                                  <th className="p-3">Destination URLs</th>
+                                  <th className="p-3">Status</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-zinc-800/60 font-mono">
+                                {batchEpisodeDiff
+                                  .filter((item) => {
+                                    if (batchFilterStatus === 'needs_update') return item.status === 'needs_update';
+                                    if (batchFilterStatus === 'unverified') return item.status === 'unverified';
+                                    return true;
+                                  })
+                                  .map((item, idx) => {
+                                    const sTag = `S${String(item.seasonNumber).padStart(2, '0')}E${String(item.episodeNumber).padStart(2, '0')}`;
+                                    return (
+                                      <tr
+                                        key={`${item.seasonNumber}-${item.episodeNumber}`}
+                                        className="hover:bg-zinc-900/50 transition-colors"
+                                      >
+                                        <td className="p-3 font-bold text-indigo-300 whitespace-nowrap">
+                                          {sTag}
+                                        </td>
+                                        <td className="p-3 text-zinc-400 max-w-xs truncate" title={item.currentEpisodeTitle || item.sampleReleaseTitle}>
+                                          {item.currentEpisodeTitle ? (
+                                            <span className="text-zinc-200">{item.currentEpisodeTitle}</span>
+                                          ) : (
+                                            <span className="text-zinc-500 font-sans italic text-[11px] truncate block">
+                                              {item.sampleReleaseTitle}
+                                            </span>
+                                          )}
+                                        </td>
+                                        <td className="p-3 min-w-[200px]">
+                                          <input
+                                            type="text"
+                                            value={item.proposedOfficialTitle}
+                                            onChange={(e) => {
+                                              const newTitle = e.target.value;
+                                              setBatchEpisodeDiff((prev) =>
+                                                prev.map((it, iIdx) =>
+                                                  iIdx === idx
+                                                    ? {
+                                                        ...it,
+                                                        proposedOfficialTitle: newTitle,
+                                                        proposedHeading: `${sTag} — ${newTitle}`,
+                                                        status: newTitle.trim() ? 'needs_update' : 'unverified',
+                                                      }
+                                                    : it
+                                                )
+                                              );
+                                            }}
+                                            className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-2.5 py-1 text-xs text-white focus:outline-none focus:border-indigo-500 font-sans font-medium"
+                                          />
+                                        </td>
+                                        <td className="p-3 whitespace-nowrap">
+                                          <span
+                                            className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                              item.source === 'tmdb'
+                                                ? 'bg-blue-500/15 text-blue-300 border border-blue-500/30'
+                                                : item.source === 'trakt'
+                                                ? 'bg-purple-500/15 text-purple-300 border border-purple-500/30'
+                                                : item.source === 'stored'
+                                                ? 'bg-zinc-700/50 text-zinc-300 border border-zinc-600/50'
+                                                : 'bg-zinc-800 text-zinc-500'
+                                            }`}
+                                          >
+                                            {item.source.toUpperCase()}
+                                          </span>
+                                        </td>
+                                        <td className="p-3 whitespace-nowrap">
+                                          <span className="px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 text-[10px] font-bold flex items-center gap-1 border border-emerald-500/20 w-fit">
+                                            <Lock className="w-2.5 h-2.5" />
+                                            <span>{item.linkCount} URLs Safe</span>
+                                          </span>
+                                        </td>
+                                        <td className="p-3 whitespace-nowrap">
+                                          {item.status === 'clean' ? (
+                                            <span className="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 text-[10px] font-bold">
+                                              Clean
+                                            </span>
+                                          ) : item.status === 'needs_update' ? (
+                                            <span className="px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 text-[10px] font-bold">
+                                              Needs Update
+                                            </span>
+                                          ) : (
+                                            <span className="px-2 py-0.5 rounded bg-rose-500/15 text-rose-300 text-[10px] font-bold">
+                                              Unverified
+                                            </span>
+                                          )}
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           </div>

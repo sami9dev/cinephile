@@ -743,3 +743,42 @@ export function getLightweightTitleCard(
   } as TitleDetails;
 }
 
+/**
+ * Fetches verified season episodes from TMDB.
+ */
+export async function getSeasonEpisodes(
+  tvId: number | string,
+  seasonNumber: number = 1
+): Promise<{
+  season_number: number;
+  episodes: Array<{
+    episode_number: number;
+    name: string;
+    overview?: string;
+    still_path?: string | null;
+  }>;
+} | null> {
+  const numId = Number(tvId);
+  const sNum = Math.max(0, Number(seasonNumber) || 1);
+  if (!numId || isNaN(numId)) return null;
+
+  try {
+    const data = await tmdbFetch<any>(`/tv/${numId}/season/${sNum}`);
+    if (data && Array.isArray(data.episodes) && data.episodes.length > 0) {
+      return {
+        season_number: sNum,
+        episodes: data.episodes.map((ep: any) => ({
+          episode_number: ep.episode_number,
+          name: ep.name || '',
+          overview: ep.overview || '',
+          still_path: ep.still_path || null,
+        })),
+      };
+    }
+  } catch (e: any) {
+    console.warn(`TMDB getSeasonEpisodes error for TV ${tvId} S${seasonNumber}:`, e?.message || e);
+  }
+
+  return null;
+}
+

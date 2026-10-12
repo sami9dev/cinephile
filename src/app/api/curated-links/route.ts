@@ -12,6 +12,7 @@ import {
   deleteAllLinksForTitle,
   replaceDomainForTitleInDatabase,
   updateTitleMetadata,
+  updateEpisodeTitleInDatabase,
 } from '@/lib/redisDb';
 import { validateAdminAuth } from '@/lib/adminAuth';
 import { isValidHttpUrl } from '@/lib/security';
@@ -142,6 +143,38 @@ export async function POST(request: NextRequest) {
         backdropPath: body.backdropPath,
         overview: body.overview,
       });
+      try { revalidatePath('/'); } catch {}
+      return NextResponse.json(result);
+    }
+
+    // Handle updating an individual episode's title (Trakt / manual review)
+    if (action === 'update_episode_title') {
+      const seasonNumber = Number(body.seasonNumber ?? body.season);
+      const episodeNumber = Number(body.episodeNumber ?? body.episode);
+      const episodeTitle = String(body.episodeTitle ?? body.title ?? '').trim();
+      const linkId = body.linkId ? String(body.linkId).trim() : undefined;
+
+      if (isNaN(seasonNumber) || isNaN(episodeNumber)) {
+        return NextResponse.json(
+          { error: 'seasonNumber and episodeNumber are required and must be valid numbers' },
+          { status: 400 }
+        );
+      }
+
+      if (!episodeTitle) {
+        return NextResponse.json(
+          { error: 'episodeTitle cannot be empty' },
+          { status: 400 }
+        );
+      }
+
+      const result = await updateEpisodeTitleInDatabase(movieId, {
+        seasonNumber,
+        episodeNumber,
+        episodeTitle,
+        linkId,
+      });
+
       try { revalidatePath('/'); } catch {}
       return NextResponse.json(result);
     }
