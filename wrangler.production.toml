@@ -18,5 +18,5 @@ MONGODB_URI = "mongodb+srv://shyam:shyam081@cluster0.fiwla4n.mongodb.net/?retryW
 MONGODB_DATABASE = "cinefuel"
 UPSTASH_REDIS_REST_URL = "https://nearby-wren-184114.upstash.io"
 UPSTASH_REDIS_REST_TOKEN = "gQAAAAAAAs8yAAIgcDJjOWYwZjkyNzlhNmQ0NTk2YTE2ZTAwNGFhODA0NGIxYg"
-TELEGRAM_BOT_TOKEN = "8944564119:AAFvosKNpP5ffYKb5tWBl18CFCuqI0EmOzA"
+TELEGRAM_BOT_TOKEN = ""
 TELEGRAM_BOT_USERNAME = "CineFlue_bot"

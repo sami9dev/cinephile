@@ -2793,6 +2793,13 @@ async function pollUpdates() {
   while (true) {
     try {
       const res = await safeFetch(`https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=${lastUpdateId + 1}&timeout=25`, { timeoutMs: 32000 });
+      if (res && res.status === 401) {
+        console.error('❌ FATAL AUTH ERROR: Telegram API returned 401 Unauthorized during polling.');
+        console.error('🔒 Your TELEGRAM_BOT_TOKEN is invalid or was revoked by BotFather / GitHub Secret Scanning.');
+        console.error('👉 Please get a new token from @BotFather and update .env.local / your host environment.');
+        await new Promise(r => setTimeout(r, 10000));
+        continue;
+      }
       if (res && res.ok) {
         const data = await res.json();
         if (data.ok && Array.isArray(data.result)) {
@@ -2839,6 +2846,21 @@ async function main() {
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`🌐 Health check HTTP server ready on port ${PORT}`);
   });
+
+  // Verify Telegram Bot authentication before starting polling
+  try {
+    const authRes = await safeFetch(`https://api.telegram.org/bot${BOT_TOKEN}/getMe`, { timeoutMs: 10000 });
+    const authData = await authRes?.json();
+    if (!authData?.ok) {
+      console.error(`❌ FATAL AUTH ERROR: Failed to authenticate with Telegram API: ${authData?.description || 'Unauthorized'} (HTTP ${authRes?.status})`);
+      console.error(`🔒 Root Cause: TELEGRAM_BOT_TOKEN is invalid or was revoked by Telegram / GitHub Secret Scanning.`);
+      console.error(`👉 Action Required: Open Telegram -> message @BotFather -> generate a new token -> update .env.local`);
+      return;
+    }
+    console.log(`✅ Authenticated with Telegram as @${authData.result.username} (ID: ${authData.result.id}, Name: ${authData.result.first_name})`);
+  } catch (authErr) {
+    console.error('⚠️ Could not verify Telegram bot authentication:', authErr.message);
+  }
 
   // Render Free Tier Keep-Alive: Ping external URL every 10 minutes to prevent container sleep
   const renderExternalUrl = process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_SERVICE_URL;

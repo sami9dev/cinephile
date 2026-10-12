@@ -314,15 +314,32 @@ export async function getLinksFromDatabase(
         return { links: filtered, source: 'upstash_redis' };
       }
 
-      const allRedis = await redisClient.hgetall<Record<string, any>>(REDIS_HASH_KEY);
-      if (allRedis && Object.keys(allRedis).length > 0) {
+      // High-performance Cloudflare-safe pagination:
+      // Fetch only the lightweight field names (~5 KB) instead of 8.9 MB full payload with hgetall!
+      const allRedisKeys = await redisClient.hkeys(REDIS_HASH_KEY);
+      if (allRedisKeys && allRedisKeys.length > 0) {
         const result: Record<string, any[]> = {};
-        const allKeys = Array.from(new Set([...Object.keys(localData), ...Object.keys(allRedis)]));
+        const allKeys = Array.from(new Set([...Object.keys(localData), ...allRedisKeys]));
+        const page = Math.max(1, pagination?.page || 1);
         const limit = Math.max(1, Math.min(100, pagination?.limit || 50));
-        const pagedKeys = allKeys.slice(0, limit);
+        const startIndex = (page - 1) * limit;
+        const pagedKeys = allKeys.slice(startIndex, startIndex + limit);
+
+        // Fetch ONLY the requested page of keys from Redis using hmget
+        let pagedData: Record<string, any> = {};
+        if (pagedKeys.length > 0) {
+          try {
+            const rawHmget = await redisClient.hmget<Record<string, any>>(REDIS_HASH_KEY, ...pagedKeys);
+            if (rawHmget && typeof rawHmget === 'object') {
+              pagedData = rawHmget;
+            }
+          } catch (hmgetErr: any) {
+            console.warn('hmget fallback in Upstash Redis:', hmgetErr.message);
+          }
+        }
 
         for (const k of pagedKeys) {
-          const rawVal = allRedis[k] !== undefined ? allRedis[k] : localData[k];
+          const rawVal = pagedData[k] !== undefined ? pagedData[k] : localData[k];
           let list: any[] = [];
           if (Array.isArray(rawVal)) {
             list = rawVal;
