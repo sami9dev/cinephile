@@ -443,8 +443,19 @@ export async function saveLinkToDatabase(movieId: number | string, link: any): P
         if (existingDoc) {
           if (!enrichedLink.posterPath) enrichedLink.posterPath = existingDoc.posterPath || existingDoc.poster_path;
           if (!enrichedLink.backdropPath) enrichedLink.backdropPath = existingDoc.backdropPath || existingDoc.backdrop_path;
-          if (!enrichedLink.movieTitle) enrichedLink.movieTitle = existingDoc.movieTitle;
-          if (!enrichedLink.mediaType && existingDoc.mediaType) enrichedLink.mediaType = existingDoc.mediaType;
+          if (existingDoc.mediaType === 'movie') {
+            enrichedLink.mediaType = 'movie';
+            enrichedLink.seasonNumber = null;
+            enrichedLink.episodeNumber = null;
+            if (enrichedLink.linkType === 'single_episode' || enrichedLink.linkType === 'zip_pack') {
+              enrichedLink.linkType = 'general';
+            }
+            if (enrichedLink.category === 'SingleEpisode' || enrichedLink.category === 'ZipPack') {
+              enrichedLink.category = 'Streaming';
+            }
+          } else if (!enrichedLink.mediaType && existingDoc.mediaType) {
+            enrichedLink.mediaType = existingDoc.mediaType;
+          }
         }
       }
       await db.collection('links').updateOne(
@@ -560,8 +571,19 @@ export async function saveMultipleLinksToDatabase(movieId: number | string, link
         if (existingDoc) {
           if (!enriched.posterPath) enriched.posterPath = existingDoc.posterPath || existingDoc.poster_path;
           if (!enriched.backdropPath) enriched.backdropPath = existingDoc.backdropPath || existingDoc.backdrop_path;
-          if (!enriched.movieTitle) enriched.movieTitle = existingDoc.movieTitle;
-          if (!enriched.mediaType && existingDoc.mediaType) enriched.mediaType = existingDoc.mediaType;
+          if (existingDoc.mediaType === 'movie') {
+            enriched.mediaType = 'movie';
+            enriched.seasonNumber = null;
+            enriched.episodeNumber = null;
+            if (enriched.linkType === 'single_episode' || enriched.linkType === 'zip_pack') {
+              enriched.linkType = 'general';
+            }
+            if (enriched.category === 'SingleEpisode' || enriched.category === 'ZipPack') {
+              enriched.category = 'Streaming';
+            }
+          } else if (!enriched.mediaType && existingDoc.mediaType) {
+            enriched.mediaType = existingDoc.mediaType;
+          }
         }
         return {
           updateOne: {
@@ -1695,6 +1717,7 @@ export async function getPaginatedUploadedTitles(
           });
         } else if (type === 'tv') {
           andConditions.push({
+            mediaType: { $ne: 'movie' },
             $or: [
               { mediaType: 'tv' },
               { linkType: { $in: ['zip_pack', 'single_episode'] } },
@@ -1882,6 +1905,7 @@ export async function getPaginatedUploadedTitles(
               groupPosterPathSnake: { $max: '$poster_path' },
               groupBackdropPathSnake: { $max: '$backdrop_path' },
               groupVoteAverage: { $max: { $ifNull: ['$voteAverage', 7.5] } },
+              allMediaTypes: { $addToSet: '$mediaType' },
             },
           },
           { $sort: sortStage },
@@ -1911,16 +1935,26 @@ export async function getPaginatedUploadedTitles(
               item.groupBackdropPathSnake ||
               null,
           };
-          const isTv =
-            doc.mediaType === 'tv' ||
-            (typeof doc.seasonNumber === 'number' && doc.seasonNumber > 0) ||
-            doc.linkType === 'zip_pack' ||
-            doc.linkType === 'single_episode' ||
-            doc.category === 'ZipPack' ||
-            doc.category === 'SingleEpisode' ||
-            /s\d{1,2}e\d{1,2}|season\s*\d+/i.test(doc.title || '');
 
-          const mediaType: 'movie' | 'tv' = isTv ? 'tv' : 'movie';
+          // Strict Movie vs TV Classification:
+          // 1. If explicit mediaType is 'movie' (or any link in group is 'movie'), it is a MOVIE
+          // 2. A movie must NEVER be rendered as TV series or assigned season/episode UI
+          let mediaType: 'movie' | 'tv' = 'movie';
+          const explicitType = doc.mediaType || (item.allMediaTypes?.includes('movie') ? 'movie' : (item.allMediaTypes?.includes('tv') ? 'tv' : undefined));
+          if (explicitType === 'movie') {
+            mediaType = 'movie';
+          } else if (explicitType === 'tv') {
+            mediaType = 'tv';
+          } else {
+            const isTv =
+              (typeof doc.seasonNumber === 'number' && doc.seasonNumber > 0 && doc.seasonNumber < 200) ||
+              doc.linkType === 'zip_pack' ||
+              doc.linkType === 'single_episode' ||
+              doc.category === 'ZipPack' ||
+              doc.category === 'SingleEpisode' ||
+              /\bs\d{1,2}e\d{1,2}\b|\bseason\s*\d+\b/i.test(doc.title || '');
+            mediaType = isTv ? 'tv' : 'movie';
+          }
           const card = getLightweightTitleCard(mediaType, mId, doc, item.linksCount || 1);
           return {
             ...card,
@@ -1983,16 +2017,22 @@ export async function getPaginatedUploadedTitles(
     );
 
     const filtered = localList.filter((item) => {
-      const isTv =
-        item.link?.mediaType === 'tv' ||
-        (typeof item.link?.seasonNumber === 'number' && item.link?.seasonNumber > 0) ||
-        item.link?.linkType === 'zip_pack' ||
-        item.link?.linkType === 'single_episode' ||
-        item.link?.category === 'ZipPack' ||
-        item.link?.category === 'SingleEpisode' ||
-        /s\d{1,2}e\d{1,2}|season\s*\d+/i.test(item.link?.title || '');
+      let mediaType: 'movie' | 'tv' = 'movie';
+      if (item.link?.mediaType === 'movie') {
+        mediaType = 'movie';
+      } else if (item.link?.mediaType === 'tv') {
+        mediaType = 'tv';
+      } else {
+        const isTv =
+          (typeof item.link?.seasonNumber === 'number' && item.link?.seasonNumber > 0 && item.link?.seasonNumber < 200) ||
+          item.link?.linkType === 'zip_pack' ||
+          item.link?.linkType === 'single_episode' ||
+          item.link?.category === 'ZipPack' ||
+          item.link?.category === 'SingleEpisode' ||
+          /\bs\d{1,2}e\d{1,2}\b|\bseason\s*\d+\b/i.test(item.link?.title || '');
+        mediaType = isTv ? 'tv' : 'movie';
+      }
 
-      const mediaType: 'movie' | 'tv' = isTv ? 'tv' : 'movie';
       if (type === 'movie' && mediaType !== 'movie') return false;
       if (type === 'tv' && mediaType !== 'tv') return false;
       return true;
@@ -2101,6 +2141,7 @@ export async function getFilteredUploadedTitles(
     filterConditions.push({ mediaType: 'movie' });
   } else if (type === 'tv') {
     filterConditions.push({
+      mediaType: { $ne: 'movie' },
       $or: [
         { mediaType: 'tv' },
         { linkType: { $in: ['zip_pack', 'single_episode'] } },

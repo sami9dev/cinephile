@@ -45,7 +45,14 @@ export const MovieCard: React.FC<MovieCardProps> = ({
   aspect = 'portrait',
   isLcp = false,
 }) => {
-  const mediaType = item.media_type || (item.name ? 'tv' : 'movie');
+  const mediaType: 'movie' | 'tv' =
+    item.media_type === 'tv'
+      ? 'tv'
+      : item.media_type === 'movie'
+      ? 'movie'
+      : (item.number_of_seasons && item.number_of_seasons > 0) || (item.name && !item.title)
+      ? 'tv'
+      : 'movie';
   const title = item.title || item.name || 'Untitled';
   const releaseDate = item.release_date || item.first_air_date || '';
   const year = releaseDate ? releaseDate.split('-')[0] : '';
@@ -95,13 +102,19 @@ export const MovieCard: React.FC<MovieCardProps> = ({
   let platform = detectedPlat || (uploadMeta.platform !== 'TV' && uploadMeta.platform !== 'MOVIE' ? uploadMeta.platform : '');
   if (!platform) {
     platform = mediaType === 'tv' ? 'TV' : 'MOVIE';
+  } else if (mediaType === 'movie' && platform === 'TV') {
+    platform = 'MOVIE';
   }
 
-  // Category resolution: TV titles are always branded as 'TV SERIES'
+  // Category resolution: TV titles are always branded as 'TV SERIES', movies show movie categories
   let category = uploadMeta.category;
-  if (mediaType === 'tv' || category === 'ENGLISH TV SERIES' || category === 'HINDI TV SHOWS' || category === 'SOUTH TV SHOWS') {
+  if (mediaType === 'tv') {
     category = 'TV SERIES';
   } else {
+    // For movies, strip any stale TV series or episode categories
+    if (category === 'TV SERIES' || category === 'ENGLISH TV SERIES' || category === 'HINDI TV SHOWS' || category === 'SOUTH TV SHOWS' || category === 'SingleEpisode' || category === 'ZipPack') {
+      category = '';
+    }
     const origLang = (item.original_language || (item as any).originalLanguage || '').toLowerCase().trim();
     const origCountry: string[] = Array.isArray((item as any).origin_country)
       ? (item as any).origin_country

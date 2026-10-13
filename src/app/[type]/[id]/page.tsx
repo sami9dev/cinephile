@@ -74,8 +74,8 @@ export default async function TitleDetailPage({ params }: PageProps) {
             {/* Badges */}
             <div className="flex flex-wrap items-center justify-center md:justify-start gap-2 text-xs font-semibold max-w-full">
               <span className="font-ui px-2.5 py-1 rounded-md bg-amber-500 text-black uppercase font-bold tracking-wider flex items-center gap-1">
-                {type === 'tv' ? <Tv className="w-3 h-3" /> : <Film className="w-3 h-3" />}
-                {type === 'tv' ? 'TV Series' : 'Movie'}
+                {titleDetails.media_type === 'tv' ? <Tv className="w-3 h-3" /> : <Film className="w-3 h-3" />}
+                {titleDetails.media_type === 'tv' ? 'TV Series' : 'Movie'}
               </span>
 
               {releaseYear && (

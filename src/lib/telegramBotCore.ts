@@ -344,7 +344,7 @@ Please provide the title along with the link!`,
   else if (forcedMode === 'episode' || forcedMode === 'zip' || forcedMode === 'bulk') sensedType = 'tv';
   else {
     // Auto-sensing
-    if (/(?:s\d{1,2}|season|\.zip|\.rar|\.7z|pack|batch|episode|ep\d)/i.test(textToProcess)) {
+    if (/(?:\bs\d{1,2}(?!\d)|\bseason\s*\d+|\.zip|\.rar|\.7z|\bcomplete\s*season\b|\bfull\s*season\b|\bepisodes?\b|\bep\s*\d+)/i.test(textToProcess)) {
       sensedType = 'tv';
     } else if (year) {
       sensedType = 'movie';
@@ -362,9 +362,22 @@ Please check the spelling and try again.`,
     };
   }
 
-  const mediaType: 'movie' | 'tv' = (forcedMode === 'movie') 
-    ? 'movie' 
-    : (forcedMode ? 'tv' : (tmdbItem.media_type === 'tv' || sensedType === 'tv' ? 'tv' : 'movie'));
+  // Strict Content-Type Normalization:
+  // 1. Forced command takes absolute priority
+  // 2. TMDB result is authoritative: if TMDB found a movie, it is a MOVIE
+  // 3. If TMDB found a TV series, it is a TV SERIES
+  let mediaType: 'movie' | 'tv' = 'movie';
+  if (forcedMode === 'movie') {
+    mediaType = 'movie';
+  } else if (forcedMode === 'episode' || forcedMode === 'zip' || forcedMode === 'bulk') {
+    mediaType = 'tv';
+  } else if (tmdbItem.media_type === 'movie') {
+    mediaType = 'movie';
+  } else if (tmdbItem.media_type === 'tv') {
+    mediaType = 'tv';
+  } else {
+    mediaType = sensedType === 'tv' ? 'tv' : 'movie';
+  }
     
   const officialTitle = tmdbItem.title || tmdbItem.name || query;
   const releaseDate = tmdbItem.release_date || tmdbItem.first_air_date || '';
@@ -399,6 +412,8 @@ Please check the spelling and try again.`,
   const customLinkId = `tg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
   const linkObj = {
     id: customLinkId,
+    movieId: String(movieId),
+    mediaType,
     title: displayTitle,
     movieTitle: officialTitle,
     originalLanguage: tmdbItem.original_language || '',
@@ -411,7 +426,7 @@ Please check the spelling and try again.`,
     category,
     seasonNumber: mediaType === 'tv' ? meta.seasonNumber : undefined,
     episodeNumber: mediaType === 'tv' ? (isZip ? undefined : (meta.episodeNumber || 1)) : undefined,
-    linkType: mediaType === 'tv' ? (isZip ? 'zip_pack' : 'single_episode') : undefined,
+    linkType: mediaType === 'tv' ? (isZip ? 'zip_pack' : 'single_episode') : 'general',
     quality: meta.quality,
     audioLanguage: meta.audioLanguage,
     size: meta.size,

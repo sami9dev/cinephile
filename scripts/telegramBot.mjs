@@ -367,10 +367,15 @@ function extractBlockMetadata(text, fallbackUrl, forcedMode = null) {
 
   // A. Combined Season & Episode e.g. S01E05, S1 E1, S02-EP03, S01.E04, 2x05
   const seMatch = cleanText.match(/(?:^|[\s._\-[\]()])s0*(\d{1,3})[\s._\-]*(?:ep|episode|e)[\s._-]?0*(\d{1,4})(?:[\s._\-[\]()]|\b)/i) ||
-                  cleanText.match(/(?:^|[\s._\-[\]()])(\d{1,3})x0*(\d{1,4})(?:[\s._\-[\]()]|\b)/i);
+                  cleanText.match(/(?:^|[\s._\-[\]()])([1-9]\d{0,1})x0*([1-9]\d{0,2})(?:[\s._\-[\]()]|\b)(?!(?:264|265|266|vid)\b)/i);
   if (seMatch) {
-    season = parseInt(seMatch[1], 10);
-    episode = parseInt(seMatch[2], 10);
+    const candidateSeason = parseInt(seMatch[1], 10);
+    const candidateEp = parseInt(seMatch[2], 10);
+    // Audio channel/codec false-positive guard: 264/265/266 is a codec, not an episode
+    if (![264, 265, 266].includes(candidateEp)) {
+      season = candidateSeason;
+      episode = candidateEp;
+    }
   }
 
   // B. Standalone Season e.g. S01, Season 2, Season-03
@@ -425,7 +430,7 @@ function extractBlockMetadata(text, fallbackUrl, forcedMode = null) {
       isPack = false;
     }
 
-    if (season !== undefined || episode !== undefined || isPack || /(?:s\d{1,3}|e\d{1,4}|season|episodes?|series)/i.test(cleanText)) {
+    if (season !== undefined || episode !== undefined || isPack || /(?:\bs\d{1,3}(?!\d)|\be\d{1,4}(?!\d)|\bseason\s*\d+|\bepisodes?\b|\bseries\b)/i.test(cleanText)) {
       explicitType = 'tv';
       if (!season) season = 1;
     } else {

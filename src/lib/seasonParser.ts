@@ -73,10 +73,13 @@ export function detectSeasonNumber(link: { title?: string; seasonNumber?: number
   const text = `${link.title || ''} ${urlFn}`.trim();
 
   if (text) {
-    // 1. Check patterns like 1x01, 02x05, 100x12 (Season x Episode)
-    const xMatch = text.match(/(?:^|[\s._\-[\]()])(\d{1,3})x\d{1,4}(?:[\s._\-[\]()]|\b)/i);
-    if (xMatch && xMatch[1]) {
-      return parseInt(xMatch[1], 10);
+    // 1. Check patterns like 1x01, 02x05, 10x12 (Season x Episode)
+    const xMatch = text.match(/(?:^|[\s._\-[\]()])([1-9]\d{0,1})x0*([1-9]\d{0,2})(?:[\s._\-[\]()]|\b)(?!(?:264|265|266|vid)\b)/i);
+    if (xMatch && xMatch[1] && xMatch[2]) {
+      const candidateEp = parseInt(xMatch[2], 10);
+      if (![264, 265, 266].includes(candidateEp)) {
+        return parseInt(xMatch[1], 10);
+      }
     }
 
     // 2. Check patterns like S01, S02, S100, s100, S.02, S-02, S_02, [S01], (S100)
@@ -157,10 +160,13 @@ export function detectEpisodeNumber(link: { title?: string; episodeNumber?: numb
 
   if (!text) return undefined;
 
-  // 1. Check patterns like 1x05, 01x13, 10x100 (Season x Episode)
-  const xMatch = text.match(/(?:^|[\s._\-[\]()])\d{1,3}x0*(\d{1,4})(?:[\s._\-[\]()]|\b)/i);
+  // 1. Check patterns like 1x05, 01x13, 10x12 (Season x Episode)
+  const xMatch = text.match(/(?:^|[\s._\-[\]()])[1-9]\d{0,1}x0*([1-9]\d{0,2})(?:[\s._\-[\]()]|\b)(?!(?:264|265|266|vid)\b)/i);
   if (xMatch && xMatch[1]) {
-    return parseInt(xMatch[1], 10);
+    const candidate = parseInt(xMatch[1], 10);
+    if (![264, 265, 266].includes(candidate)) {
+      return candidate;
+    }
   }
 
   // 2. Check patterns like S01E05, S1E1, s01e13, S02-E04, S100E100, S01.E01, S01_E01

@@ -586,7 +586,14 @@ export const CustomLinksManager: React.FC<CustomLinksManagerProps> = ({ titleDet
     );
   }, [titleDetails.id, isMounted, linksRefresh, liveServerLinks]);
 
-  const mediaType = titleDetails.media_type || (titleDetails.name ? 'tv' : 'movie');
+  const mediaType: 'movie' | 'tv' =
+    titleDetails.media_type === 'tv'
+      ? 'tv'
+      : titleDetails.media_type === 'movie'
+      ? 'movie'
+      : (titleDetails.number_of_seasons && titleDetails.number_of_seasons > 0) || (titleDetails.name && !titleDetails.title)
+      ? 'tv'
+      : 'movie';
 
   // Filter links: for TV shows, episode links are already organized in TVEpisodeLinksManager
   const nonEpisodeLinks = useMemo(() => {

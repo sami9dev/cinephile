@@ -157,8 +157,13 @@ export function parseReleaseDetails(
   }
 
   // Text representation with normalized token separators for regex inspection
-  // We keep a copy where dots, underscores, hyphens, brackets are treated as token delimiters
-  const normText = ` ${cleanInput} ${cleanUrlFilename} `
+  // We protect audio channel numbers (e.g. 5.1, 7.1, 2.0) and video codecs (x264, x265, x266)
+  // so audio channels like '5.1] x265' are never misparsed as Season 1, Episode 265!
+  const textWithProtectedTokens = ` ${cleanInput} ${cleanUrlFilename} `
+    .replace(/\b([1-9])\.([0-2])\b/g, ' audio_$1_$2 ')
+    .replace(/\bx(264|265|266)\b/gi, ' codec_x$1 ');
+
+  const normText = textWithProtectedTokens
     .replace(/[\.\_\-\[\]\(\)\{\}\\\/]/g, ' ')
     .replace(/\s+/g, ' ');
 
@@ -170,10 +175,15 @@ export function parseReleaseDetails(
 
   // A. Season + Episode: S01E05, S1E1, 1x05
   const seMatch = normText.match(/\bS0*(\d{1,3})\s*(?:EP|E|Episode)\s*0*(\d{1,4})\b/i) ||
-                  normText.match(/\b(\d{1,3})\s*x\s*0*(\d{1,4})\b/i);
+                  normText.match(/\b([1-9]\d{0,1})\s*x\s*0*([1-9]\d{0,2})\b(?!(?:264|265|266|vid)\b)/i);
   if (seMatch) {
-    seasonNumber = parseInt(seMatch[1], 10);
-    episodeNumber = parseInt(seMatch[2], 10);
+    const candidateSeason = parseInt(seMatch[1], 10);
+    const candidateEp = parseInt(seMatch[2], 10);
+    // Audio channel/codec false-positive guard: 264/265/266 is a codec, not an episode
+    if (![264, 265, 266].includes(candidateEp)) {
+      seasonNumber = candidateSeason;
+      episodeNumber = candidateEp;
+    }
   }
 
   // B. Standalone Episode: E05, Episode 05, Ep 5 (ensuring it's not a resolution like 1080p or part)

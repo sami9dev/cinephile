@@ -428,7 +428,13 @@ export async function getTitleDetails(mediaType: 'movie' | 'tv', id: number | st
 
   // 4d. Enriched resolution if stored link document is found
   if (storedDoc) {
-    const rawDocTitle = storedDoc.movieTitle || cleanTitleString(storedDoc.title);
+    const effectiveMediaType: 'movie' | 'tv' =
+      storedDoc.mediaType === 'movie'
+        ? 'movie'
+        : storedDoc.mediaType === 'tv'
+        ? 'tv'
+        : mediaType;
+    const rawDocTitle = (storedDoc.movieTitle && storedDoc.movieTitle !== 'undefined' ? storedDoc.movieTitle : '') || cleanTitleString(storedDoc.title);
     const poster = storedDoc.posterPath || storedDoc.poster_path || storedDoc.backdropPath || storedDoc.backdrop_path || null;
     const backdrop = storedDoc.backdropPath || storedDoc.backdrop_path || poster || null;
     const releaseDate = storedDoc.releaseDate || '2024-01-01';
@@ -437,19 +443,19 @@ export async function getTitleDetails(mediaType: 'movie' | 'tv', id: number | st
     // Try TMDB search by the clean title for complete official posters, cast, crew, etc.
     if (rawDocTitle && rawDocTitle !== 'Featured Title') {
       try {
-        const searchData = await tmdbFetch<{ results: TitleDetails[] }>(`/search/${mediaType}`, {
+        const searchData = await tmdbFetch<{ results: TitleDetails[] }>(`/search/${effectiveMediaType}`, {
           query: rawDocTitle,
         });
         if (searchData?.results && searchData.results.length > 0) {
           const topResult = searchData.results[0];
-          const fullData = await tmdbFetch<TitleDetails>(`/${mediaType}/${topResult.id}`, {
+          const fullData = await tmdbFetch<TitleDetails>(`/${effectiveMediaType}/${topResult.id}`, {
             append_to_response: 'credits,videos,similar,recommendations,watch/providers,external_ids',
           });
           if (fullData && (fullData.title || fullData.name)) {
             return {
               ...fullData,
               id: numId,
-              media_type: mediaType,
+              media_type: effectiveMediaType,
               title: fullData.title || fullData.name || rawDocTitle,
               poster_path: fullData.poster_path || poster || '/placeholder-poster.svg',
               backdrop_path: fullData.backdrop_path || backdrop || fullData.poster_path || '/placeholder-backdrop.svg',
@@ -459,7 +465,7 @@ export async function getTitleDetails(mediaType: 'movie' | 'tv', id: number | st
       } catch {}
     }
 
-    const cleanTitle = rawDocTitle || (mediaType === 'tv' ? `Series #${numId}` : `Movie #${numId}`);
+    const cleanTitle = rawDocTitle || (effectiveMediaType === 'tv' ? `Series #${numId}` : `Movie #${numId}`);
     return {
       id: numId,
       title: cleanTitle,
@@ -467,12 +473,12 @@ export async function getTitleDetails(mediaType: 'movie' | 'tv', id: number | st
       overview: storedDoc.overview || 'Available for streaming & high-speed download on CineFuel.',
       poster_path: poster || '/placeholder-poster.svg',
       backdrop_path: backdrop || poster || '/placeholder-backdrop.svg',
-      release_date: releaseDate,
+      releaseDate: releaseDate,
       first_air_date: releaseDate,
       vote_average: voteAverage,
       vote_count: 1000,
-      media_type: mediaType,
-      runtime: mediaType === 'tv' ? 55 : 120,
+      media_type: effectiveMediaType,
+      runtime: effectiveMediaType === 'tv' ? 55 : 120,
       status: 'Released',
       imdb_rating: voteAverage,
       genres: [{ id: 28, name: 'Featured' }],
@@ -625,7 +631,7 @@ export function getLightweightTitleCard(
 
   // 1. Authoritative metadata from stored custom link document
   if (doc?.movieTitle || doc?.posterPath || doc?.poster_path || doc?.backdropPath || doc?.backdrop_path || doc?.title) {
-    const rawTitle = doc.movieTitle || cleanTitleString(doc.title) || 'Featured Title';
+    const rawTitle = (doc.movieTitle && doc.movieTitle !== 'undefined' ? doc.movieTitle : '') || cleanTitleString(doc.title) || 'Featured Title';
     let poster =
       doc.posterPath ||
       doc.poster_path ||
