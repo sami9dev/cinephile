@@ -268,31 +268,21 @@ export interface QualityCombinationDef {
   key: string;
   label: string;
   resolution?: '2160p' | '1080p' | '720p' | '480p';
-  dynamicRange?: 'DV' | 'HDR' | 'SDR';
+  dynamicRange?: 'DV' | 'HDR' | 'SDR' | 'DV_HDR';
   codec?: 'H.265' | 'H.264';
 }
 
 export const QUALITY_COMBINATIONS: QualityCombinationDef[] = [
   // 4K Combinations
   { key: '4K', label: '4K', resolution: '2160p' },
+  { key: '4K_DV_HDR_H265', label: '4K + DV + HDR + H.265', resolution: '2160p', dynamicRange: 'DV_HDR', codec: 'H.265' },
+  { key: '4K_DV_H265', label: '4K + DV + H.265', resolution: '2160p', dynamicRange: 'DV', codec: 'H.265' },
+  { key: '4K_HDR_H265', label: '4K + HDR + H.265', resolution: '2160p', dynamicRange: 'HDR', codec: 'H.265' },
   { key: '4K_DV', label: '4K + DV', resolution: '2160p', dynamicRange: 'DV' },
   { key: '4K_HDR', label: '4K + HDR', resolution: '2160p', dynamicRange: 'HDR' },
-  {
-    key: '4K_DV_H265',
-    label: '4K + DV + H.265',
-    resolution: '2160p',
-    dynamicRange: 'DV',
-    codec: 'H.265',
-  },
-  {
-    key: '4K_HDR_H265',
-    label: '4K + HDR + H.265',
-    resolution: '2160p',
-    dynamicRange: 'HDR',
-    codec: 'H.265',
-  },
   { key: '4K_SDR', label: '4K + SDR', resolution: '2160p', dynamicRange: 'SDR' },
   { key: '4K_H265', label: '4K + H.265', resolution: '2160p', codec: 'H.265' },
+  { key: '4K_H264', label: '4K + H.264', resolution: '2160p', codec: 'H.264' },
 
   // 1080P Combinations
   { key: '1080P', label: '1080P', resolution: '1080p' },
@@ -309,6 +299,10 @@ export const QUALITY_COMBINATIONS: QualityCombinationDef[] = [
 
   // 480P Combinations
   { key: '480P', label: '480P', resolution: '480p' },
+
+  // Standalone Dynamic Range
+  { key: 'DV', label: 'DV', dynamicRange: 'DV' },
+  { key: 'HDR', label: 'HDR', dynamicRange: 'HDR' },
 
   // Standalone Codecs
   { key: 'H265', label: 'H.265', codec: 'H.265' },
@@ -338,6 +332,7 @@ export function matchesQualityCombination(
 
   // 2. Dynamic Range check (strict: DV != HDR)
   if (combo.dynamicRange) {
+    if (combo.dynamicRange === 'DV_HDR' && !(attrs.hasDV && attrs.hasHDR)) return false;
     if (combo.dynamicRange === 'DV' && !attrs.hasDV) return false;
     if (combo.dynamicRange === 'HDR' && !attrs.hasHDR) return false;
     if (combo.dynamicRange === 'SDR' && !attrs.hasSDR) return false;
@@ -349,6 +344,40 @@ export function matchesQualityCombination(
   }
 
   return true;
+}
+
+/**
+ * Calculates a specificity penalty for a release relative to a requested quality combination.
+ * Releases with lower penalty match the requested combination more specifically and won't
+ * shadow or overwrite separate releases that have dedicated buttons (e.g. 4K won't steal 4K+DV).
+ */
+export function getComboSpecificityPenalty(
+  release: Partial<EnrichedLink>,
+  combo: QualityCombinationDef
+): number {
+  const attrs = getVerifiedReleaseAttributes(release);
+  let penalty = 0;
+
+  // 1. Extraneous dynamic range when combo did not request it
+  if (!combo.dynamicRange) {
+    if (attrs.hasDV) penalty += 500;
+    if (attrs.hasHDR) penalty += 400;
+  } else if (combo.dynamicRange === 'HDR' && attrs.hasDV) {
+    // Asked for HDR, but release also has DV (DV+HDR): prefer pure HDR if present
+    penalty += 200;
+  }
+
+  // 2. Extraneous resolution when combo did not request it (e.g. standalone H.265, H.264, DV, HDR)
+  if (!combo.resolution && attrs.resolution) {
+    penalty += 100;
+  }
+
+  // 3. Extraneous codec when combo did not request it
+  if (!combo.codec && attrs.codec) {
+    penalty += 10;
+  }
+
+  return penalty;
 }
 
 export function getReleaseFidelityScore(release: Partial<EnrichedLink>): number {
@@ -389,18 +418,30 @@ export function getReleaseFidelityScore(release: Partial<EnrichedLink>): number 
 }
 
 export function resolveDeterministicRelease<T extends Partial<EnrichedLink>>(
-  matchingReleases: T[]
+  matchingReleases: T[],
+  combo?: QualityCombinationDef
 ): T | null {
   const validReleases = matchingReleases.filter((r) => isValidDestinationUrl(r.url));
   if (validReleases.length === 0) return null;
 
   const sorted = [...validReleases].sort((a, b) => {
+    // 1. Specificity: closest match with lowest extraneous attribute penalty comes first
+    if (combo) {
+      const penaltyA = getComboSpecificityPenalty(a, combo);
+      const penaltyB = getComboSpecificityPenalty(b, combo);
+      if (penaltyA !== penaltyB) {
+        return penaltyA - penaltyB;
+      }
+    }
+
+    // 2. Fidelity score: higher fidelity preferred among equally specific matches
     const scoreB = getReleaseFidelityScore(b);
     const scoreA = getReleaseFidelityScore(a);
     if (scoreB !== scoreA) {
       return scoreB - scoreA;
     }
-    // Stable deterministic tie-breaker
+
+    // 3. Stable deterministic tie-breaker
     const idA = a.id || a.url || a.title || '';
     const idB = b.id || b.url || b.title || '';
     return idA.localeCompare(idB);
@@ -414,7 +455,7 @@ export function resolveDestinationForQuality<T extends Partial<EnrichedLink>>(
   combo: QualityCombinationDef
 ): { release: T; url: string } | null {
   const matching = releases.filter((rel) => matchesQualityCombination(rel, combo));
-  const deterministic = resolveDeterministicRelease(matching);
+  const deterministic = resolveDeterministicRelease(matching, combo);
   if (!deterministic || !deterministic.url || !isValidDestinationUrl(deterministic.url)) {
     return null;
   }
@@ -1823,7 +1864,7 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
                         let badgeStyle =
                           'bg-[#131724] text-zinc-200 hover:text-white border-white/10 hover:border-blue-400/50 hover:bg-[#1a2133]';
                         if (combo.resolution === '2160p') {
-                          if (combo.dynamicRange === 'DV') {
+                          if (combo.dynamicRange === 'DV' || combo.dynamicRange === 'DV_HDR') {
                             badgeStyle =
                               'bg-gradient-to-r from-purple-950/70 to-indigo-950/70 text-purple-200 hover:text-white border-purple-500/35 hover:border-purple-400 hover:from-purple-900/80 hover:to-indigo-900/80 shadow-[0_0_12px_rgba(168,85,247,0.18)]';
                           } else if (combo.dynamicRange === 'HDR') {
@@ -1837,7 +1878,7 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
                               'bg-gradient-to-r from-amber-950/60 to-yellow-950/60 text-amber-200 hover:text-white border-amber-500/35 hover:border-amber-400 hover:from-amber-900/70 hover:to-yellow-900/70 shadow-[0_0_12px_rgba(245,158,11,0.18)]';
                           }
                         } else if (combo.resolution === '1080p') {
-                          if (combo.dynamicRange === 'DV') {
+                          if (combo.dynamicRange === 'DV' || combo.dynamicRange === 'DV_HDR') {
                             badgeStyle =
                               'bg-gradient-to-r from-purple-950/60 to-blue-950/60 text-purple-200 hover:text-white border-purple-500/35 hover:border-purple-400';
                           } else if (combo.dynamicRange === 'HDR') {
@@ -1850,6 +1891,12 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
                         } else if (combo.resolution === '720p') {
                           badgeStyle =
                             'bg-[#18152c] text-indigo-200 hover:text-white border-indigo-500/35 hover:border-indigo-400 hover:bg-[#221e3c]';
+                        } else if (combo.dynamicRange === 'DV' || combo.dynamicRange === 'DV_HDR') {
+                          badgeStyle =
+                            'bg-gradient-to-r from-purple-950/70 to-indigo-950/70 text-purple-200 hover:text-white border-purple-500/35 hover:border-purple-400 hover:bg-[#1f1933]';
+                        } else if (combo.dynamicRange === 'HDR') {
+                          badgeStyle =
+                            'bg-gradient-to-r from-cyan-950/70 to-blue-950/70 text-cyan-200 hover:text-white border-cyan-500/35 hover:border-cyan-400 hover:bg-[#132233]';
                         } else if (combo.codec === 'H.265') {
                           badgeStyle =
                             'bg-gradient-to-r from-purple-950/60 to-indigo-950/60 text-purple-200 hover:text-white border-purple-500/35 hover:border-purple-400 hover:bg-[#1f1933]';
@@ -1864,6 +1911,9 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
                             href={sanitizeSafeUrl(url)}
                             target="_blank"
                             rel="noopener noreferrer"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                            }}
                             className={`group inline-flex items-center gap-1.5 sm:gap-2 min-h-[40px] px-3 sm:px-3.5 py-2 rounded-xl text-xs font-bold transition-all select-none border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 hover:scale-[1.02] shadow-sm cursor-pointer max-w-full ${badgeStyle}`}
                             title={`Direct Download: ${combo.label} on ${serverName}${detectedSz ? ` (${detectedSz})` : ''}`}
                           >
