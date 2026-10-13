@@ -73,3 +73,7 @@ scripts/*.jpg
 target/
 **/target/
 Cargo.lock.bk
+
+# Backups
+backups/
+
