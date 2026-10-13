@@ -73,6 +73,7 @@ import { parseReleaseDetails } from '@/lib/releaseParser';
 import { detectServer } from '@/lib/serverDetector';
 import { AdminFilmReelGraphic } from '@/components/admin/AdminFilmReelGraphic';
 import { AdminCinemaSilhouetteGraphic } from '@/components/admin/AdminCinemaSilhouetteGraphic';
+import { ServiceStatusPanel } from '@/components/admin/ServiceStatusPanel';
 
 const DEFAULT_ADMIN_USER = 'shyam';
 
@@ -4157,48 +4158,13 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                 })}
               </nav>
 
-              {/* Sidebar Footer with Service Status */}
+              {/* Sidebar Footer with Live Service Status */}
               {isSidebarCollapsed ? (
                 <div className="pt-3 mt-2 border-t border-cyan-500/20 flex flex-col items-center gap-2 w-full">
-                  {/* Service Status Collapsed Icon with Live Pulse & Hover Tooltip */}
-                  <div
-                    className="w-10 h-10 rounded-xl bg-slate-900/80 border border-cyan-500/30 text-cyan-300 hover:text-white flex items-center justify-center relative cursor-pointer group shadow-md"
-                    title="All Services Operational: TMDB Search, TV Parser, MongoDB, Redis"
-                  >
-                    <Server className="w-4 h-4 text-cyan-400" />
-                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse absolute top-1.5 right-1.5" />
-                    {/* Hover Floating Status Card */}
-                    <div className="pointer-events-none absolute left-full ml-3 z-50 whitespace-nowrap rounded-2xl bg-[#090d18] border border-cyan-500/40 p-3 text-xs text-white shadow-2xl opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all space-y-1.5 min-w-[200px]">
-                      <div className="font-black text-cyan-400 uppercase text-[10px] tracking-wider border-b border-cyan-500/20 pb-1 flex items-center justify-between">
-                        <span>Service Status</span>
-                        <span className="text-emerald-400 font-mono">100% Live</span>
-                      </div>
-                      <div className="text-slate-300 text-[11px] flex items-center justify-between">
-                        <span className="flex items-center gap-1.5 font-medium">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" /> TMDB Universal Search
-                        </span>
-                        <span className="text-[9px] text-emerald-300 font-bold bg-emerald-950/80 border border-emerald-500/30 px-1.5 rounded">Live</span>
-                      </div>
-                      <div className="text-slate-300 text-[11px] flex items-center justify-between">
-                        <span className="flex items-center gap-1.5 font-medium">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" /> TV Parser Engine
-                        </span>
-                        <span className="text-[9px] text-emerald-300 font-bold bg-emerald-950/80 border border-emerald-500/30 px-1.5 rounded">Active</span>
-                      </div>
-                      <div className="text-slate-300 text-[11px] flex items-center justify-between">
-                        <span className="flex items-center gap-1.5 font-medium">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" /> MongoDB Atlas
-                        </span>
-                        <span className="text-[9px] text-cyan-300 font-bold bg-cyan-500/15 border border-cyan-500/30 px-1.5 rounded">12K</span>
-                      </div>
-                      <div className="text-slate-300 text-[11px] flex items-center justify-between">
-                        <span className="flex items-center gap-1.5 font-medium">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" /> Upstash Redis
-                        </span>
-                        <span className="text-[9px] text-emerald-300 font-bold bg-emerald-500/15 border border-emerald-500/30 px-1.5 rounded">Active</span>
-                      </div>
-                    </div>
-                  </div>
+                  <ServiceStatusPanel
+                    getAuthHeaders={getAdminAuthHeaders}
+                    isCollapsed={true}
+                  />
 
                   <Link
                     href="/"
@@ -4219,39 +4185,10 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                 </div>
               ) : (
                 <div className="pt-3 mt-2 border-t border-cyan-500/20 space-y-2.5 w-full">
-                  {/* Service Status Shifted to Sidebar */}
-                  <div className="p-2.5 rounded-2xl bg-black/60 border border-cyan-500/20 space-y-1.5 text-[11px] shadow-inner">
-                    <div className="flex items-center justify-between text-cyan-400 font-bold uppercase tracking-wider text-[10px] border-b border-cyan-500/15 pb-1">
-                      <span className="flex items-center gap-1.5">
-                        <Server className="w-3.5 h-3.5 text-cyan-400" /> Service Status
-                      </span>
-                      <span className="text-[9px] text-emerald-400 font-mono font-bold">Online</span>
-                    </div>
-                    <div className="flex items-center justify-between text-slate-300">
-                      <span className="flex items-center gap-1.5 font-medium truncate">
-                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" /> TMDB Universal Search
-                      </span>
-                      <span className="text-[9px] text-emerald-300 bg-emerald-950/80 border border-emerald-500/40 px-1.5 py-0.2 rounded font-bold font-mono shrink-0">Live</span>
-                    </div>
-                    <div className="flex items-center justify-between text-slate-300">
-                      <span className="flex items-center gap-1.5 font-medium truncate">
-                        <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" /> TV Parser Engine
-                      </span>
-                      <span className="text-[9px] text-emerald-300 bg-emerald-950/80 border border-emerald-500/40 px-1.5 py-0.2 rounded font-bold font-mono shrink-0">Active</span>
-                    </div>
-                    <div className="flex items-center justify-between text-slate-300">
-                      <span className="flex items-center gap-1.5 font-medium truncate">
-                        <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" /> MongoDB Atlas
-                      </span>
-                      <span className="text-[9px] text-cyan-300 bg-cyan-500/15 border border-cyan-500/30 px-1.5 py-0.2 rounded font-bold font-mono shrink-0">12K</span>
-                    </div>
-                    <div className="flex items-center justify-between text-slate-300">
-                      <span className="flex items-center gap-1.5 font-medium truncate">
-                        <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" /> Upstash Redis
-                      </span>
-                      <span className="text-[9px] text-emerald-300 bg-emerald-500/15 border border-emerald-500/30 px-1.5 py-0.2 rounded font-bold font-mono shrink-0">v2 Active</span>
-                    </div>
-                  </div>
+                  <ServiceStatusPanel
+                    getAuthHeaders={getAdminAuthHeaders}
+                    isCollapsed={false}
+                  />
 
                   <div className="flex items-center gap-2">
                     <Link
@@ -4428,6 +4365,13 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                           </button>
                         );
                       })}
+                    </div>
+
+                    <div className="mt-4">
+                      <ServiceStatusPanel
+                        getAuthHeaders={getAdminAuthHeaders}
+                        isCollapsed={false}
+                      />
                     </div>
                   </div>
                 </div>
