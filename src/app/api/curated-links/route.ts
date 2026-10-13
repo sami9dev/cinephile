@@ -168,11 +168,18 @@ export async function POST(request: NextRequest) {
         );
       }
 
+      const manualTitleVerified =
+        body.manualTitleVerified !== undefined ? Boolean(body.manualTitleVerified) : true;
+      const forceOverwrite =
+        body.forceOverwrite !== undefined ? Boolean(body.forceOverwrite) : true;
+
       const result = await updateEpisodeTitleInDatabase(movieId, {
         seasonNumber,
         episodeNumber,
         episodeTitle,
         linkId,
+        manualTitleVerified,
+        forceOverwrite,
       });
 
       try { revalidatePath('/'); } catch {}

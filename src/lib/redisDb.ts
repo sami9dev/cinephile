@@ -4,7 +4,7 @@ import path from 'path';
 import { getDatabase, resetMongoClient } from '@/lib/mongodb';
 import { TitleDetails } from '@/types';
 import { getTitleDetails, getLightweightTitleCard, cleanTitleString } from '@/lib/tmdb';
-import { detectShowPlatform, stripWatermarks } from '@/lib/seasonParser';
+import { detectShowPlatform, stripWatermarks, detectSeasonNumber, detectEpisodeNumber } from '@/lib/seasonParser';
 
 import { getEnv } from '@/lib/env';
 
@@ -1256,10 +1256,13 @@ export async function updateEpisodeTitleInDatabase(
     episodeNumber: number;
     episodeTitle: string;
     linkId?: string;
+    manualTitleVerified?: boolean;
+    forceOverwrite?: boolean;
   }
 ): Promise<{
   success: boolean;
   updatedCount: number;
+  skippedManualCount?: number;
   movieId: string;
   seasonNumber: number;
   episodeNumber: number;
@@ -1269,8 +1272,29 @@ export async function updateEpisodeTitleInDatabase(
   const sNum = Math.max(0, Number(params.seasonNumber) || 0);
   const eNum = Math.max(1, Number(params.episodeNumber) || 1);
   const epTitle = String(params.episodeTitle || '').trim();
+  const forceOverwrite = params.forceOverwrite !== undefined ? Boolean(params.forceOverwrite) : true;
+  const manualFlag =
+    params.manualTitleVerified !== undefined ? Boolean(params.manualTitleVerified) : undefined;
 
   let updatedCount = 0;
+  let skippedManualCount = 0;
+
+  // 0. Upstream Vercel / MongoDB proxy for Cloudflare Workers
+  const isCloudflare = typeof (globalThis as any).WebSocketPair !== 'undefined' || getEnv('WORKER_NAME');
+  if (isCloudflare) {
+    try {
+      await proxyMutationToUpstream('POST', '/api/curated-links', {
+        movieId: key,
+        action: 'update_episode_title',
+        seasonNumber: sNum,
+        episodeNumber: eNum,
+        episodeTitle: epTitle,
+        linkId: params.linkId,
+        manualTitleVerified: manualFlag,
+        forceOverwrite,
+      });
+    } catch {}
+  }
 
   // 1. MongoDB Atlas update
   try {
@@ -1278,31 +1302,50 @@ export async function updateEpisodeTitleInDatabase(
     if (db) {
       const collection = db.collection('links');
 
-      let filter: any;
-      if (params.linkId) {
-        filter = {
-          id: String(params.linkId).trim(),
-          $or: [{ movieId: key }, { movieId: Number(key) as any }],
-        };
-      } else {
-        filter = {
-          $or: [{ movieId: key }, { movieId: Number(key) as any }],
-          $and: [
-            { $or: [{ seasonNumber: sNum }, { seasonNumber: String(sNum) }] },
-            { $or: [{ episodeNumber: eNum }, { episodeNumber: String(eNum) }] },
-          ],
-        };
-      }
-
-      const updateOp = {
-        $set: {
-          episodeTitle: epTitle,
-          updatedAt: new Date(),
-        },
+      const baseMovieFilter = {
+        $or: [{ movieId: key }, { movieId: Number(key) as any }],
       };
 
-      const result = await collection.updateMany(filter, updateOp);
-      updatedCount = result.modifiedCount || result.matchedCount || 0;
+      const candidateDocs = await collection.find(baseMovieFilter).toArray();
+      const matchingIds: any[] = [];
+
+      for (const doc of candidateDocs) {
+        const docItem = {
+          title: typeof doc.title === 'string' ? doc.title : undefined,
+          seasonNumber: typeof doc.seasonNumber === 'number' ? doc.seasonNumber : undefined,
+          episodeNumber: typeof doc.episodeNumber === 'number' ? doc.episodeNumber : undefined,
+          url: typeof doc.url === 'string' ? doc.url : undefined,
+        };
+        const matchesTarget = params.linkId
+          ? String(doc.id) === String(params.linkId).trim()
+          : Number(doc.seasonNumber || detectSeasonNumber(docItem) || 1) === sNum &&
+            Number(doc.episodeNumber || detectEpisodeNumber(docItem) || 0) === eNum;
+
+        if (!matchesTarget) continue;
+
+        if (!forceOverwrite && doc.manualTitleVerified === true) {
+          skippedManualCount++;
+          continue;
+        }
+
+        matchingIds.push(doc._id);
+      }
+
+      if (matchingIds.length > 0) {
+        const setFields: Record<string, any> = {
+          episodeTitle: epTitle,
+          updatedAt: new Date(),
+        };
+        if (manualFlag !== undefined) {
+          setFields.manualTitleVerified = manualFlag;
+        }
+
+        const result = await collection.updateMany(
+          { _id: { $in: matchingIds } },
+          { $set: setFields }
+        );
+        updatedCount = Math.max(updatedCount, result.modifiedCount || result.matchedCount || 0);
+      }
     }
   } catch (err: any) {
     console.warn('MongoDB Atlas updateEpisodeTitle warning:', err.message);
@@ -1321,16 +1364,23 @@ export async function updateEpisodeTitleInDatabase(
 
       if (current.length > 0) {
         let redisModified = false;
+        let redisCount = 0;
         const updatedLinks = current.map((link: any) => {
           const matchLink = params.linkId
             ? link.id === params.linkId
-            : Number(link.seasonNumber) === sNum && Number(link.episodeNumber) === eNum;
+            : Number(link.seasonNumber || detectSeasonNumber(link) || 1) === sNum &&
+              Number(link.episodeNumber || detectEpisodeNumber(link) || 0) === eNum;
 
           if (matchLink) {
+            if (!forceOverwrite && link.manualTitleVerified === true) {
+              return link;
+            }
             redisModified = true;
+            redisCount++;
             return {
               ...link,
               episodeTitle: epTitle,
+              ...(manualFlag !== undefined ? { manualTitleVerified: manualFlag } : {}),
               updatedAt: new Date().toISOString(),
             };
           }
@@ -1339,6 +1389,7 @@ export async function updateEpisodeTitleInDatabase(
 
         if (redisModified) {
           await redisClient.hset(REDIS_HASH_KEY, { [key]: JSON.stringify(updatedLinks) });
+          updatedCount = Math.max(updatedCount, redisCount);
         }
       }
     } catch (err: any) {
@@ -1351,16 +1402,23 @@ export async function updateEpisodeTitleInDatabase(
     const localData = getLocalFallbackLinks();
     if (localData && localData[key]) {
       let localModified = false;
+      let localCount = 0;
       const updatedLocal = localData[key].map((link: any) => {
         const matchLink = params.linkId
           ? link.id === params.linkId
-          : Number(link.seasonNumber) === sNum && Number(link.episodeNumber) === eNum;
+          : Number(link.seasonNumber || detectSeasonNumber(link) || 1) === sNum &&
+            Number(link.episodeNumber || detectEpisodeNumber(link) || 0) === eNum;
 
         if (matchLink) {
+          if (!forceOverwrite && link.manualTitleVerified === true) {
+            return link;
+          }
           localModified = true;
+          localCount++;
           return {
             ...link,
             episodeTitle: epTitle,
+            ...(manualFlag !== undefined ? { manualTitleVerified: manualFlag } : {}),
             updatedAt: new Date().toISOString(),
           };
         }
@@ -1370,6 +1428,7 @@ export async function updateEpisodeTitleInDatabase(
       if (localModified) {
         localData[key] = updatedLocal;
         saveLocalFallbackLinks(localData);
+        updatedCount = Math.max(updatedCount, localCount);
       }
     }
   } catch (err: any) {
@@ -1381,6 +1440,7 @@ export async function updateEpisodeTitleInDatabase(
   return {
     success: true,
     updatedCount,
+    skippedManualCount,
     movieId: key,
     seasonNumber: sNum,
     episodeNumber: eNum,

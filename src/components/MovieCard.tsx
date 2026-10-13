@@ -320,23 +320,23 @@ export const MovieCard: React.FC<MovieCardProps> = ({
         <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-between p-3.5 pointer-events-none" />
 
         {/* Badges Top Left (Media Type & Quality) */}
-        <div className="absolute top-2.5 left-2.5 flex items-center gap-1.5 z-20 flex-wrap max-w-[80%]">
-          <span className="font-ui flex items-center gap-1 px-2.5 py-1 rounded-lg bg-black/75 backdrop-blur-md text-[10px] font-semibold text-zinc-200 border border-white/15 uppercase tracking-wider shadow-lg group-hover:border-amber-400/40 transition-colors">
-            {mediaType === 'tv' ? <Tv className="w-3 h-3 text-sky-400" /> : <Film className="w-3 h-3 text-amber-400" />}
+        <div className="absolute top-2 left-2 sm:top-2.5 sm:left-2.5 flex items-center gap-1 sm:gap-1.5 z-20 flex-wrap max-w-[75%]">
+          <span className="font-ui flex items-center gap-1 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-black/75 backdrop-blur-md text-[9px] sm:text-[10px] font-semibold text-zinc-200 border border-white/15 uppercase tracking-wider shadow-lg group-hover:border-amber-400/40 transition-colors">
+            {mediaType === 'tv' ? <Tv className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-sky-400" /> : <Film className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-amber-400" />}
             {mediaType === 'tv' ? 'TV' : 'Movie'}
           </span>
           {(item as any).hasZipPack && (
-            <span className="font-ui px-2 py-0.5 rounded-lg bg-emerald-500/90 text-black text-[9px] font-semibold uppercase tracking-wider shadow-md">
+            <span className="font-ui px-1.5 sm:px-2 py-0.5 rounded-lg bg-emerald-500/90 text-black text-[9px] font-semibold uppercase tracking-wider shadow-md">
               ZIP
             </span>
           )}
           {(item as any).qualities?.includes('REMUX') && (
-            <span className="font-ui px-2 py-0.5 rounded-lg bg-purple-500/90 text-white text-[9px] font-semibold uppercase tracking-wider shadow-md">
+            <span className="font-ui px-1.5 sm:px-2 py-0.5 rounded-lg bg-purple-500/90 text-white text-[9px] font-semibold uppercase tracking-wider shadow-md">
               REMUX
             </span>
           )}
           {((item as any).qualities?.includes('4K UHD') || (item as any).qualities?.includes('4K')) && (
-            <span className="font-ui px-2 py-0.5 rounded-lg bg-amber-400/95 text-black text-[9px] font-semibold uppercase tracking-wider shadow-md">
+            <span className="font-ui px-1.5 sm:px-2 py-0.5 rounded-lg bg-amber-400/95 text-black text-[9px] font-semibold uppercase tracking-wider shadow-md">
               4K
             </span>
           )}
@@ -344,8 +344,8 @@ export const MovieCard: React.FC<MovieCardProps> = ({
 
         {/* Badges Top Right (Rating) */}
         {item.vote_average > 0 && (
-          <div className="font-meta absolute top-2.5 right-2.5 flex items-center gap-1 px-2.5 py-1 rounded-lg bg-black/85 backdrop-blur-md text-xs font-bold text-amber-300 border border-amber-400/40 shadow-lg group-hover:scale-105 group-hover:border-amber-400 transition-all z-20">
-            <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
+          <div className="font-meta absolute top-2 right-2 sm:top-2.5 sm:right-2.5 flex items-center gap-1 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-black/85 backdrop-blur-md text-[11px] sm:text-xs font-bold text-amber-300 border border-amber-400/40 shadow-lg group-hover:scale-105 group-hover:border-amber-400 transition-all z-20">
+            <Star className="w-3 h-3 sm:w-3.5 sm:h-3.5 fill-amber-400 text-amber-400" />
             <span>{item.vote_average.toFixed(1)}</span>
           </div>
         )}
@@ -360,20 +360,20 @@ export const MovieCard: React.FC<MovieCardProps> = ({
       </Link>
 
       {/* Info Section Below Poster */}
-      <div className="p-3.5 flex flex-col justify-between flex-1 bg-gradient-to-b from-[#10131b] to-[#0c0f16]">
+      <div className="p-2.5 sm:p-3.5 flex flex-col justify-between flex-1 bg-gradient-to-b from-[#10131b] to-[#0c0f16]">
         <Link href={`/${mediaType}/${item.id}`} className="block">
-          <h3 className="font-ui text-sm font-semibold text-zinc-100 line-clamp-1 group-hover:text-amber-400 transition-colors duration-200">
+          <h3 className="font-ui text-xs sm:text-sm font-semibold text-zinc-100 line-clamp-1 group-hover:text-amber-400 transition-colors duration-200">
             {title}
           </h3>
         </Link>
-        <div className="font-meta flex items-center justify-between text-xs text-zinc-400 mt-1.5 font-medium">
-          <span className="font-meta text-zinc-400 group-hover:text-zinc-300 transition-colors">{year || 'TBA'}</span>
+        <div className="font-meta flex items-center justify-between gap-1 text-[11px] sm:text-xs text-zinc-400 mt-1.5 font-medium">
+          <span className="font-meta text-zinc-400 group-hover:text-zinc-300 transition-colors shrink-0">{year || 'TBA'}</span>
           {(item as any).qualities && (item as any).qualities.length > 0 ? (
-            <span className="font-ui text-[10px] text-amber-400 font-semibold tracking-wider">
+            <span className="font-ui text-[9px] sm:text-[10px] text-amber-400 font-semibold tracking-wider truncate">
               {(item as any).qualities.slice(0, 2).join(' • ')}
             </span>
           ) : (
-            <span className="font-ui text-[10px] text-zinc-500 uppercase tracking-wider font-semibold">HD • 4K</span>
+            <span className="font-ui text-[9px] sm:text-[10px] text-zinc-500 uppercase tracking-wider font-semibold">HD • 4K</span>
           )}
         </div>
       </div>

@@ -121,10 +121,10 @@ export const Header: React.FC = () => {
             : 'bg-gradient-to-b from-[#08090c]/95 via-[#08090c]/60 to-transparent py-4'
         }`}
       >
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between gap-4">
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 flex items-center justify-between gap-2 sm:gap-4">
           {/* Logo */}
-          <Link href="/" className="inline-flex items-center group shrink-0" aria-label="Cinephile Home">
-            <span className="font-logo text-[26px] sm:text-[30px] leading-none tracking-[0.06em] text-[#9d8ec2] group-hover:text-[#bcaedb] transition-colors drop-shadow-sm select-none">
+          <Link href="/" className="inline-flex items-center group shrink-0 min-w-0" aria-label="Cinephile Home">
+            <span className="font-logo text-[22px] sm:text-[30px] leading-none tracking-[0.06em] text-[#9d8ec2] group-hover:text-[#bcaedb] transition-colors drop-shadow-sm select-none">
               Cinephile
             </span>
           </Link>
@@ -149,11 +149,11 @@ export const Header: React.FC = () => {
           </div>
 
           {/* Right Action Bar */}
-          <div className="flex items-center gap-2 sm:gap-2.5">
+          <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
             {/* Mobile Search Button */}
             <Link
               href="/search"
-              className="sm:hidden p-2 rounded-xl bg-zinc-850 text-zinc-300 hover:text-white border border-zinc-750"
+              className="sm:hidden min-w-[38px] min-h-[38px] p-2 rounded-xl bg-zinc-850 text-zinc-300 hover:text-white border border-zinc-750 inline-flex items-center justify-center"
               aria-label="Search catalog"
               suppressHydrationWarning
             >
@@ -182,7 +182,7 @@ export const Header: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setIsAuthOpen(true)}
-                className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white hover:bg-zinc-100 text-zinc-900 font-bold text-xs shadow-md transition-all hover:scale-105 active:scale-95 cursor-pointer shrink-0"
+                className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3.5 py-1.5 min-h-[36px] rounded-full bg-white hover:bg-zinc-100 text-zinc-900 font-bold text-[11px] sm:text-xs shadow-md transition-all hover:scale-105 active:scale-95 cursor-pointer shrink-0 whitespace-nowrap"
                 title="Connect your Google Account"
               >
                 <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24">
@@ -196,7 +196,7 @@ export const Header: React.FC = () => {
             ) : (
               <Link
                 href="/profile"
-                className="flex items-center gap-1.5 p-1.5 sm:px-2.5 sm:py-1.5 rounded-xl bg-zinc-800/80 hover:bg-zinc-700 border border-zinc-700 text-zinc-200 transition-all hover:border-amber-400/50"
+                className="flex items-center gap-1.5 p-1.5 sm:px-2.5 sm:py-1.5 min-w-[38px] min-h-[38px] justify-center rounded-xl bg-zinc-800/80 hover:bg-zinc-700 border border-zinc-700 text-zinc-200 transition-all hover:border-amber-400/50"
                 title={`Signed in as ${userProfile.displayName || userProfile.name || 'User'} (${userProfile.email})`}
                 aria-label={`User profile for ${userProfile.displayName || userProfile.name || 'User'}`}
               >
@@ -221,7 +221,7 @@ export const Header: React.FC = () => {
             {/* Mobile Menu Toggle */}
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="lg:hidden p-2 rounded-lg bg-zinc-800 text-zinc-300 hover:text-white"
+              className="lg:hidden min-w-[38px] min-h-[38px] p-2 rounded-lg bg-zinc-800 text-zinc-300 hover:text-white inline-flex items-center justify-center"
               aria-label={mobileMenuOpen ? "Close navigation menu" : "Open navigation menu"}
               suppressHydrationWarning
             >
@@ -232,7 +232,27 @@ export const Header: React.FC = () => {
 
         {/* Mobile Navigation Drawer */}
         {mobileMenuOpen && (
-          <div className="lg:hidden bg-[#0e1117] border-b border-white/10 px-4 py-4 space-y-2.5 max-h-[80vh] overflow-y-auto animate-fadeIn">
+          <div className="lg:hidden bg-[#0e1117] border-b border-white/10 px-3 sm:px-4 py-4 space-y-2.5 max-h-[82vh] overflow-y-auto animate-fadeIn">
+            {/* Inline Mobile Search Form */}
+            <form
+              onSubmit={(e) => {
+                handleSearchSubmit(e);
+                setMobileMenuOpen(false);
+              }}
+              className="relative w-full sm:hidden"
+            >
+              <input
+                type="text"
+                placeholder="Search movies, web series, 4K..."
+                aria-label="Search movies and TV shows"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full bg-[#14121f] text-xs font-medium text-zinc-100 placeholder:text-zinc-500 rounded-xl pl-9 pr-3 py-2.5 border border-[#2b2542] focus:border-purple-500/60 focus:outline-none"
+                suppressHydrationWarning
+              />
+              <Search className="w-4 h-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            </form>
+
             {/* Quick Mobile Request Button */}
             <button
               type="button"
@@ -240,7 +260,7 @@ export const Header: React.FC = () => {
                 setMobileMenuOpen(false);
                 setIsRequestModalOpen(true);
               }}
-              className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-400 hover:text-amber-300 font-bold text-xs transition-all active:scale-98"
+              className="w-full flex items-center justify-center gap-2 py-2.5 px-4 min-h-[42px] rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-400 hover:text-amber-300 font-bold text-xs transition-all active:scale-98"
             >
               <Film className="w-4 h-4 text-amber-400" />
               <span>Request Movie or TV Series</span>

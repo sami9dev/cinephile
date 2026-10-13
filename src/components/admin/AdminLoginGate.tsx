@@ -168,7 +168,7 @@ export const AdminLoginGate: React.FC<AdminLoginGateProps> = ({
 
       {/* 3. Center Glassmorphic Master Control Card */}
       <div className="relative z-10 w-full max-w-md my-auto py-4">
-        <div className="relative backdrop-blur-md bg-[#0b0e17]/85 border border-white/10 hover:border-amber-500/40 rounded-3xl p-7 sm:p-9 shadow-[0_20px_70px_-10px_rgba(0,0,0,0.95)] space-y-6 transition-all duration-300 overflow-hidden">
+        <div className="relative backdrop-blur-md bg-[#0b0e17]/85 border border-white/10 hover:border-amber-500/40 rounded-3xl p-5 sm:p-9 shadow-[0_20px_70px_-10px_rgba(0,0,0,0.95)] space-y-6 transition-all duration-300 overflow-hidden">
           {/* Top Amber Accent Line */}
           <div className="absolute top-0 left-1/2 -translate-x-1/2 w-48 h-[2px] bg-gradient-to-r from-transparent via-amber-400 to-transparent" />
 
@@ -183,7 +183,7 @@ export const AdminLoginGate: React.FC<AdminLoginGateProps> = ({
             <span className="text-[10px] font-mono font-bold tracking-widest text-amber-400 uppercase">
               {currentTheme.editionTag}
             </span>
-            <h2 className="text-2xl sm:text-3xl font-black text-white tracking-tight drop-shadow-md">
+            <h2 className="text-xl sm:text-3xl font-black text-white tracking-tight drop-shadow-md">
               CiNEPHiLE Master Control
             </h2>
             <p className="text-xs text-zinc-400 leading-relaxed max-w-xs mx-auto">

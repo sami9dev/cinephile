@@ -89,22 +89,22 @@ jobs:
           WORKER_NAME=$(grep '^name = ' wrangler.production.toml | head -n1 | cut -d '"' -f 2)
 
           if [ -n "$PROD_MONGO" ]; then
-            printf '%s' "$PROD_MONGO" | npx wrangler secret put MONGODB_URI --name "$WORKER_NAME" --config wrangler.production.toml
+            printf '%s' "$PROD_MONGO" | npx wrangler secret put MONGODB_URI --name "$WORKER_NAME" --config wrangler.production.toml || true
           fi
           if [ -n "$PROD_REDIS_URL" ]; then
-            printf '%s' "$PROD_REDIS_URL" | npx wrangler secret put UPSTASH_REDIS_REST_URL --name "$WORKER_NAME" --config wrangler.production.toml
+            printf '%s' "$PROD_REDIS_URL" | npx wrangler secret put UPSTASH_REDIS_REST_URL --name "$WORKER_NAME" --config wrangler.production.toml || true
           fi
           if [ -n "$PROD_REDIS_TOKEN" ]; then
-            printf '%s' "$PROD_REDIS_TOKEN" | npx wrangler secret put UPSTASH_REDIS_REST_TOKEN --name "$WORKER_NAME" --config wrangler.production.toml
+            printf '%s' "$PROD_REDIS_TOKEN" | npx wrangler secret put UPSTASH_REDIS_REST_TOKEN --name "$WORKER_NAME" --config wrangler.production.toml || true
           fi
           if [ -n "$PROD_TELEGRAM_TOKEN" ]; then
-            printf '%s' "$PROD_TELEGRAM_TOKEN" | npx wrangler secret put TELEGRAM_BOT_TOKEN --name "$WORKER_NAME" --config wrangler.production.toml
+            printf '%s' "$PROD_TELEGRAM_TOKEN" | npx wrangler secret put TELEGRAM_BOT_TOKEN --name "$WORKER_NAME" --config wrangler.production.toml || true
           fi
           if [ -n "$PROD_ADMIN_SECRET" ]; then
-            printf '%s' "$PROD_ADMIN_SECRET" | npx wrangler secret put ADMIN_SECRET_KEY --name "$WORKER_NAME" --config wrangler.production.toml
+            printf '%s' "$PROD_ADMIN_SECRET" | npx wrangler secret put ADMIN_SECRET_KEY --name "$WORKER_NAME" --config wrangler.production.toml || true
           fi
           if [ -n "$PROD_TELEGRAM_WEBHOOK_SECRET" ]; then
-            printf '%s' "$PROD_TELEGRAM_WEBHOOK_SECRET" | npx wrangler secret put TELEGRAM_WEBHOOK_SECRET --name "$WORKER_NAME" --config wrangler.production.toml
+            printf '%s' "$PROD_TELEGRAM_WEBHOOK_SECRET" | npx wrangler secret put TELEGRAM_WEBHOOK_SECRET --name "$WORKER_NAME" --config wrangler.production.toml || true
           fi
 
       - name: Deploy to Cloudflare Workers Production
@@ -128,20 +128,20 @@ jobs:
           WORKER_NAME=$(grep '^name = ' wrangler.production.toml | head -n1 | cut -d '"' -f 2)
 
           if [ -n "$PROD_MONGO" ]; then
-            printf '%s' "$PROD_MONGO" | npx wrangler secret put MONGODB_URI --name "$WORKER_NAME" --config wrangler.production.toml
+            printf '%s' "$PROD_MONGO" | npx wrangler secret put MONGODB_URI --name "$WORKER_NAME" --config wrangler.production.toml || true
           fi
           if [ -n "$PROD_REDIS_URL" ]; then
-            printf '%s' "$PROD_REDIS_URL" | npx wrangler secret put UPSTASH_REDIS_REST_URL --name "$WORKER_NAME" --config wrangler.production.toml
+            printf '%s' "$PROD_REDIS_URL" | npx wrangler secret put UPSTASH_REDIS_REST_URL --name "$WORKER_NAME" --config wrangler.production.toml || true
           fi
           if [ -n "$PROD_REDIS_TOKEN" ]; then
-            printf '%s' "$PROD_REDIS_TOKEN" | npx wrangler secret put UPSTASH_REDIS_REST_TOKEN --name "$WORKER_NAME" --config wrangler.production.toml
+            printf '%s' "$PROD_REDIS_TOKEN" | npx wrangler secret put UPSTASH_REDIS_REST_TOKEN --name "$WORKER_NAME" --config wrangler.production.toml || true
           fi
           if [ -n "$PROD_TELEGRAM_TOKEN" ]; then
-            printf '%s' "$PROD_TELEGRAM_TOKEN" | npx wrangler secret put TELEGRAM_BOT_TOKEN --name "$WORKER_NAME" --config wrangler.production.toml
+            printf '%s' "$PROD_TELEGRAM_TOKEN" | npx wrangler secret put TELEGRAM_BOT_TOKEN --name "$WORKER_NAME" --config wrangler.production.toml || true
           fi
           if [ -n "$PROD_ADMIN_SECRET" ]; then
-            printf '%s' "$PROD_ADMIN_SECRET" | npx wrangler secret put ADMIN_SECRET_KEY --name "$WORKER_NAME" --config wrangler.production.toml
+            printf '%s' "$PROD_ADMIN_SECRET" | npx wrangler secret put ADMIN_SECRET_KEY --name "$WORKER_NAME" --config wrangler.production.toml || true
           fi
           if [ -n "$PROD_TELEGRAM_WEBHOOK_SECRET" ]; then
-            printf '%s' "$PROD_TELEGRAM_WEBHOOK_SECRET" | npx wrangler secret put TELEGRAM_WEBHOOK_SECRET --name "$WORKER_NAME" --config wrangler.production.toml
+            printf '%s' "$PROD_TELEGRAM_WEBHOOK_SECRET" | npx wrangler secret put TELEGRAM_WEBHOOK_SECRET --name "$WORKER_NAME" --config wrangler.production.toml || true
           fi

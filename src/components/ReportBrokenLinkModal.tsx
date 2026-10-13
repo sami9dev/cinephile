@@ -197,27 +197,27 @@ export const ReportBrokenLinkModal: React.FC<ReportBrokenLinkModalProps> = ({
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-md animate-fade-in overflow-y-auto">
       <div
-        className="relative w-full max-w-2xl bg-[#0d111a] border border-zinc-800 hover:border-amber-500/30 rounded-3xl p-5 sm:p-7 shadow-2xl space-y-5 my-auto max-h-[92vh] overflow-y-auto no-scrollbar transition-all"
+        className="relative w-full max-w-2xl bg-[#0d111a] border border-zinc-800 hover:border-amber-500/30 rounded-3xl p-4 sm:p-7 shadow-2xl space-y-5 my-auto max-h-[92vh] overflow-y-auto no-scrollbar transition-all"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Close Button */}
         <button
           onClick={onClose}
-          className="absolute top-5 right-5 p-2 rounded-xl text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
+          className="absolute top-4 right-4 sm:top-5 sm:right-5 p-2 rounded-xl text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
           aria-label="Close modal"
         >
           <X className="w-5 h-5" />
         </button>
 
         {/* Modal Header */}
-        <div className="flex items-start gap-3.5 pr-8">
-          <div className="w-11 h-11 rounded-2xl bg-amber-500/15 border border-amber-500/30 text-amber-400 flex items-center justify-center shrink-0 shadow-lg shadow-amber-500/10">
+        <div className="flex items-start gap-3 sm:gap-3.5 pr-8">
+          <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-2xl bg-amber-500/15 border border-amber-500/30 text-amber-400 flex items-center justify-center shrink-0 shadow-lg shadow-amber-500/10">
             <AlertTriangle className="w-5 h-5" />
           </div>
-          <div className="space-y-0.5">
-            <h3 className="text-lg sm:text-xl font-black text-white tracking-tight flex items-center gap-2">
+          <div className="space-y-0.5 min-w-0 flex-1">
+            <h3 className="text-base sm:text-xl font-black text-white tracking-tight flex flex-wrap items-center gap-1.5 sm:gap-2">
               <span>Report Broken Link</span>
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 font-semibold border border-zinc-700">
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 font-semibold border border-zinc-700 truncate max-w-full">
                 {data.mediaTitle}
               </span>
             </h3>
@@ -256,7 +256,7 @@ export const ReportBrokenLinkModal: React.FC<ReportBrokenLinkModalProps> = ({
               </p>
             </div>
 
-            <div className="p-3.5 rounded-2xl bg-zinc-900/90 border border-zinc-800 flex items-center justify-between text-xs max-w-sm mx-auto">
+            <div className="p-3 sm:p-3.5 rounded-2xl bg-zinc-900/90 border border-zinc-800 flex flex-wrap items-center justify-between gap-2 text-xs max-w-sm mx-auto">
               <span className="text-zinc-400">Current Status:</span>
               <span className="px-2.5 py-0.5 rounded-full bg-zinc-800 text-amber-400 font-bold text-[11px] border border-zinc-700 flex items-center gap-1.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
@@ -285,8 +285,8 @@ export const ReportBrokenLinkModal: React.FC<ReportBrokenLinkModalProps> = ({
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
             {/* Signed-in user badge */}
-            <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-between text-xs">
-              <div className="flex items-center gap-2 truncate">
+            <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-between gap-2 text-xs">
+              <div className="flex items-center gap-2 min-w-0 truncate">
                 <UserCheck className="w-4 h-4 text-emerald-400 shrink-0" />
                 <span className="text-zinc-300 truncate">
                   Reporting as: <strong className="text-white font-bold">{userProfile.displayName || 'Cinephile'}</strong> ({userProfile.email})
@@ -327,7 +327,7 @@ export const ReportBrokenLinkModal: React.FC<ReportBrokenLinkModalProps> = ({
                       >
                         <Icon className="w-3.5 h-3.5" />
                       </div>
-                      <div className="overflow-hidden">
+                      <div className="overflow-hidden min-w-0">
                         <div
                           className={`text-xs font-bold leading-tight ${
                             isSelected ? 'text-amber-300' : 'text-zinc-200'
@@ -346,7 +346,7 @@ export const ReportBrokenLinkModal: React.FC<ReportBrokenLinkModalProps> = ({
             </div>
 
             {/* 2. Metadata: Quality & Server */}
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1">
                 <label className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider block">
                   Quality / Version
@@ -451,19 +451,19 @@ export const ReportBrokenLinkModal: React.FC<ReportBrokenLinkModalProps> = ({
             )}
 
             {/* Submit Action */}
-            <div className="flex items-center justify-end gap-3 pt-2">
+            <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-end gap-2.5 sm:gap-3 pt-2">
               <button
                 type="button"
                 onClick={onClose}
                 disabled={isSubmitting}
-                className="px-4 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-semibold transition-colors cursor-pointer"
+                className="w-full sm:w-auto min-h-[42px] px-4 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-semibold transition-colors cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 type="submit"
                 disabled={isSubmitting}
-                className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-black font-black text-xs flex items-center gap-2 shadow-lg shadow-amber-500/25 transition-transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer disabled:opacity-50"
+                className="w-full sm:w-auto min-h-[42px] px-6 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-black font-black text-xs flex items-center justify-center gap-2 shadow-lg shadow-amber-500/25 transition-transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer disabled:opacity-50"
               >
                 {isSubmitting ? (
                   <>

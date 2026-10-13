@@ -95,19 +95,19 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose }) => {
   };
 
   return (
-    <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fadeIn">
-      <div className="bg-[#0e1117] border border-zinc-800 w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden flex flex-col">
+    <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/80 backdrop-blur-sm p-3 sm:p-4 animate-fadeIn">
+      <div className="bg-[#0e1117] border border-zinc-800 w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh] overflow-y-auto">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800 bg-zinc-900/50">
-          <div className="flex items-center gap-2">
-            <Sparkles className="w-5 h-5 text-amber-400" />
-            <h2 className="text-sm font-bold text-white tracking-wide">
+        <div className="flex items-center justify-between px-4 sm:px-6 py-3.5 sm:py-4 border-b border-zinc-800 bg-zinc-900/50">
+          <div className="flex items-center gap-2 min-w-0">
+            <Sparkles className="w-5 h-5 text-amber-400 shrink-0" />
+            <h2 className="text-sm font-bold text-white tracking-wide truncate">
               {isLoggedIn ? 'Account Profile' : 'Sign In to CiNEPHiLE'}
             </h2>
           </div>
           <button
             onClick={onClose}
-            className="p-1 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
+            className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors shrink-0"
             aria-label="Close"
           >
             <X className="w-5 h-5" />
@@ -115,15 +115,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose }) => {
         </div>
 
         {/* Content */}
-        <div className="p-6 space-y-4 text-sm">
+        <div className="p-4 sm:p-6 space-y-4 text-sm">
           {isLoggedIn ? (
             <div className="space-y-4 text-center">
               <div className="w-16 h-16 rounded-full bg-gradient-to-tr from-amber-500 to-orange-500 flex items-center justify-center text-black font-black text-2xl mx-auto shadow-lg shadow-amber-500/20">
                 {userProfile.displayName ? userProfile.displayName[0].toUpperCase() : 'U'}
               </div>
-              <div>
-                <h3 className="text-base font-bold text-white">{userProfile.displayName}</h3>
-                <p className="text-xs text-zinc-400">{userProfile.email}</p>
+              <div className="min-w-0">
+                <h3 className="text-base font-bold text-white truncate">{userProfile.displayName}</h3>
+                <p className="text-xs text-zinc-400 break-all">{userProfile.email}</p>
               </div>
 
               <div className="p-2.5 bg-emerald-950/40 border border-emerald-500/30 rounded-xl text-xs text-emerald-300 flex items-center justify-center gap-2">

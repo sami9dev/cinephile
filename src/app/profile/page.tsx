@@ -360,11 +360,11 @@ export default function ProfilePage() {
         </div>
       ) : (
         /* Real Connected Google Account Card */
-        <div className="bg-[#0f121a] border border-zinc-800 rounded-3xl p-6 sm:p-8 shadow-xl">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6">
-            <div className="flex items-center gap-4">
-              <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full overflow-hidden bg-gradient-to-tr from-amber-500 via-orange-500 to-red-600 p-0.5 shadow-lg shrink-0">
-                <div className="w-full h-full bg-[#090b0e] rounded-full overflow-hidden flex items-center justify-center text-white font-black text-2xl">
+        <div className="bg-[#0f121a] border border-zinc-800 rounded-3xl p-4 sm:p-8 shadow-xl">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 sm:gap-6">
+            <div className="flex items-start sm:items-center gap-3.5 sm:gap-4 min-w-0 w-full sm:w-auto">
+              <div className="w-14 h-14 sm:w-20 sm:h-20 rounded-full overflow-hidden bg-gradient-to-tr from-amber-500 via-orange-500 to-red-600 p-0.5 shadow-lg shrink-0">
+                <div className="w-full h-full bg-[#090b0e] rounded-full overflow-hidden flex items-center justify-center text-white font-black text-xl sm:text-2xl">
                   {userProfile.photoURL ? (
                     <img
                       src={userProfile.photoURL}
@@ -378,9 +378,9 @@ export default function ProfilePage() {
                 </div>
               </div>
 
-              <div className="space-y-1">
+              <div className="space-y-1 min-w-0 flex-1">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <h1 className="text-xl sm:text-2xl font-black text-white">
+                  <h1 className="text-xl sm:text-2xl font-black text-white break-words">
                     {userProfile.displayName || userProfile.name || 'Connected User'}
                   </h1>
                   <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[10px] font-bold flex items-center gap-1 font-mono">
@@ -390,11 +390,11 @@ export default function ProfilePage() {
                     Google Account
                   </span>
                 </div>
-                <p className="text-xs text-zinc-400 font-mono flex items-center gap-1.5">
-                  <Mail className="w-3.5 h-3.5 text-zinc-500" />
-                  <span>{userProfile.email}</span>
+                <p className="text-xs text-zinc-400 font-mono flex items-center gap-1.5 min-w-0">
+                  <Mail className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
+                  <span className="break-all">{userProfile.email}</span>
                 </p>
-                <div className="flex items-center gap-3 pt-1 text-xs text-zinc-400 font-mono">
+                <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 pt-1 text-xs text-zinc-400 font-mono">
                   <span>Requests: <strong className="text-white">{myRequests.length}</strong></span>
                   <span>•</span>
                   <span>Reports: <strong className="text-white">{myReports.length}</strong></span>
@@ -406,7 +406,7 @@ export default function ProfilePage() {
 
             <button
               onClick={logout}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-300 hover:text-rose-400 border border-zinc-700 text-xs font-semibold transition-colors cursor-pointer self-start sm:self-center"
+              className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-300 hover:text-rose-400 border border-zinc-700 text-xs font-semibold transition-colors cursor-pointer self-start sm:self-center shrink-0"
             >
               <LogOut className="w-3.5 h-3.5" />
               <span>Sign Out</span>
@@ -416,7 +416,7 @@ export default function ProfilePage() {
       )}
 
       {/* 4a. Website In-App Notifications Preferences */}
-      <section id="website-notifications" className="bg-[#0f121a] border border-zinc-800 rounded-3xl p-6 sm:p-8 space-y-6 shadow-xl scroll-mt-24">
+      <section id="website-notifications" className="bg-[#0f121a] border border-zinc-800 rounded-3xl p-4 sm:p-8 space-y-6 shadow-xl scroll-mt-24">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-zinc-800 pb-4">
           <div className="space-y-1">
             <div className="flex items-center gap-2">
@@ -463,11 +463,11 @@ export default function ProfilePage() {
       </section>
 
       {/* 4b. Telegram Notifications Section */}
-      <section id="telegram-notifications" className="bg-[#0f121a] border border-zinc-800 rounded-3xl p-6 sm:p-8 space-y-6 shadow-xl scroll-mt-24">
+      <section id="telegram-notifications" className="bg-[#0f121a] border border-zinc-800 rounded-3xl p-4 sm:p-8 space-y-6 shadow-xl scroll-mt-24">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-zinc-800 pb-4">
           <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="w-8 h-8 rounded-xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400 shrink-0">
                 <Send className="w-4 h-4 -rotate-12" />
               </div>
               <h2 className="text-lg font-bold text-white">Telegram Instant Alerts</h2>
@@ -512,7 +512,7 @@ export default function ProfilePage() {
           <div className="space-y-6">
             <div className="p-4 rounded-2xl bg-zinc-950/70 border border-emerald-500/20 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
               <div className="space-y-1">
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
                   <span className="text-sm font-bold text-zinc-100">
                     Linked to @{telegramStatus.botUsername}
@@ -546,7 +546,7 @@ export default function ProfilePage() {
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <label className="flex items-center justify-between p-3.5 rounded-xl bg-zinc-950/50 border border-zinc-800/80 cursor-pointer hover:border-zinc-700 transition-colors">
-                  <div className="space-y-0.5">
+                  <div className="space-y-0.5 pr-3">
                     <span className="text-xs font-semibold text-zinc-200 block">
                       Movie & TV Requests
                     </span>
@@ -559,12 +559,12 @@ export default function ProfilePage() {
                     checked={telegramStatus.link?.requestNotifications !== false}
                     onChange={(e) => handleTogglePreference('requestNotifications', e.target.checked)}
                     disabled={isUpdatingPrefs}
-                    className="w-4 h-4 rounded text-amber-500 bg-zinc-900 border-zinc-700 focus:ring-amber-500"
+                    className="w-4 h-4 rounded text-amber-500 bg-zinc-900 border-zinc-700 focus:ring-amber-500 shrink-0"
                   />
                 </label>
 
                 <label className="flex items-center justify-between p-3.5 rounded-xl bg-zinc-950/50 border border-zinc-800/80 cursor-pointer hover:border-zinc-700 transition-colors">
-                  <div className="space-y-0.5">
+                  <div className="space-y-0.5 pr-3">
                     <span className="text-xs font-semibold text-zinc-200 block">
                       Broken Link Reports
                     </span>
@@ -577,7 +577,7 @@ export default function ProfilePage() {
                     checked={telegramStatus.link?.reportNotifications !== false}
                     onChange={(e) => handleTogglePreference('reportNotifications', e.target.checked)}
                     disabled={isUpdatingPrefs}
-                    className="w-4 h-4 rounded text-amber-500 bg-zinc-900 border-zinc-700 focus:ring-amber-500"
+                    className="w-4 h-4 rounded text-amber-500 bg-zinc-900 border-zinc-700 focus:ring-amber-500 shrink-0"
                   />
                 </label>
               </div>
@@ -587,7 +587,7 @@ export default function ProfilePage() {
           /* Not Connected State */
           <div className="space-y-5">
             {!linkingData ? (
-              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-5 rounded-2xl bg-zinc-950/60 border border-zinc-800">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-4 sm:p-5 rounded-2xl bg-zinc-950/60 border border-zinc-800">
                 <div className="space-y-1 max-w-lg">
                   <h4 className="text-sm font-bold text-white">Connect Your Telegram</h4>
                   <p className="text-xs text-zinc-400 leading-relaxed">
@@ -606,8 +606,8 @@ export default function ProfilePage() {
                 </button>
               </div>
             ) : (
-              <div className="p-5 rounded-2xl bg-zinc-950/80 border border-sky-500/30 space-y-4 animate-fadeIn">
-                <div className="flex items-center justify-between">
+              <div className="p-4 sm:p-5 rounded-2xl bg-zinc-950/80 border border-sky-500/30 space-y-4 animate-fadeIn">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
                     <span className="w-2 h-2 rounded-full bg-sky-400 animate-pulse" />
                     <h4 className="text-xs font-bold text-sky-400 uppercase tracking-wider">
@@ -623,12 +623,12 @@ export default function ProfilePage() {
                   Open the official CiNEPHiLE bot in Telegram and start it with your secure link code:
                 </p>
 
-                <div className="flex flex-wrap items-center gap-3">
+                <div className="flex flex-wrap items-center gap-2.5 sm:gap-3">
                   <a
                     href={linkingData.telegramUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 text-white font-bold text-xs shadow-lg shadow-sky-500/25 transition-all"
+                    className="inline-flex items-center gap-2 px-4 sm:px-5 py-2.5 rounded-xl bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 text-white font-bold text-xs shadow-lg shadow-sky-500/25 transition-all"
                   >
                     <Send className="w-3.5 h-3.5 -rotate-12" />
                     Open @{linkingData.botUsername} in Telegram
@@ -666,8 +666,8 @@ export default function ProfilePage() {
                   </button>
                 </div>
 
-                <div className="p-3 rounded-xl bg-zinc-900/60 border border-zinc-800/80 font-mono text-[11px] text-zinc-400 flex items-center justify-between">
-                  <span>/start {linkingData.token}</span>
+                <div className="p-3 rounded-xl bg-zinc-900/60 border border-zinc-800/80 font-mono text-[11px] text-zinc-400 flex flex-wrap items-center justify-between gap-2 min-w-0">
+                  <span className="break-all">/start {linkingData.token}</span>
                   <span className="text-[10px] text-zinc-600">Send to @{linkingData.botUsername}</span>
                 </div>
               </div>
@@ -677,11 +677,11 @@ export default function ProfilePage() {
       </section>
 
       {/* 5. My Movie & TV Requests Section */}
-      <section id="my-requests" className="bg-[#0f121a] border border-zinc-800 rounded-3xl p-6 sm:p-8 space-y-6 shadow-xl scroll-mt-24">
+      <section id="my-requests" className="bg-[#0f121a] border border-zinc-800 rounded-3xl p-4 sm:p-8 space-y-6 shadow-xl scroll-mt-24">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-zinc-800 pb-4">
           <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <Film className="w-5 h-5 text-amber-400" />
+            <div className="flex flex-wrap items-center gap-2">
+              <Film className="w-5 h-5 text-amber-400 shrink-0" />
               <h2 className="text-lg font-bold text-white">My Movie & TV Requests</h2>
               {myRequests.length > 0 && (
                 <span className="px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-300 border border-zinc-700 text-xs font-semibold">
@@ -694,7 +694,7 @@ export default function ProfilePage() {
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto max-w-full">
             {isLoggedIn && (
               <>
                 <button
@@ -718,7 +718,7 @@ export default function ProfilePage() {
             )}
 
             {/* Status Filter Tabs */}
-            <div className="flex items-center p-1 bg-zinc-950 rounded-xl border border-zinc-800 text-xs">
+            <div className="flex items-center p-1 bg-zinc-950 rounded-xl border border-zinc-800 text-xs overflow-x-auto max-w-full no-scrollbar">
               {(['all', 'pending', 'in_progress', 'fulfilled', 'rejected'] as const).map((filter) => {
                 const count =
                   filter === 'all'
@@ -729,7 +729,7 @@ export default function ProfilePage() {
                     key={filter}
                     type="button"
                     onClick={() => setRequestFilter(filter)}
-                    className={`px-2.5 py-1 rounded-lg font-semibold capitalize transition-all ${
+                    className={`px-2.5 py-1 rounded-lg font-semibold capitalize whitespace-nowrap transition-all ${
                       requestFilter === filter
                         ? 'bg-amber-500 text-black shadow-sm'
                         : 'text-zinc-400 hover:text-zinc-200'
@@ -860,7 +860,7 @@ export default function ProfilePage() {
                     {/* Status & Action */}
                     <div className="flex items-center gap-3 shrink-0 self-end sm:self-center">
                       {isFulfilled && (
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                           <span className="px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 text-xs font-bold flex items-center gap-1">
                             <CheckCircle2 className="w-3.5 h-3.5" /> Available Now
                           </span>
@@ -905,11 +905,11 @@ export default function ProfilePage() {
       </section>
 
       {/* 6. My Broken Link Reports Section */}
-      <section id="my-reports" className="bg-[#0f121a] border border-zinc-800 rounded-3xl p-6 sm:p-8 space-y-6 shadow-xl scroll-mt-24">
+      <section id="my-reports" className="bg-[#0f121a] border border-zinc-800 rounded-3xl p-4 sm:p-8 space-y-6 shadow-xl scroll-mt-24">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-zinc-800 pb-4">
           <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <Wrench className="w-5 h-5 text-emerald-400" />
+            <div className="flex flex-wrap items-center gap-2">
+              <Wrench className="w-5 h-5 text-emerald-400 shrink-0" />
               <h2 className="text-lg font-bold text-white">My Broken Link Reports</h2>
               {myReports.length > 0 && (
                 <span className="px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-300 border border-zinc-700 text-xs font-semibold">
@@ -922,7 +922,7 @@ export default function ProfilePage() {
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto max-w-full">
             {isLoggedIn && (
               <button
                 type="button"
@@ -936,7 +936,7 @@ export default function ProfilePage() {
             )}
 
             {/* Status Filter Tabs */}
-            <div className="flex items-center p-1 bg-zinc-950 rounded-xl border border-zinc-800 text-xs overflow-x-auto max-w-full">
+            <div className="flex items-center p-1 bg-zinc-950 rounded-xl border border-zinc-800 text-xs overflow-x-auto max-w-full no-scrollbar">
               {(['all', 'pending', 'in_progress', 'fixed', 'dismissed'] as const).map((filter) => {
                 const count =
                   filter === 'all'

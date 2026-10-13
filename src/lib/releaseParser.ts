@@ -35,8 +35,8 @@ export interface ReleaseDetails {
   resolutionLabel?: '2160p/4K' | '1080p' | '720p' | '480p';
 
   // 4. Dynamic Range
-  dynamicRange?: 'DV HDR' | 'HDR' | 'SDR' | 'conflict';
-  dynamicRangeLabel?: 'DV HDR' | 'HDR' | 'SDR' | 'Conflict' | 'Unknown';
+  dynamicRange?: 'DV HDR' | 'DV' | 'HDR' | 'SDR' | 'conflict';
+  dynamicRangeLabel?: 'DV HDR' | 'DV' | 'HDR' | 'SDR' | 'Conflict' | 'Unknown';
 
   // 5. Bit Depth
   bitDepth?: '10bit' | '8bit' | '12bit';
@@ -101,8 +101,16 @@ export function extractFilenameFromUrl(url?: string): string {
 export function cleanReleaseTitle(title: string): string {
   if (!title) return '';
   return title
+    .replace(/^\s*(?:\d+[\.\)]\s*)?(?:Name|Title|Movie|Download|Link|File)\s*[:=-]+\s*/i, '')
     .replace(/^\[(?:HubCloud|GDFlix|KatDrive|MoviesDrive|BollyFlix|Vegamovies|HDHub4u)[^\]]*\]\s*/gi, '')
-    .replace(/\b(?:www\.[a-z0-9-]+\.[a-z]{2,}|[a-z0-9-]+\.(?:org|com|in|me|cx|top|lol|lat|pro|club|ink|bio|day|cfd))\b/gi, '')
+    .replace(
+      /(?:[-_ \(\[]+)?(?:tss[-_]*)?(?:4khdhub|vegamovies|bollyflix|hdhub4u|katmoviehd|cinemaluxe|skymovieshd|uhdmovies|desiremovies|moviesmod|dotmovies)[-a-z0-9_]*(?:\.(?:com|org|net|in|cx|to|nl|app|site|vip|cc|me|xyz|top|online|co|link|cloud|live|lol|lat|pro|club|ink|bio|day|cfd))?/gi,
+      ' '
+    )
+    .replace(
+      /\b(?:www\.[a-z0-9-]+\.[a-z]{2,}|[a-z0-9-]+\.(?:org|com|in|me|cx|top|lol|lat|pro|club|ink|bio|day|cfd|vip|cc|to|xyz|app|net|site|cloud|live|online|link))\b/gi,
+      ' '
+    )
     .trim();
 }
 
@@ -207,25 +215,37 @@ export function parseReleaseDetails(
     packTypeLabel = `Individual episode${episodeNumber ? ` (E${String(episodeNumber).padStart(2, '0')})` : ''}`;
   }
 
-  // 3. RESOLUTION DETECTION
+  // 3. RESOLUTION DETECTION (Check explicit numeric scanlines first before generic 4K/UHD/FHD/HD/SD)
   let resolution: ReleaseDetails['resolution'] = undefined;
   let resolutionLabel: ReleaseDetails['resolutionLabel'] = undefined;
 
-  if (/\b(?:2160p|2160i|4k|uhd)\b/i.test(normText)) {
+  if (/\b(?:2160p|2160i)\b/i.test(normText)) {
     resolution = '2160p';
     resolutionLabel = '2160p/4K';
-  } else if (/\b(?:1080p|1080i|fhd)\b/i.test(normText)) {
+  } else if (/\b(?:1080p|1080i)\b/i.test(normText)) {
     resolution = '1080p';
     resolutionLabel = '1080p';
-  } else if (/\b(?:720p|720i|hd)\b/i.test(normText)) {
+  } else if (/\b(?:720p|720i)\b/i.test(normText)) {
     resolution = '720p';
     resolutionLabel = '720p';
-  } else if (/\b(?:480p|480i|sd)\b/i.test(normText)) {
+  } else if (/\b(?:480p|480i)\b/i.test(normText)) {
+    resolution = '480p';
+    resolutionLabel = '480p';
+  } else if (/\b(?:4k|uhd)\b/i.test(normText)) {
+    resolution = '2160p';
+    resolutionLabel = '2160p/4K';
+  } else if (/\bfhd\b/i.test(normText)) {
+    resolution = '1080p';
+    resolutionLabel = '1080p';
+  } else if (/\bhd\b/i.test(normText)) {
+    resolution = '720p';
+    resolutionLabel = '720p';
+  } else if (/\bsd\b/i.test(normText)) {
     resolution = '480p';
     resolutionLabel = '480p';
   }
 
-  // 4. DYNAMIC RANGE (HDR vs SDR vs DV HDR vs Conflict)
+  // 4. DYNAMIC RANGE (Strict separation: DV vs HDR vs DV HDR vs SDR vs Conflict)
   // Whole token matching to avoid substring accidents (e.g. "DV" in "ADVENTURE", "HDR" in "CHILDREN")
   const hasDV = /\b(?:DV|DOVI|Dolby\s*Vision)\b/i.test(normText);
   const hasHDR = /\b(?:HDR10\+|HDR10|HDR|HLG)\b/i.test(normText);
@@ -238,9 +258,12 @@ export function parseReleaseDetails(
     // Conflicting markers present in filename
     dynamicRange = 'conflict';
     dynamicRangeLabel = 'Conflict';
-  } else if (hasDV) {
+  } else if (hasDV && hasHDR) {
     dynamicRange = 'DV HDR';
     dynamicRangeLabel = 'DV HDR';
+  } else if (hasDV) {
+    dynamicRange = 'DV';
+    dynamicRangeLabel = 'DV';
   } else if (hasHDR) {
     dynamicRange = 'HDR';
     dynamicRangeLabel = 'HDR';
@@ -396,9 +419,12 @@ export function parseReleaseDetails(
     }
     if (overrides.dynamicRange !== undefined) {
       const dr = overrides.dynamicRange.trim();
-      if (/dv/i.test(dr)) {
+      if (/dv/i.test(dr) && /hdr/i.test(dr)) {
         dynamicRange = 'DV HDR';
         dynamicRangeLabel = 'DV HDR';
+      } else if (/dv|dovi|dolby\s*vision/i.test(dr)) {
+        dynamicRange = 'DV';
+        dynamicRangeLabel = 'DV';
       } else if (/hdr/i.test(dr)) {
         dynamicRange = 'HDR';
         dynamicRangeLabel = 'HDR';

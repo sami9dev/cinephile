@@ -1,8 +1,13 @@
 import { getEnv } from '@/lib/env';
 import { getDatabase } from '@/lib/mongodb';
 import { getRedisClient } from '@/lib/redisDb';
-import { isR2Configured } from '@/lib/r2';
+import { isR2Configured, getR2Config } from '@/lib/r2';
 import { parseReleaseDetails } from '@/lib/releaseParser';
+import {
+  extractEpisodeTitle,
+  detectSeasonNumber,
+  detectEpisodeNumber,
+} from '@/lib/seasonParser';
 
 export type ServiceHealthState =
   | 'Operational'
@@ -44,14 +49,24 @@ export interface ServiceStatusReport {
   services: ServiceCheckItem[];
 }
 
+export interface GitHubWorkflowCacheEntry {
+  status: ServiceHealthState;
+  conclusion: string;
+  sha: string;
+  runTimestamp: string;
+  fetchedAtMs: number;
+}
+
 const CHECK_TIMEOUT_MS = 3500;
-const CACHE_TTL_MS = 60_000; // 60 seconds standard cache
+const CACHE_TTL_MS = 60_000; // 60 seconds standard report cache
 const FORCE_REFRESH_COOLDOWN_MS = 10_000; // 10 seconds minimum between forced refreshes
+const GITHUB_WORKFLOW_CACHE_TTL_MS = 300_000; // 5 minutes workflow cache to conserve GitHub API quota
 
 // Server-side in-memory state for caching and tracking lastOperationalAt timestamps
 let cachedReport: ServiceStatusReport | null = null;
 let cachedAtMs = 0;
 const lastOperationalMap = new Map<string, string>();
+let lastKnownGitHubRun: GitHubWorkflowCacheEntry | null = null;
 
 /**
  * Redacts any sensitive credentials, tokens, or connection strings from diagnostic messages.
@@ -67,7 +82,8 @@ export function sanitizeDiagnosticMessage(raw: unknown): string {
     .replace(/(mongodb(?:\+srv)?|rediss?):\/\/[^\s"']+/gi, '$1://[REDACTED]')
     // Redact query params like api_key=... or apikey=...
     .replace(/([?&](?:api_key|apikey|token|secret|key)=)[^&\s"']+/gi, '$1[REDACTED]')
-    // Redact long hex/base64 keys
+    // Redact Bearer / GitHub / JWT tokens
+    .replace(/\b(?:ghp|gho|ghu|ghs|ghr|github_pat)_[A-Za-z0-9_]+\b/g, '[REDACTED_GH_TOKEN]')
     .replace(/\b[A-Za-z0-9_-]{32,}\b/g, '[REDACTED]');
 
   if (redacted.toLowerCase().includes('abort') || redacted.toLowerCase().includes('timeout')) {
@@ -76,7 +92,7 @@ export function sanitizeDiagnosticMessage(raw: unknown): string {
   return redacted.slice(0, 140);
 }
 
-function isPlaceholderValue(val: string | undefined): boolean {
+export function isPlaceholderValue(val: string | undefined): boolean {
   if (!val) return true;
   const trimmed = val.trim();
   if (!trimmed) return true;
@@ -89,6 +105,24 @@ function isPlaceholderValue(val: string | undefined): boolean {
     lower.includes('<your') ||
     lower === 'dummy_telegram_bot_token'
   );
+}
+
+export function formatShortTimestamp(isoString: string | undefined | null): string {
+  if (!isoString) return 'recent';
+  try {
+    const d = new Date(isoString);
+    if (Number.isNaN(d.getTime())) return 'recent';
+    return d.toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+      timeZone: 'UTC',
+    }) + ' UTC';
+  } catch {
+    return 'recent';
+  }
 }
 
 async function fetchWithTimeout(
@@ -110,11 +144,14 @@ async function fetchWithTimeout(
 }
 
 function recordResult(
-  item: Omit<ServiceCheckItem, 'checkedAt' | 'lastOperationalAt'>
+  item: Omit<ServiceCheckItem, 'checkedAt' | 'lastOperationalAt'>,
+  customLastOperationalAt?: string
 ): ServiceCheckItem {
   const nowIso = new Date().toISOString();
   if (item.status === 'Operational') {
-    lastOperationalMap.set(item.id, nowIso);
+    lastOperationalMap.set(item.id, customLastOperationalAt || nowIso);
+  } else if (customLastOperationalAt) {
+    lastOperationalMap.set(item.id, customLastOperationalAt);
   }
   return {
     ...item,
@@ -125,12 +162,13 @@ function recordResult(
 
 /**
  * 1. TMDB API Check
+ * Supports both TMDB v4 API Read Access Token (Bearer) and v3 API Key.
  */
-export async function checkTmdbService(overrideKey?: string): Promise<ServiceCheckItem> {
-  const apiKey = (
-    overrideKey !== undefined
-      ? overrideKey
-      : getEnv('TMDB_API_KEY') || getEnv('NEXT_PUBLIC_TMDB_API_KEY')
+export async function checkTmdbService(overrideCredential?: string): Promise<ServiceCheckItem> {
+  const readToken = getEnv('TMDB_READ_ACCESS_TOKEN') || getEnv('TMDB_ACCESS_TOKEN');
+  const v3Key = getEnv('TMDB_API_KEY') || getEnv('NEXT_PUBLIC_TMDB_API_KEY');
+  const credential = (
+    overrideCredential !== undefined ? overrideCredential : readToken || v3Key
   ).trim();
 
   const base = {
@@ -140,28 +178,50 @@ export async function checkTmdbService(overrideKey?: string): Promise<ServiceChe
     purpose: 'Movie & TV metadata, search, posters & season details',
   };
 
-  if (isPlaceholderValue(apiKey)) {
+  if (isPlaceholderValue(credential)) {
     return recordResult({
       ...base,
       status: 'Not Configured',
-      message: 'TMDB API key is not configured',
+      message: 'TMDB API credential is not configured',
     });
+  }
+
+  const isBearerToken =
+    credential.startsWith('eyJ') ||
+    (overrideCredential === undefined && Boolean(readToken) && credential === readToken.trim());
+
+  const url = isBearerToken
+    ? 'https://api.themoviedb.org/3/configuration'
+    : `https://api.themoviedb.org/3/configuration?api_key=${encodeURIComponent(credential)}`;
+
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+  };
+  if (isBearerToken) {
+    headers.Authorization = `Bearer ${credential}`;
   }
 
   const start = Date.now();
   try {
-    const res = await fetchWithTimeout(
-      `https://api.themoviedb.org/3/configuration?api_key=${encodeURIComponent(apiKey)}`,
-      { headers: { Accept: 'application/json' } }
-    );
+    const res = await fetchWithTimeout(url, { headers });
     const latencyMs = Date.now() - start;
 
     if (res.ok) {
+      const data = await res.json().catch(() => null);
+      if (data?.images?.secure_base_url) {
+        const authMode = isBearerToken ? 'Read Access Token' : 'API v3';
+        return recordResult({
+          ...base,
+          status: 'Operational',
+          latencyMs,
+          message: `Authenticated ${authMode} verified (${latencyMs}ms)`,
+        });
+      }
       return recordResult({
         ...base,
-        status: 'Operational',
+        status: 'Degraded',
         latencyMs,
-        message: `Authenticated API v3 verified (${latencyMs}ms)`,
+        message: 'Unexpected TMDB configuration payload',
       });
     }
     if (res.status === 401 || res.status === 403) {
@@ -197,7 +257,7 @@ export async function checkTmdbService(overrideKey?: string): Promise<ServiceChe
 }
 
 /**
- * 2. Trakt API Check
+ * 2. Trakt API Check (Optional secondary episode metadata provider)
  */
 export async function checkTraktService(overrideClientId?: string): Promise<ServiceCheckItem> {
   const clientId = (
@@ -219,16 +279,28 @@ export async function checkTraktService(overrideClientId?: string): Promise<Serv
     });
   }
 
+  if (!/^[a-f0-9]{64}$/i.test(clientId)) {
+    return recordResult({
+      ...base,
+      status: 'Offline',
+      latencyMs: 0,
+      message: 'Invalid TRAKT_CLIENT_ID format (expected 64-char hex)',
+    });
+  }
+
   const start = Date.now();
   try {
-    const res = await fetchWithTimeout('https://api.trakt.tv/shows/trending?limit=1', {
-      headers: {
-        'Content-Type': 'application/json',
-        'User-Agent': 'Cinephile-Service-Status/1.0',
-        'trakt-api-version': '2',
-        'trakt-api-key': clientId,
-      },
-    });
+    const res = await fetchWithTimeout(
+      'https://api.trakt.tv/search/imdb/tt0903747?type=show',
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': 'Cinephile-Service-Status/1.0',
+          'trakt-api-version': '2',
+          'trakt-api-key': clientId,
+        },
+      }
+    );
     const latencyMs = Date.now() - start;
 
     if (res.ok) {
@@ -245,6 +317,14 @@ export async function checkTraktService(overrideClientId?: string): Promise<Serv
         status: 'Offline',
         latencyMs,
         message: `Client ID rejected (HTTP ${res.status})`,
+      });
+    }
+    if (res.status === 429) {
+      return recordResult({
+        ...base,
+        status: 'Degraded',
+        latencyMs,
+        message: 'Rate limit exceeded (HTTP 429)',
       });
     }
     return recordResult({
@@ -264,7 +344,7 @@ export async function checkTraktService(overrideClientId?: string): Promise<Serv
 }
 
 /**
- * 3. MDBList API Check
+ * 3. MDBList API Check (Optional multi-source ratings provider)
  */
 export async function checkMdblistService(overrideKey?: string): Promise<ServiceCheckItem> {
   const apiKey = (
@@ -313,6 +393,14 @@ export async function checkMdblistService(overrideKey?: string): Promise<Service
         message: `Ratings API verified (${latencyMs}ms)`,
       });
     }
+    if (res.status === 401 || res.status === 403) {
+      return recordResult({
+        ...base,
+        status: 'Offline',
+        latencyMs,
+        message: `Invalid MDBList key (HTTP ${res.status})`,
+      });
+    }
     return recordResult({
       ...base,
       status: 'Degraded',
@@ -330,7 +418,7 @@ export async function checkMdblistService(overrideKey?: string): Promise<Service
 }
 
 /**
- * 4. Firebase Authentication Check
+ * 4. Firebase Authentication Check (Optional; app uses Local HMAC auth when unset)
  */
 export async function checkFirebaseAuthService(overrideKey?: string): Promise<ServiceCheckItem> {
   const apiKey = (
@@ -386,7 +474,7 @@ export async function checkFirebaseAuthService(overrideKey?: string): Promise<Se
 }
 
 /**
- * 5. Telegram Bot API Check (Server-Side getMe, never exposes token)
+ * 5. Telegram Bot API Check (Server-Side getMe with timeout, never exposes token)
  */
 export async function checkTelegramBotService(overrideToken?: string): Promise<ServiceCheckItem> {
   const token = (
@@ -416,7 +504,7 @@ export async function checkTelegramBotService(overrideToken?: string): Promise<S
     const latencyMs = Date.now() - start;
     const data = await res.json().catch(() => null);
 
-    if (res.ok && data?.ok && data?.result) {
+    if (res.ok && data?.ok === true && data?.result?.id) {
       const botUsername = data.result.username ? `@${data.result.username}` : 'Bot';
       return recordResult({
         ...base,
@@ -426,12 +514,21 @@ export async function checkTelegramBotService(overrideToken?: string): Promise<S
       });
     }
 
-    if (res.status === 401 || data?.error_code === 401) {
+    if (res.status === 401 || res.status === 404 || data?.error_code === 401) {
       return recordResult({
         ...base,
         status: 'Offline',
         latencyMs,
         message: 'Bot token unauthorized or revoked (HTTP 401)',
+      });
+    }
+
+    if (res.status === 429 || data?.error_code === 429) {
+      return recordResult({
+        ...base,
+        status: 'Degraded',
+        latencyMs,
+        message: 'Telegram API rate limit reached (HTTP 429)',
       });
     }
 
@@ -453,6 +550,7 @@ export async function checkTelegramBotService(overrideToken?: string): Promise<S
 
 /**
  * 6. TV Release Parser & IMDb Suggestion Co-Identifier Check
+ * Tests real functionality of releaseParser, seasonParser, and the IMDb suggestion payload.
  */
 export async function checkTvParserAndImdbService(): Promise<ServiceCheckItem> {
   const base = {
@@ -464,21 +562,46 @@ export async function checkTvParserAndImdbService(): Promise<ServiceCheckItem> {
 
   const start = Date.now();
   try {
-    // 1. Verify deterministic release parser engine
-    const sample = parseReleaseDetails(
-      'Money.Heist.S01E06.1080p.NF.WEB-DL.Multi.DDP5.1.H.264.mkv'
+    // 1. Verify deterministic release parser engine (2160p + DV HDR + H.265 & 1080p + H.264)
+    const sample4k = parseReleaseDetails(
+      'Money.Heist.S01E06.2160p.NF.WEB-DL.DV.HDR.DDP5.1.H.265.mkv'
     );
-    const parserOk = sample.resolution === '1080p' && sample.codec === 'H.264';
-    if (!parserOk) {
+    const sample1080p = parseReleaseDetails(
+      'Money.Heist.S01E06.The.Hot.Cold.War.1080p.NF.WEB-DL.Multi.DDP5.1.H.264.mkv'
+    );
+    const releaseParserOk =
+      sample4k.resolution === '2160p' &&
+      sample4k.codec === 'H.265' &&
+      sample4k.dynamicRange === 'DV HDR' &&
+      sample4k.seasonNumber === 1 &&
+      sample4k.episodeNumber === 6 &&
+      sample1080p.resolution === '1080p' &&
+      sample1080p.codec === 'H.264';
+
+    // 2. Verify season & episode title parser engine
+    const sampleLink = {
+      title: 'Money.Heist.S01E06.The.Hot.Cold.War.1080p.NF.WEB-DL.H.264.mkv',
+      quality: '1080p',
+    };
+    const seasonNum = detectSeasonNumber(sampleLink);
+    const episodeNum = detectEpisodeNumber(sampleLink);
+    const extractedTitle = extractEpisodeTitle(sampleLink.title);
+    const seasonParserOk =
+      seasonNum === 1 &&
+      episodeNum === 6 &&
+      typeof extractedTitle === 'string' &&
+      extractedTitle.toLowerCase().includes('hot cold war');
+
+    if (!releaseParserOk || !seasonParserOk) {
       return recordResult({
         ...base,
         status: 'Offline',
         latencyMs: Date.now() - start,
-        message: 'Release parser self-test failed',
+        message: 'Parser self-test failed on release/episode verification',
       });
     }
 
-    // 2. Verify IMDb suggestion co-identifier endpoint used by bot & metadata resolver
+    // 3. Verify IMDb suggestion co-identifier endpoint and JSON response structure
     const res = await fetchWithTimeout(
       'https://v3.sg.media-imdb.com/suggestion/t/tt0111161.json',
       { headers: { Accept: 'application/json' } }
@@ -486,11 +609,23 @@ export async function checkTvParserAndImdbService(): Promise<ServiceCheckItem> {
     const latencyMs = Date.now() - start;
 
     if (res.ok) {
+      const data = await res.json().catch(() => null);
+      const hasValidMatch =
+        Array.isArray(data?.d) &&
+        data.d.some((item: { id?: string }) => item?.id === 'tt0111161');
+      if (hasValidMatch) {
+        return recordResult({
+          ...base,
+          status: 'Operational',
+          latencyMs,
+          message: `Parser & IMDb co-identifier verified (${latencyMs}ms)`,
+        });
+      }
       return recordResult({
         ...base,
-        status: 'Operational',
+        status: 'Degraded',
         latencyMs,
-        message: `Parser & IMDb co-identifier verified (${latencyMs}ms)`,
+        message: 'Parser active; IMDb payload missing expected title match',
       });
     }
 
@@ -542,23 +677,34 @@ export async function checkMongoDbService(overrideUri?: string): Promise<Service
 
   const start = Date.now();
   const isEdgeRuntime =
-    typeof (globalThis as any).WebSocketPair !== 'undefined' || Boolean(getEnv('WORKER_NAME'));
+    'WebSocketPair' in globalThis || Boolean(getEnv('WORKER_NAME'));
 
   if (isEdgeRuntime && overrideUri === undefined) {
     // In Cloudflare Workers workerd runtime, direct TCP SRV connections are unavailable;
-    // mutations and uncached queries bridge through the upstream Node.js service or Upstash mirror.
+    // mutations and uncached queries bridge through the upstream Node.js service.
     const upstreamBase = getEnv('UPSTREAM_API_URL') || 'https://cinephile-app.vercel.app';
     try {
       const res = await fetchWithTimeout(`${upstreamBase}/api/catalog?limit=1`, {
-        headers: { 'User-Agent': 'Cinephile-Health-Check/1.0' },
+        headers: { 'User-Agent': 'Cinephile-Health-Check/1.0', Accept: 'application/json' },
       });
       const latencyMs = Date.now() - start;
       if (res.ok) {
+        const data = await res.json().catch(() => null);
+        const validPayload =
+          Array.isArray(data?.items) || Array.isArray(data?.titles) || Array.isArray(data);
+        if (validPayload) {
+          return recordResult({
+            ...base,
+            status: 'Operational',
+            latencyMs,
+            message: `Verified via Node.js bridge (${latencyMs}ms)`,
+          });
+        }
         return recordResult({
           ...base,
-          status: 'Operational',
+          status: 'Degraded',
           latencyMs,
-          message: `Reachable via Node.js bridge (${latencyMs}ms)`,
+          message: 'Bridge reachable but returned unexpected catalog payload',
         });
       }
       return recordResult({
@@ -567,7 +713,7 @@ export async function checkMongoDbService(overrideUri?: string): Promise<Service
         latencyMs,
         message: `Edge TCP bypassed; bridge HTTP ${res.status}`,
       });
-    } catch (err) {
+    } catch {
       return recordResult({
         ...base,
         status: 'Degraded',
@@ -773,7 +919,7 @@ export async function checkUpstashRedisService(
 }
 
 /**
- * 9. Cloudflare R2 Storage Check
+ * 9. Cloudflare R2 Storage Check (Optional unused integration; never marked Operational without a real check)
  */
 export async function checkCloudflareR2Service(): Promise<ServiceCheckItem> {
   const base = {
@@ -783,10 +929,12 @@ export async function checkCloudflareR2Service(): Promise<ServiceCheckItem> {
     purpose: 'S3-compatible zero-egress media object storage',
   };
 
-  const accessKey = getEnv('R2_ACCESS_KEY_ID');
-  const secretKey = getEnv('R2_SECRET_ACCESS_KEY');
-
-  if (!isR2Configured() || isPlaceholderValue(accessKey) || isPlaceholderValue(secretKey)) {
+  const cfg = getR2Config();
+  if (
+    !isR2Configured() ||
+    isPlaceholderValue(cfg.accessKeyId) ||
+    isPlaceholderValue(cfg.secretAccessKey)
+  ) {
     return recordResult({
       ...base,
       status: 'Not Configured',
@@ -794,11 +942,57 @@ export async function checkCloudflareR2Service(): Promise<ServiceCheckItem> {
     });
   }
 
-  return recordResult({
-    ...base,
-    status: 'Operational',
-    message: `Configured (bucket: ${getEnv('R2_BUCKET') || 'cinephile-media'})`,
-  });
+  const probeUrl =
+    cfg.publicUrl ||
+    (cfg.endpoint && cfg.bucket
+      ? `${cfg.endpoint.replace(/\/+$/, '')}/${cfg.bucket}`
+      : null);
+
+  if (!probeUrl) {
+    return recordResult({
+      ...base,
+      status: 'Not Configured',
+      message: 'R2 endpoint/public URL not configured',
+    });
+  }
+
+  const start = Date.now();
+  try {
+    const res = await fetchWithTimeout(probeUrl, { method: 'HEAD' });
+    const latencyMs = Date.now() - start;
+
+    if (res.ok) {
+      return recordResult({
+        ...base,
+        status: 'Operational',
+        latencyMs,
+        message: `Bucket reachable (${cfg.bucket}, ${latencyMs}ms)`,
+      });
+    }
+
+    if (res.status === 401 || res.status === 403 || res.status === 400) {
+      return recordResult({
+        ...base,
+        status: 'Offline',
+        latencyMs,
+        message: `R2 endpoint rejected probe (HTTP ${res.status})`,
+      });
+    }
+
+    return recordResult({
+      ...base,
+      status: 'Degraded',
+      latencyMs,
+      message: `R2 returned HTTP ${res.status}`,
+    });
+  } catch (err) {
+    return recordResult({
+      ...base,
+      status: 'Offline',
+      latencyMs: Date.now() - start,
+      message: sanitizeDiagnosticMessage(err),
+    });
+  }
 }
 
 /**
@@ -813,7 +1007,7 @@ export async function checkCloudflareWorkersService(): Promise<ServiceCheckItem>
   };
 
   const isCurrentRuntime =
-    typeof (globalThis as any).WebSocketPair !== 'undefined' || Boolean(getEnv('WORKER_NAME'));
+    'WebSocketPair' in globalThis || Boolean(getEnv('WORKER_NAME'));
 
   if (isCurrentRuntime) {
     return recordResult({
@@ -907,9 +1101,17 @@ export async function checkVercelService(): Promise<ServiceCheckItem> {
 }
 
 /**
- * 12. GitHub Actions CI/CD Check
+ * Helper to seed or clear the GitHub Actions workflow cache (used in testing and runtime caching).
  */
-export async function checkGitHubActionsService(): Promise<ServiceCheckItem> {
+export function setGitHubWorkflowCacheForTest(entry: GitHubWorkflowCacheEntry | null): void {
+  lastKnownGitHubRun = entry;
+}
+
+/**
+ * Fallback check using GitHub's public workflow badge SVG (served by github.com CDN,
+ * which is not subject to api.github.com's 60 req/hr shared-IP unauthenticated rate limit).
+ */
+async function checkGitHubBadgeFallback(startMs: number): Promise<ServiceCheckItem> {
   const base = {
     id: 'github_actions',
     name: 'GitHub Actions',
@@ -917,25 +1119,168 @@ export async function checkGitHubActionsService(): Promise<ServiceCheckItem> {
     purpose: 'Automated build & Cloudflare Workers deploy pipeline',
   };
 
-  const start = Date.now();
   try {
-    const res = await fetchWithTimeout(
-      'https://api.github.com/repos/sk6216071-glitch/cinephile/actions/workflows/deploy-production.yml/runs?per_page=1',
+    const badgeRes = await fetchWithTimeout(
+      'https://github.com/sk6216071-glitch/cinephile/actions/workflows/deploy-production.yml/badge.svg',
       {
         headers: {
           'User-Agent': 'Cinephile-Service-Status/1.0',
-          Accept: 'application/vnd.github+json',
+          Accept: 'image/svg+xml,text/plain,*/*',
         },
       }
     );
+    const latencyMs = Date.now() - startMs;
+
+    if (badgeRes.ok) {
+      const svgText = (await badgeRes.text().catch(() => '')).toLowerCase();
+      const nowIso = new Date().toISOString();
+      const timeLabel = formatShortTimestamp(nowIso);
+
+      if (svgText.includes('passing')) {
+        lastKnownGitHubRun = {
+          status: 'Operational',
+          conclusion: 'success',
+          sha: 'main',
+          runTimestamp: nowIso,
+          fetchedAtMs: Date.now(),
+        };
+        return recordResult(
+          {
+            ...base,
+            status: 'Operational',
+            latencyMs,
+            message: `API rate-limited · Last run passing (${timeLabel})`,
+          },
+          nowIso
+        );
+      }
+
+      if (svgText.includes('failing')) {
+        lastKnownGitHubRun = {
+          status: 'Degraded',
+          conclusion: 'failure',
+          sha: 'main',
+          runTimestamp: nowIso,
+          fetchedAtMs: Date.now(),
+        };
+        return recordResult({
+          ...base,
+          status: 'Degraded',
+          latencyMs,
+          message: `API rate-limited · Last run failing (${timeLabel})`,
+        });
+      }
+    }
+  } catch {
+    // Ignore badge fetch errors and fall through to rate-limit Unknown state
+  }
+
+  return recordResult({
+    ...base,
+    status: 'Unknown',
+    latencyMs: Date.now() - startMs,
+    message: 'GitHub API rate-limited (deployment unaffected)',
+  });
+}
+
+/**
+ * 12. GitHub Actions CI/CD Check
+ * - Uses authenticated server-side GitHub API requests if GITHUB_TOKEN / GH_TOKEN is configured.
+ * - Caches workflow results for 5 minutes to avoid exhausting rate limits.
+ * - When rate-limited (403/429), displays the last known workflow result with its timestamp,
+ *   or falls back to the non-rate-limited workflow status badge, distinguishing rate limits from failed deploys.
+ */
+export async function checkGitHubActionsService(options?: {
+  forceRefresh?: boolean;
+  simulateRateLimit?: boolean;
+  overrideToken?: string;
+}): Promise<ServiceCheckItem> {
+  const base = {
+    id: 'github_actions',
+    name: 'GitHub Actions',
+    group: 'Hosting & Deployment' as const,
+    purpose: 'Automated build & Cloudflare Workers deploy pipeline',
+  };
+
+  const now = Date.now();
+  // Return cached workflow result if within 5-minute TTL and not simulating a rate limit
+  if (
+    !options?.forceRefresh &&
+    !options?.simulateRateLimit &&
+    lastKnownGitHubRun &&
+    now - lastKnownGitHubRun.fetchedAtMs < GITHUB_WORKFLOW_CACHE_TTL_MS
+  ) {
+    const timeLabel = formatShortTimestamp(lastKnownGitHubRun.runTimestamp);
+    const label =
+      lastKnownGitHubRun.conclusion === 'success'
+        ? `Last deploy succeeded (${lastKnownGitHubRun.sha} · ${timeLabel})`
+        : lastKnownGitHubRun.conclusion === 'in_progress'
+        ? `Deploy in progress (${lastKnownGitHubRun.sha} · ${timeLabel})`
+        : `Last deploy ${lastKnownGitHubRun.conclusion} (${lastKnownGitHubRun.sha} · ${timeLabel})`;
+
+    return recordResult(
+      {
+        ...base,
+        status: lastKnownGitHubRun.status,
+        latencyMs: 1,
+        message: label,
+      },
+      lastKnownGitHubRun.status === 'Operational' ? lastKnownGitHubRun.runTimestamp : undefined
+    );
+  }
+
+  const start = Date.now();
+  const ghToken = (
+    options?.overrideToken !== undefined
+      ? options.overrideToken
+      : getEnv('GITHUB_TOKEN') || getEnv('GH_TOKEN') || getEnv('GITHUB_PAT')
+  ).trim();
+
+  const headers: Record<string, string> = {
+    'User-Agent': 'Cinephile-Service-Status/1.0',
+    Accept: 'application/vnd.github+json',
+  };
+  if (!isPlaceholderValue(ghToken)) {
+    headers.Authorization = `Bearer ${ghToken}`;
+  }
+
+  try {
+    const res = options?.simulateRateLimit
+      ? new Response(JSON.stringify({ message: 'API rate limit exceeded' }), { status: 403 })
+      : await fetchWithTimeout(
+          'https://api.github.com/repos/sk6216071-glitch/cinephile/actions/workflows/deploy-production.yml/runs?per_page=1',
+          { headers }
+        );
     const latencyMs = Date.now() - start;
 
     if (res.status === 403 || res.status === 429) {
+      // Distinguish API rate limit from a failed deployment!
+      if (lastKnownGitHubRun) {
+        const timeLabel = formatShortTimestamp(lastKnownGitHubRun.runTimestamp);
+        const stateVerb =
+          lastKnownGitHubRun.conclusion === 'success'
+            ? 'succeeded'
+            : lastKnownGitHubRun.conclusion;
+        return recordResult(
+          {
+            ...base,
+            status: lastKnownGitHubRun.status,
+            latencyMs,
+            message: `API rate-limited · Last run ${stateVerb} (${lastKnownGitHubRun.sha} · ${timeLabel})`,
+          },
+          lastKnownGitHubRun.status === 'Operational' ? lastKnownGitHubRun.runTimestamp : undefined
+        );
+      }
+
+      return await checkGitHubBadgeFallback(start);
+    }
+
+    if (res.status === 401) {
       return recordResult({
         ...base,
-        status: 'Unknown',
+        status: 'Offline',
         latencyMs,
-        message: 'GitHub API rate limit reached',
+        message: 'GitHub token unauthorized (HTTP 401)',
       });
     }
 
@@ -955,36 +1300,77 @@ export async function checkGitHubActionsService(): Promise<ServiceCheckItem> {
         ...base,
         status: 'Unknown',
         latencyMs,
-        message: 'No deployment runs found',
+        message: 'No deployment workflow runs found',
       });
     }
 
-    const sha = typeof latestRun.head_sha === 'string' ? latestRun.head_sha.slice(0, 7) : '';
+    const sha = typeof latestRun.head_sha === 'string' ? latestRun.head_sha.slice(0, 7) : 'main';
+    const runTimestamp =
+      latestRun.updated_at || latestRun.created_at || new Date().toISOString();
+    const timeLabel = formatShortTimestamp(runTimestamp);
+
     if (latestRun.status === 'in_progress' || latestRun.status === 'queued') {
-      return recordResult({
-        ...base,
+      lastKnownGitHubRun = {
         status: 'Operational',
-        latencyMs,
-        message: `Deploy in progress (${sha})`,
-      });
+        conclusion: 'in_progress',
+        sha,
+        runTimestamp,
+        fetchedAtMs: Date.now(),
+      };
+      return recordResult(
+        {
+          ...base,
+          status: 'Operational',
+          latencyMs,
+          message: `Deploy in progress (${sha} · ${timeLabel})`,
+        },
+        runTimestamp
+      );
     }
 
     if (latestRun.conclusion === 'success') {
-      return recordResult({
-        ...base,
+      lastKnownGitHubRun = {
         status: 'Operational',
-        latencyMs,
-        message: `Last deploy succeeded (${sha})`,
-      });
+        conclusion: 'success',
+        sha,
+        runTimestamp,
+        fetchedAtMs: Date.now(),
+      };
+      return recordResult(
+        {
+          ...base,
+          status: 'Operational',
+          latencyMs,
+          message: `Last deploy succeeded (${sha} · ${timeLabel})`,
+        },
+        runTimestamp
+      );
     }
 
+    const conclusion = latestRun.conclusion || 'failed';
+    lastKnownGitHubRun = {
+      status: 'Degraded',
+      conclusion,
+      sha,
+      runTimestamp,
+      fetchedAtMs: Date.now(),
+    };
     return recordResult({
       ...base,
       status: 'Degraded',
       latencyMs,
-      message: `Last deploy ${latestRun.conclusion || 'failed'} (${sha})`,
+      message: `Last deploy ${conclusion} (${sha} · ${timeLabel})`,
     });
   } catch (err) {
+    if (lastKnownGitHubRun) {
+      const timeLabel = formatShortTimestamp(lastKnownGitHubRun.runTimestamp);
+      return recordResult({
+        ...base,
+        status: lastKnownGitHubRun.status,
+        latencyMs: Date.now() - start,
+        message: `Cached · Last run ${lastKnownGitHubRun.conclusion} (${lastKnownGitHubRun.sha} · ${timeLabel})`,
+      });
+    }
     return recordResult({
       ...base,
       status: 'Unknown',
@@ -996,16 +1382,23 @@ export async function checkGitHubActionsService(): Promise<ServiceCheckItem> {
 
 /**
  * Computes the overall status from individual service checks.
+ * - Optional unused integrations ("Not Configured" for Trakt, MDBList, Firebase Auth, R2)
+ *   are NOT treated as system failures.
+ * - Required core services (TMDB, MongoDB, Upstash Redis, Telegram Bot) must be Operational
+ *   for overall Operational status.
  */
 export function computeOverallStatus(services: ServiceCheckItem[]): ServiceHealthState {
-  // Core services required for primary website & bot operation
   const criticalIds = new Set(['tmdb', 'mongodb', 'upstash_redis', 'telegram_bot']);
   const criticalServices = services.filter((s) => criticalIds.has(s.id));
+  const configuredServices = services.filter((s) => s.status !== 'Not Configured');
 
-  if (criticalServices.some((s) => s.status === 'Offline')) {
-    return 'Degraded';
+  if (configuredServices.length > 0 && configuredServices.every((s) => s.status === 'Offline')) {
+    return 'Offline';
   }
   if (services.some((s) => s.status === 'Offline' || s.status === 'Degraded')) {
+    return 'Degraded';
+  }
+  if (criticalServices.some((s) => s.status === 'Not Configured')) {
     return 'Degraded';
   }
   if (criticalServices.every((s) => s.status === 'Operational')) {
@@ -1047,7 +1440,7 @@ export async function getAllServiceStatuses(options?: {
     // Hosting & Deployment
     checkCloudflareWorkersService(),
     checkVercelService(),
-    checkGitHubActionsService(),
+    checkGitHubActionsService({ forceRefresh: force }),
     // Bots & Automation
     checkTelegramBotService(),
     checkTvParserAndImdbService(),

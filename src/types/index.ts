@@ -183,6 +183,7 @@ export interface CustomLink {
   seasonNumber?: number;
   episodeNumber?: number;
   episodeTitle?: string;
+  manualTitleVerified?: boolean;
   quality?: string; // '4K HDR' | '1080p' | '720p' | '480p' | '2160p HEVC' | 'BluRay'
   audioLanguage?: string; // 'Hindi + English' | 'English' | 'Dual Audio'
   size?: string; // '1.2 GB' | '4.5 GB' | '18 GB Zip'

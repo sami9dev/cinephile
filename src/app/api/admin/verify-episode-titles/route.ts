@@ -1,201 +1,197 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { validateAdminAuth } from '@/lib/adminAuth';
 import { getLinksFromDatabase, updateEpisodeTitleInDatabase } from '@/lib/redisDb';
-import { getSeasonEpisodes } from '@/lib/tmdb';
-import { fetchTraktSeasonEpisodes } from '@/lib/trakt';
-import { extractEpisodeTitle, detectSeasonNumber, detectEpisodeNumber, detectLinkType } from '@/lib/seasonParser';
+import { detectSeasonNumber, detectEpisodeNumber } from '@/lib/seasonParser';
+import {
+  resolveSeasonEpisodes,
+  isVerifiedEpisodeTitleString,
+  isRawReleaseFilenameOrToken,
+  cleanSeriesQueryTitle,
+} from '@/lib/episodeTitleResolver';
 
 export const dynamic = 'force-dynamic';
 
-export interface EpisodeDiffItem {
+export interface EpisodeTitleDiffItem {
   seasonNumber: number;
   episodeNumber: number;
-  currentEpisodeTitle: string | null;
+  currentEpisodeTitle?: string;
   sampleReleaseTitle: string;
   linkCount: number;
   urlsIntact: boolean;
   proposedOfficialTitle: string;
   proposedHeading: string;
-  source: 'tmdb' | 'trakt' | 'stored' | 'fallback';
+  source: 'imdb' | 'tvmaze' | 'tmdb' | 'trakt' | 'manual' | 'stored' | 'unverified';
   isVerified: boolean;
+  manualTitleVerified?: boolean;
   status: 'clean' | 'needs_update' | 'unverified';
   overview?: string;
 }
 
+interface StoredEpisodeLink {
+  id?: string;
+  title?: string;
+  url?: string;
+  seasonNumber?: number;
+  episodeNumber?: number;
+  episodeTitle?: string;
+  manualTitleVerified?: boolean;
+  movieTitle?: string;
+  linkType?: string;
+  category?: string;
+}
+
 /**
- * Builds the preview diff between existing stored link data and verified provider metadata.
+ * Inspects a series' episodes and builds a safe preview diff of official episode titles vs current titles.
+ * Never touches or modifies destination URLs, and never treats release filenames as official titles.
  */
 async function buildEpisodeDiff(
   movieId: string,
   targetSeason?: number,
-  showTitleQuery?: string
-): Promise<{
-  success: boolean;
-  movieId: string;
-  showTitle: string;
-  totalEpisodes: number;
-  needsUpdateCount: number;
-  unverifiedCount: number;
-  preview: EpisodeDiffItem[];
-  error?: string;
-}> {
-  // 1. Fetch current links from database
-  const linksRes = await getLinksFromDatabase(movieId);
-  const links: any[] = linksRes.links || [];
+  showTitle?: string,
+  imdbId?: string,
+  forceOverwrite: boolean = false
+) {
+  const dbRes = await getLinksFromDatabase(movieId);
+  const allLinks: StoredEpisodeLink[] = Array.isArray(dbRes.links) ? dbRes.links : [];
 
-  if (links.length === 0) {
-    return {
-      success: true,
-      movieId,
-      showTitle: showTitleQuery || 'Unknown Series',
-      totalEpisodes: 0,
-      needsUpdateCount: 0,
-      unverifiedCount: 0,
-      preview: [],
-    };
-  }
-
-  // Determine show title from links or query
-  const effectiveShowTitle = showTitleQuery || links[0]?.movieTitle || 'TV Series';
-
-  // 2. Identify all single episode links and group them by (seasonNumber, episodeNumber)
-  const episodesMap = new Map<string, { season: number; episode: number; links: any[] }>();
-
-  links.forEach((l) => {
-    const s = l.seasonNumber || detectSeasonNumber(l) || 1;
-    const isPack = l.linkType === 'zip_pack' || l.category === 'ZipPack' || detectLinkType(l) === 'zip_pack';
-    if (isPack) return; // Skip complete zip packs for episode titles
-
+  // Filter to single episode links
+  const episodeLinks = allLinks.filter((l) => {
     const ep = l.episodeNumber || detectEpisodeNumber(l);
-    if (!ep || ep <= 0) return;
-
-    if (targetSeason !== undefined && s !== targetSeason) return;
-
-    const key = `S${s}E${ep}`;
-    if (!episodesMap.has(key)) {
-      episodesMap.set(key, { season: s, episode: ep, links: [] });
-    }
-    episodesMap.get(key)!.links.push(l);
+    return ep !== undefined && ep > 0 && l.linkType !== 'zip_pack' && l.category !== 'ZipPack';
   });
 
-  // Distinct seasons present
-  const presentSeasons = Array.from(new Set(Array.from(episodesMap.values()).map((e) => e.season))).sort((a, b) => a - b);
+  // Group links by (seasonNumber, episodeNumber)
+  const grouped = new Map<string, { season: number; episode: number; links: StoredEpisodeLink[] }>();
+  for (const link of episodeLinks) {
+    const season = Number(link.seasonNumber || detectSeasonNumber(link) || 1);
+    const episode = Number(link.episodeNumber || detectEpisodeNumber(link) || 0);
+    if (episode < 1) continue;
+    if (targetSeason !== undefined && season !== targetSeason) continue;
 
-  // 3. Query TMDB and Trakt for each season
-  const providerEpisodesBySeason = new Map<number, Map<number, { title: string; overview?: string; source: 'tmdb' | 'trakt' }>>();
-
-  for (const sNum of presentSeasons) {
-    const seasonMap = new Map<number, { title: string; overview?: string; source: 'tmdb' | 'trakt' }>();
-
-    // A. Try TMDB if movieId is numeric
-    if (/^\d+$/.test(movieId.trim())) {
-      try {
-        const tmdbData = await getSeasonEpisodes(movieId.trim(), sNum);
-        if (tmdbData && Array.isArray(tmdbData.episodes) && tmdbData.episodes.length > 0) {
-          tmdbData.episodes.forEach((ep) => {
-            if (ep.episode_number && ep.name && ep.name.trim()) {
-              seasonMap.set(ep.episode_number, {
-                title: ep.name.trim(),
-                overview: ep.overview || '',
-                source: 'tmdb',
-              });
-            }
-          });
-        }
-      } catch (err: any) {
-        console.warn(`TMDB fetch error for season ${sNum}:`, err?.message);
-      }
+    const key = `S${season}E${episode}`;
+    if (!grouped.has(key)) {
+      grouped.set(key, { season, episode, links: [] });
     }
-
-    // B. Fallback to Trakt if TMDB yielded nothing or for non-numeric IDs
-    if (seasonMap.size === 0) {
-      try {
-        const traktRes = await fetchTraktSeasonEpisodes({
-          tmdbId: /^\d+$/.test(movieId.trim()) ? movieId.trim() : undefined,
-          imdbId: movieId.trim().startsWith('tt') ? movieId.trim() : undefined,
-          query: effectiveShowTitle,
-          season: sNum,
-        });
-
-        if (traktRes.success && Array.isArray(traktRes.episodes)) {
-          traktRes.episodes.forEach((ep) => {
-            if (ep.episodeNumber && ep.title && ep.title.trim()) {
-              seasonMap.set(ep.episodeNumber, {
-                title: ep.title.trim(),
-                overview: ep.overview || '',
-                source: 'trakt',
-              });
-            }
-          });
-        }
-      } catch (err: any) {
-        console.warn(`Trakt fetch error for season ${sNum}:`, err?.message);
-      }
-    }
-
-    providerEpisodesBySeason.set(sNum, seasonMap);
+    grouped.get(key)!.links.push(link);
   }
 
-  // 4. Construct Diff Items
-  const previewItems: EpisodeDiffItem[] = [];
+  // Distinct seasons to query
+  const seasons = Array.from(new Set(Array.from(grouped.values()).map((g) => g.season))).sort(
+    (a, b) => a - b
+  );
+
+  // Determine effective show title for IMDb / TVMaze / TMDB lookup
+  const effectiveShowTitle =
+    showTitle ||
+    allLinks.find((l) => l.movieTitle)?.movieTitle ||
+    cleanSeriesQueryTitle(allLinks[0]?.title || '') ||
+    undefined;
+
+  let resolvedImdbId = imdbId;
+
+  // Map of S{season}E{episode} -> { title, overview, source }
+  const officialTitlesMap = new Map<
+    string,
+    { title: string; overview?: string; source: 'imdb' | 'tvmaze' | 'tmdb' | 'trakt' }
+  >();
+
+  for (const sNum of seasons) {
+    const resolvedSeason = await resolveSeasonEpisodes({
+      tmdbId: movieId,
+      imdbId: resolvedImdbId,
+      query: effectiveShowTitle,
+      season: sNum,
+    });
+
+    if (resolvedSeason.imdbId && !resolvedImdbId) {
+      resolvedImdbId = resolvedSeason.imdbId;
+    }
+
+    for (const ep of resolvedSeason.episodes) {
+      if (isVerifiedEpisodeTitleString(ep.name)) {
+        officialTitlesMap.set(`S${sNum}E${ep.episode_number}`, {
+          title: ep.name.trim(),
+          overview: ep.overview,
+          source: ep.source,
+        });
+      }
+    }
+  }
+
+  // Build preview items sorted by season, then episode
+  const sortedGroups = Array.from(grouped.values()).sort((a, b) => {
+    if (a.season !== b.season) return a.season - b.season;
+    return a.episode - b.episode;
+  });
+
+  const previewItems: EpisodeTitleDiffItem[] = [];
   let needsUpdateCount = 0;
   let unverifiedCount = 0;
 
-  const sortedKeys = Array.from(episodesMap.keys()).sort((a, b) => {
-    const itemA = episodesMap.get(a)!;
-    const itemB = episodesMap.get(b)!;
-    if (itemA.season !== itemB.season) return itemA.season - itemB.season;
-    return itemA.episode - itemB.episode;
-  });
-
-  for (const key of sortedKeys) {
-    const { season, episode, links: epLinks } = episodesMap.get(key)!;
+  for (const group of sortedGroups) {
+    const { season, episode, links: epLinks } = group;
+    const key = `S${season}E${episode}`;
     const sTag = `S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}`;
 
-    // Current stored episodeTitle (if any)
-    const existingStoredTitle = epLinks.find((l) => l.episodeTitle?.trim())?.episodeTitle?.trim() || null;
-    const sampleReleaseTitle = epLinks[0]?.title || '';
+    const existingStoredTitle = epLinks
+      .find((l) => l.episodeTitle && String(l.episodeTitle).trim().length > 0)
+      ?.episodeTitle?.trim();
+    const isManualVerified = epLinks.some((l) => l.manualTitleVerified === true);
+    const sampleReleaseTitle = String(epLinks[0]?.title || '');
 
-    // Check provider metadata
-    const seasonProviders = providerEpisodesBySeason.get(season);
-    const providerMeta = seasonProviders?.get(episode);
+    const official = officialTitlesMap.get(key);
 
     let proposedOfficialTitle = '';
-    let source: 'tmdb' | 'trakt' | 'stored' | 'fallback' = 'fallback';
+    let source: EpisodeTitleDiffItem['source'] = 'unverified';
     let isVerified = false;
-    let overview = '';
+    let overview: string | undefined = undefined;
 
-    if (providerMeta && providerMeta.title && !providerMeta.title.toLowerCase().startsWith('episode ')) {
-      proposedOfficialTitle = providerMeta.title;
-      source = providerMeta.source;
-      isVerified = true;
-      overview = providerMeta.overview || '';
-    } else if (existingStoredTitle && !existingStoredTitle.toLowerCase().startsWith('episode ')) {
+    // 1. Preserve verified manual title corrections unless forceOverwrite is explicitly true
+    if (
+      isManualVerified &&
+      existingStoredTitle &&
+      isVerifiedEpisodeTitleString(existingStoredTitle) &&
+      !forceOverwrite
+    ) {
       proposedOfficialTitle = existingStoredTitle;
-      source = 'stored';
+      source = 'manual';
+      isVerified = true;
+      overview = official?.overview;
+    } else if (official && isVerifiedEpisodeTitleString(official.title)) {
+      // 2. Authoritative official title from IMDb / TVMaze / TMDB / Trakt
+      proposedOfficialTitle = official.title;
+      source = official.source;
+      isVerified = true;
+      overview = official.overview;
+    } else if (existingStoredTitle && isVerifiedEpisodeTitleString(existingStoredTitle)) {
+      // 3. Clean stored title in database
+      proposedOfficialTitle = existingStoredTitle;
+      source = isManualVerified ? 'manual' : 'stored';
       isVerified = true;
     } else {
-      // Fallback: extract title from scene release or neutral "Episode N"
-      const extracted = extractEpisodeTitle(sampleReleaseTitle);
-      if (extracted && extracted.length > 2 && !extracted.toLowerCase().startsWith('episode ')) {
-        proposedOfficialTitle = extracted;
-        source = 'fallback';
-        isVerified = false;
-      } else {
-        proposedOfficialTitle = `Episode ${episode}`;
-        source = 'fallback';
-        isVerified = false;
-      }
+      // 4. Never invent episode names or treat release filenames as official titles.
+      // Retain existing non-filename title or fallback to "Episode N" and mark unverified.
+      const safeRetainedTitle =
+        existingStoredTitle && !isRawReleaseFilenameOrToken(existingStoredTitle)
+          ? existingStoredTitle
+          : `Episode ${episode}`;
+      proposedOfficialTitle = safeRetainedTitle;
+      source = 'unverified';
+      isVerified = false;
     }
 
     const proposedHeading = `${sTag} — ${proposedOfficialTitle}`;
 
     // Determine status
-    let status: 'clean' | 'needs_update' | 'unverified' = 'clean';
+    let status: EpisodeTitleDiffItem['status'] = 'clean';
     if (!isVerified) {
       status = 'unverified';
       unverifiedCount++;
-    } else if (!existingStoredTitle || existingStoredTitle !== proposedOfficialTitle) {
+    } else if (
+      !existingStoredTitle ||
+      existingStoredTitle !== proposedOfficialTitle ||
+      isRawReleaseFilenameOrToken(existingStoredTitle)
+    ) {
       status = 'needs_update';
       needsUpdateCount++;
     }
@@ -211,6 +207,7 @@ async function buildEpisodeDiff(
       proposedHeading,
       source,
       isVerified,
+      manualTitleVerified: isManualVerified,
       status,
       overview,
     });
@@ -219,6 +216,7 @@ async function buildEpisodeDiff(
   return {
     success: true,
     movieId,
+    imdbId: resolvedImdbId,
     showTitle: effectiveShowTitle,
     totalEpisodes: previewItems.length,
     needsUpdateCount,
@@ -232,7 +230,10 @@ async function buildEpisodeDiff(
  */
 export async function GET(request: NextRequest) {
   if (!(await validateAdminAuth(request))) {
-    return NextResponse.json({ success: false, error: 'Unauthorized: admin access required' }, { status: 401 });
+    return NextResponse.json(
+      { success: false, error: 'Unauthorized: admin access required' },
+      { status: 401 }
+    );
   }
 
   try {
@@ -240,18 +241,28 @@ export async function GET(request: NextRequest) {
     const movieId = searchParams.get('movieId') || searchParams.get('id');
     const seasonRaw = searchParams.get('season');
     const showTitle = searchParams.get('showTitle') || searchParams.get('title') || undefined;
+    const imdbId = searchParams.get('imdbId') || undefined;
+    const forceOverwrite = searchParams.get('forceOverwrite') === 'true';
 
     if (!movieId) {
       return NextResponse.json({ success: false, error: 'movieId is required' }, { status: 400 });
     }
 
-    const season = seasonRaw !== null && seasonRaw !== undefined ? parseInt(seasonRaw, 10) : undefined;
+    const season =
+      seasonRaw !== null && seasonRaw !== undefined ? parseInt(seasonRaw, 10) : undefined;
 
-    const result = await buildEpisodeDiff(movieId, isNaN(season as number) ? undefined : season, showTitle);
+    const result = await buildEpisodeDiff(
+      movieId,
+      isNaN(season as number) ? undefined : season,
+      showTitle,
+      imdbId,
+      forceOverwrite
+    );
     return NextResponse.json(result);
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error('Error in GET /api/admin/verify-episode-titles:', err);
-    return NextResponse.json({ success: false, error: err?.message || 'Server error' }, { status: 500 });
+    const message = err instanceof Error ? err.message : 'Server error';
+    return NextResponse.json({ success: false, error: message }, { status: 500 });
   }
 }
 
@@ -260,12 +271,23 @@ export async function GET(request: NextRequest) {
  */
 export async function POST(request: NextRequest) {
   if (!(await validateAdminAuth(request))) {
-    return NextResponse.json({ success: false, error: 'Unauthorized: admin access required' }, { status: 401 });
+    return NextResponse.json(
+      { success: false, error: 'Unauthorized: admin access required' },
+      { status: 401 }
+    );
   }
 
   try {
     const body = await request.json().catch(() => ({}));
-    const { action = 'preview', movieId, season, showTitle, updates } = body;
+    const {
+      action = 'preview',
+      movieId,
+      season,
+      showTitle,
+      imdbId,
+      updates,
+      forceOverwrite = false,
+    } = body;
 
     if (!movieId) {
       return NextResponse.json({ success: false, error: 'movieId is required' }, { status: 400 });
@@ -277,7 +299,9 @@ export async function POST(request: NextRequest) {
       const result = await buildEpisodeDiff(
         String(movieId),
         isNaN(seasonNum as number) ? undefined : seasonNum,
-        showTitle
+        showTitle,
+        imdbId,
+        Boolean(forceOverwrite)
       );
       return NextResponse.json(result);
     }
@@ -286,13 +310,17 @@ export async function POST(request: NextRequest) {
     if (action === 'apply') {
       if (!Array.isArray(updates) || updates.length === 0) {
         return NextResponse.json(
-          { success: false, error: 'updates array is required and must contain at least one item' },
+          {
+            success: false,
+            error: 'updates array is required and must contain at least one item',
+          },
           { status: 400 }
         );
       }
 
       const appliedResults = [];
       let totalModified = 0;
+      let totalSkippedManual = 0;
 
       for (const item of updates) {
         const sNum = Number(item.seasonNumber);
@@ -301,20 +329,34 @@ export async function POST(request: NextRequest) {
 
         if (isNaN(sNum) || isNaN(eNum) || !epTitle) continue;
 
+        // Never allow applying a raw release filename as an official episode title
+        if (isRawReleaseFilenameOrToken(epTitle)) {
+          continue;
+        }
+
+        const itemForceOverwrite =
+          item.forceOverwrite !== undefined ? Boolean(item.forceOverwrite) : Boolean(forceOverwrite);
+        const itemManualVerified =
+          item.manualTitleVerified !== undefined ? Boolean(item.manualTitleVerified) : undefined;
+
         // updateEpisodeTitleInDatabase ensures that URLs, IDs, qualities, servers are NEVER modified!
         const updateRes = await updateEpisodeTitleInDatabase(String(movieId), {
           seasonNumber: sNum,
           episodeNumber: eNum,
           episodeTitle: epTitle,
+          manualTitleVerified: itemManualVerified,
+          forceOverwrite: itemForceOverwrite,
         });
 
         if (updateRes.success) {
           totalModified += updateRes.updatedCount;
+          totalSkippedManual += updateRes.skippedManualCount || 0;
           appliedResults.push({
             seasonNumber: sNum,
             episodeNumber: eNum,
             episodeTitle: epTitle,
             updatedCount: updateRes.updatedCount,
+            skippedManualCount: updateRes.skippedManualCount || 0,
           });
         }
       }
@@ -324,14 +366,19 @@ export async function POST(request: NextRequest) {
         movieId: String(movieId),
         totalApplied: appliedResults.length,
         totalLinksUpdated: totalModified,
+        totalSkippedManual,
         urlsProtected: true,
         applied: appliedResults,
       });
     }
 
-    return NextResponse.json({ success: false, error: `Invalid action "${action}"` }, { status: 400 });
-  } catch (err: any) {
+    return NextResponse.json(
+      { success: false, error: `Invalid action "${action}"` },
+      { status: 400 }
+    );
+  } catch (err: unknown) {
     console.error('Error in POST /api/admin/verify-episode-titles:', err);
-    return NextResponse.json({ success: false, error: err?.message || 'Server error' }, { status: 500 });
+    const message = err instanceof Error ? err.message : 'Server error';
+    return NextResponse.json({ success: false, error: message }, { status: 500 });
   }
 }

@@ -18,6 +18,9 @@ import {
   Layers,
   ExternalLink,
   Flag,
+  Check,
+  X,
+  AlertTriangle,
 } from 'lucide-react';
 import { CustomLink, TitleDetails } from '@/types';
 import { sanitizeSafeUrl } from '@/lib/security';
@@ -25,6 +28,7 @@ import { useWatchlist } from '@/context/WatchlistContext';
 import {
   updateGlobalCustomLink,
   deleteGlobalCustomLink,
+  updateGlobalEpisodeTitle,
 } from '@/lib/curatedLinks';
 import {
   detectSeasonNumber,
@@ -37,7 +41,6 @@ import {
   parseFullMediaTitle,
   detectShowPlatform,
   stripWatermarks,
-  extractEpisodeTitle,
   extractFilenameFromUrl,
   isPackMedia,
   isPackUrl,
@@ -61,7 +64,7 @@ interface EnrichedLink extends CustomLink {
   quality: string;
   audioLanguage: string;
   size?: string;
-  resolution: string;
+  resolution?: string;
   source: string;
   dynamicRange?: string;
   bitDepth?: string;
@@ -94,78 +97,156 @@ interface GroupedEpisode {
   links: EnrichedLink[];
 }
 
-export type QualityFilterChip = '4K' | 'SDR' | 'HDR' | 'DV' | '1080P' | 'H.265' | 'H.264';
-export const QUALITY_FILTER_CHIPS: QualityFilterChip[] = ['4K', 'SDR', 'HDR', 'DV', '1080P', 'H.265', 'H.264'];
+export type QualityFilterChip =
+  | '4K'
+  | '1080P'
+  | '720P'
+  | '480P'
+  | 'SDR'
+  | 'HDR'
+  | 'DV'
+  | 'H.265'
+  | 'H.264';
+export const QUALITY_FILTER_CHIPS: QualityFilterChip[] = [
+  '4K',
+  'SDR',
+  'HDR',
+  'DV',
+  '1080P',
+  'H.265',
+  'H.264',
+];
 
-export function releaseMatchesChip(release: EnrichedLink, chip: QualityFilterChip): boolean {
-  const title = (release.title || '').toLowerCase();
-  const url = (release.url || '').toLowerCase();
-  const quality = (release.quality || '').toLowerCase();
-  const resolution = (release.resolution || '').toLowerCase();
-  const combined = `${title} ${quality} ${resolution} ${url}`;
+export interface VerifiedReleaseAttributes {
+  resolution?: '2160p' | '1080p' | '720p' | '480p';
+  hasDV: boolean;
+  hasHDR: boolean;
+  hasSDR: boolean;
+  codec?: 'H.265' | 'H.264' | 'AV1' | 'VC-1';
+  hasAnyVerifiedQuality: boolean;
+}
+
+/**
+ * Extracts ONLY explicitly verified quality attributes from a release record.
+ * Never fabricates 1080p, H.265, or H.264 when missing, and never confuses DV with HDR.
+ */
+export function getVerifiedReleaseAttributes(
+  release: Partial<EnrichedLink>
+): VerifiedReleaseAttributes {
+  const parsedPrimary = parseReleaseDetails(
+    release.title || '',
+    release.url,
+    release.manualOverrides
+  );
+
+  // Determine whether the primary title/URL is a detailed scene release filename
+  const isDetailedSceneFilename = Boolean(
+    parsedPrimary.resolution ||
+      parsedPrimary.codec ||
+      parsedPrimary.dynamicRange ||
+      /\.(?:mkv|mp4|avi|zip|rar|7z)\b/i.test(release.title || '') ||
+      /\b(?:web-?dl|webrip|bluray|remux|hdtv)\b/i.test(release.title || '')
+  );
+
+  // 1. Verified Resolution
+  let resolution: VerifiedReleaseAttributes['resolution'] = parsedPrimary.resolution;
+  if (!resolution) {
+    const parsedResSecondary = parseReleaseDetails(
+      `${release.resolution || ''} ${release.quality || ''}`,
+      undefined,
+      release.manualOverrides
+    );
+    resolution = parsedResSecondary.resolution;
+  }
+
+  // 2. Verified Dynamic Range (Strict separation: DV vs HDR vs SDR)
+  let hasDV = false;
+  let hasHDR = false;
+  let hasSDR = false;
+
+  if (release.manualOverrides?.dynamicRange !== undefined) {
+    const dr = release.manualOverrides.dynamicRange.trim();
+    if (!/^(?:none|unknown|conflict)$/i.test(dr) && dr.length > 0) {
+      hasDV = /\b(?:dv|dovi|dolby\s*vision)\b/i.test(dr);
+      hasHDR = /\b(?:hdr10\+|hdr10|hdr|hlg)\b/i.test(dr);
+      hasSDR = /\bsdr\b/i.test(dr) && !hasDV && !hasHDR;
+    }
+  } else if (parsedPrimary.dynamicRange) {
+    if (parsedPrimary.dynamicRange !== 'conflict') {
+      hasDV =
+        parsedPrimary.dynamicRange === 'DV' || parsedPrimary.dynamicRange === 'DV HDR';
+      hasHDR =
+        parsedPrimary.dynamicRange === 'HDR' || parsedPrimary.dynamicRange === 'DV HDR';
+      hasSDR = parsedPrimary.dynamicRange === 'SDR';
+    }
+  } else if (!isDetailedSceneFilename) {
+    const parsedDynSecondary = parseReleaseDetails(
+      `${release.dynamicRange || ''} ${release.quality || ''}`
+    );
+    if (parsedDynSecondary.dynamicRange && parsedDynSecondary.dynamicRange !== 'conflict') {
+      hasDV =
+        parsedDynSecondary.dynamicRange === 'DV' ||
+        parsedDynSecondary.dynamicRange === 'DV HDR';
+      hasHDR =
+        parsedDynSecondary.dynamicRange === 'HDR' ||
+        parsedDynSecondary.dynamicRange === 'DV HDR';
+      hasSDR = parsedDynSecondary.dynamicRange === 'SDR';
+    }
+  }
+
+  // 3. Verified Codec (Strict separation: H.265 vs H.264; never inferred from resolution)
+  let codec: VerifiedReleaseAttributes['codec'] = parsedPrimary.codec;
+  if (!codec && !isDetailedSceneFilename) {
+    const parsedCodecSecondary = parseReleaseDetails(
+      `${release.codec || ''} ${release.quality || ''}`
+    );
+    codec = parsedCodecSecondary.codec;
+  }
+
+  const hasAnyVerifiedQuality = Boolean(
+    resolution ||
+      hasDV ||
+      hasHDR ||
+      hasSDR ||
+      codec === 'H.265' ||
+      codec === 'H.264'
+  );
+
+  return {
+    resolution,
+    hasDV,
+    hasHDR,
+    hasSDR,
+    codec,
+    hasAnyVerifiedQuality,
+  };
+}
+
+export function releaseMatchesChip(
+  release: Partial<EnrichedLink>,
+  chip: QualityFilterChip
+): boolean {
+  const attrs = getVerifiedReleaseAttributes(release);
 
   switch (chip) {
-    case '4K': {
-      if (
-        release.manualOverrides?.resolution === '2160p' ||
-        release.resolution === '2160p' ||
-        release.resolution?.includes('4K') ||
-        release.quality?.includes('4K')
-      ) {
-        return true;
-      }
-      return /(?:2160p|\b4k\b|\buhd\b)/i.test(combined);
-    }
-
-    case '1080P': {
-      if (
-        release.manualOverrides?.resolution === '1080p' ||
-        release.resolution === '1080p' ||
-        release.quality?.includes('1080p')
-      ) {
-        return true;
-      }
-      return /(?:1080p|\bfhd\b)/i.test(combined);
-    }
-
-    case 'SDR': {
-      // Must be explicitly verified as SDR. Never guess! (Requirement 8)
-      if (release.manualOverrides?.dynamicRange === 'SDR' || release.dynamicRange === 'SDR') {
-        return true;
-      }
-      return /\bsdr\b/i.test(title);
-    }
-
-    case 'HDR': {
-      const dyn = release.manualOverrides?.dynamicRange || release.dynamicRange || '';
-      if (dyn === 'HDR' || dyn === 'DV HDR' || dyn.includes('HDR')) {
-        return true;
-      }
-      return /\bhdr(?:10\+?)?\b/i.test(combined);
-    }
-
-    case 'DV': {
-      const dyn = release.manualOverrides?.dynamicRange || release.dynamicRange || '';
-      if (dyn === 'DV' || dyn === 'DV HDR' || dyn.includes('DV')) {
-        return true;
-      }
-      return /(?:\bdv\b|dolby\s*vision|\bdovi\b)/i.test(combined);
-    }
-
-    case 'H.265': {
-      if (release.manualOverrides?.codec === 'H.265' || release.codec === 'H.265') {
-        return true;
-      }
-      return /(?:h\.?265|x265|hevc)/i.test(combined);
-    }
-
-    case 'H.264': {
-      if (release.manualOverrides?.codec === 'H.264' || release.codec === 'H.264') {
-        return true;
-      }
-      return /(?:h\.?264|x264|avc)/i.test(combined);
-    }
-
+    case '4K':
+      return attrs.resolution === '2160p';
+    case '1080P':
+      return attrs.resolution === '1080p';
+    case '720P':
+      return attrs.resolution === '720p';
+    case '480P':
+      return attrs.resolution === '480p';
+    case 'DV':
+      return attrs.hasDV;
+    case 'HDR':
+      return attrs.hasHDR;
+    case 'SDR':
+      return attrs.hasSDR;
+    case 'H.265':
+      return attrs.codec === 'H.265';
+    case 'H.264':
+      return attrs.codec === 'H.264';
     default:
       return false;
   }
@@ -196,24 +277,42 @@ export const QUALITY_COMBINATIONS: QualityCombinationDef[] = [
   { key: '4K', label: '4K', resolution: '2160p' },
   { key: '4K_DV', label: '4K + DV', resolution: '2160p', dynamicRange: 'DV' },
   { key: '4K_HDR', label: '4K + HDR', resolution: '2160p', dynamicRange: 'HDR' },
-  { key: '4K_DV_H265', label: '4K + DV + H.265', resolution: '2160p', dynamicRange: 'DV', codec: 'H.265' },
+  {
+    key: '4K_DV_H265',
+    label: '4K + DV + H.265',
+    resolution: '2160p',
+    dynamicRange: 'DV',
+    codec: 'H.265',
+  },
+  {
+    key: '4K_HDR_H265',
+    label: '4K + HDR + H.265',
+    resolution: '2160p',
+    dynamicRange: 'HDR',
+    codec: 'H.265',
+  },
   { key: '4K_SDR', label: '4K + SDR', resolution: '2160p', dynamicRange: 'SDR' },
+  { key: '4K_H265', label: '4K + H.265', resolution: '2160p', codec: 'H.265' },
 
   // 1080P Combinations
   { key: '1080P', label: '1080P', resolution: '1080p' },
   { key: '1080P_DV', label: '1080P + DV', resolution: '1080p', dynamicRange: 'DV' },
   { key: '1080P_HDR', label: '1080P + HDR', resolution: '1080p', dynamicRange: 'HDR' },
   { key: '1080P_SDR', label: '1080P + SDR', resolution: '1080p', dynamicRange: 'SDR' },
+  { key: '1080P_H265', label: '1080P + H.265', resolution: '1080p', codec: 'H.265' },
+  { key: '1080P_H264', label: '1080P + H.264', resolution: '1080p', codec: 'H.264' },
 
   // 720P Combinations
   { key: '720P', label: '720P', resolution: '720p' },
-
-  // Standalone Codecs (matching prompt)
-  { key: 'H265', label: 'H.265', codec: 'H.265' },
-  { key: 'H264', label: 'H.264', codec: 'H.264' },
+  { key: '720P_H265', label: '720P + H.265', resolution: '720p', codec: 'H.265' },
+  { key: '720P_H264', label: '720P + H.264', resolution: '720p', codec: 'H.264' },
 
   // 480P Combinations
   { key: '480P', label: '480P', resolution: '480p' },
+
+  // Standalone Codecs
+  { key: 'H265', label: 'H.265', codec: 'H.265' },
+  { key: 'H264', label: 'H.264', codec: 'H.264' },
 ];
 
 export function isValidDestinationUrl(url?: string): boolean {
@@ -224,85 +323,59 @@ export function isValidDestinationUrl(url?: string): boolean {
 }
 
 export function matchesQualityCombination(
-  release: EnrichedLink,
+  release: Partial<EnrichedLink>,
   combo: QualityCombinationDef
 ): boolean {
+  const attrs = getVerifiedReleaseAttributes(release);
+
+  // Must have at least one verified quality attribute to match any quality button
+  if (!attrs.hasAnyVerifiedQuality) return false;
+
   // 1. Resolution check
   if (combo.resolution) {
-    if (combo.resolution === '2160p') {
-      if (!releaseMatchesChip(release, '4K')) return false;
-    } else if (combo.resolution === '1080p') {
-      if (!releaseMatchesChip(release, '1080P')) return false;
-    } else if (combo.resolution === '720p') {
-      const title = (release.title || '').toLowerCase();
-      const quality = (release.quality || '').toLowerCase();
-      const resolution = (release.resolution || '').toLowerCase();
-      const url = (release.url || '').toLowerCase();
-      const combined = `${title} ${quality} ${resolution} ${url}`;
-      const is720p =
-        release.manualOverrides?.resolution === '720p' ||
-        release.resolution === '720p' ||
-        /(?:720p|\bhd\b)/i.test(combined);
-      if (!is720p) return false;
-    } else if (combo.resolution === '480p') {
-      const title = (release.title || '').toLowerCase();
-      const quality = (release.quality || '').toLowerCase();
-      const resolution = (release.resolution || '').toLowerCase();
-      const url = (release.url || '').toLowerCase();
-      const combined = `${title} ${quality} ${resolution} ${url}`;
-      const is480p =
-        release.manualOverrides?.resolution === '480p' ||
-        release.resolution === '480p' ||
-        /(?:480p|\bsd\b)/i.test(combined);
-      if (!is480p) return false;
-    }
+    if (attrs.resolution !== combo.resolution) return false;
   }
 
-  // 2. Dynamic Range check
+  // 2. Dynamic Range check (strict: DV != HDR)
   if (combo.dynamicRange) {
-    if (combo.dynamicRange === 'DV') {
-      if (!releaseMatchesChip(release, 'DV')) return false;
-    } else if (combo.dynamicRange === 'HDR') {
-      if (!releaseMatchesChip(release, 'HDR')) return false;
-    } else if (combo.dynamicRange === 'SDR') {
-      if (!releaseMatchesChip(release, 'SDR')) return false;
-    }
+    if (combo.dynamicRange === 'DV' && !attrs.hasDV) return false;
+    if (combo.dynamicRange === 'HDR' && !attrs.hasHDR) return false;
+    if (combo.dynamicRange === 'SDR' && !attrs.hasSDR) return false;
   }
 
-  // 3. Codec check
+  // 3. Codec check (strict: H.265 != H.264)
   if (combo.codec) {
-    if (combo.codec === 'H.265') {
-      if (!releaseMatchesChip(release, 'H.265')) return false;
-    } else if (combo.codec === 'H.264') {
-      if (!releaseMatchesChip(release, 'H.264')) return false;
-    }
+    if (attrs.codec !== combo.codec) return false;
   }
 
   return true;
 }
 
-export function getReleaseFidelityScore(release: EnrichedLink): number {
+export function getReleaseFidelityScore(release: Partial<EnrichedLink>): number {
+  const attrs = getVerifiedReleaseAttributes(release);
   let score = 0;
 
   // Resolution weight
-  if (releaseMatchesChip(release, '4K')) score += 1000;
-  else if (releaseMatchesChip(release, '1080P')) score += 500;
-  else if (release.resolution === '720p' || /(?:720p)/i.test(release.title || '')) score += 200;
+  if (attrs.resolution === '2160p') score += 1000;
+  else if (attrs.resolution === '1080p') score += 500;
+  else if (attrs.resolution === '720p') score += 200;
+  else if (attrs.resolution === '480p') score += 100;
 
-  // Dynamic range weight: DV HDR (40) > HDR (30) > SDR (10)
-  const dyn = (release.manualOverrides?.dynamicRange || release.dynamicRange || '').toUpperCase();
-  if (dyn.includes('DV') || releaseMatchesChip(release, 'DV')) {
+  // Dynamic range weight: DV + HDR (50) > DV (40) > HDR (30) > SDR (10)
+  if (attrs.hasDV && attrs.hasHDR) {
+    score += 50;
+  } else if (attrs.hasDV) {
     score += 40;
-  } else if (dyn.includes('HDR') || releaseMatchesChip(release, 'HDR')) {
+  } else if (attrs.hasHDR) {
     score += 30;
-  } else if (dyn === 'SDR' || releaseMatchesChip(release, 'SDR')) {
+  } else if (attrs.hasSDR) {
     score += 10;
   }
 
   // Codec weight: H.265 (20) > H.264 (10)
-  if (releaseMatchesChip(release, 'H.265')) {
+  if (attrs.codec === 'H.265') {
     score += 20;
-  } else if (releaseMatchesChip(release, 'H.264')) {
+  } else if (attrs.codec === 'H.264') {
     score += 10;
   }
 
@@ -315,9 +388,9 @@ export function getReleaseFidelityScore(release: EnrichedLink): number {
   return score;
 }
 
-export function resolveDeterministicRelease(
-  matchingReleases: EnrichedLink[]
-): EnrichedLink | null {
+export function resolveDeterministicRelease<T extends Partial<EnrichedLink>>(
+  matchingReleases: T[]
+): T | null {
   const validReleases = matchingReleases.filter((r) => isValidDestinationUrl(r.url));
   if (validReleases.length === 0) return null;
 
@@ -336,13 +409,13 @@ export function resolveDeterministicRelease(
   return sorted[0];
 }
 
-export function resolveDestinationForQuality(
-  releases: EnrichedLink[],
+export function resolveDestinationForQuality<T extends Partial<EnrichedLink>>(
+  releases: T[],
   combo: QualityCombinationDef
-): { release: EnrichedLink; url: string } | null {
+): { release: T; url: string } | null {
   const matching = releases.filter((rel) => matchesQualityCombination(rel, combo));
   const deterministic = resolveDeterministicRelease(matching);
-  if (!deterministic || !isValidDestinationUrl(deterministic.url)) {
+  if (!deterministic || !deterministic.url || !isValidDestinationUrl(deterministic.url)) {
     return null;
   }
   return {
@@ -351,7 +424,19 @@ export function resolveDestinationForQuality(
   };
 }
 
-// Extract rich release profiles including 4K SDR vs 4K DV HDR vs 1080p DV HDR vs 1080p SDR
+/**
+ * Generates dynamic quality buttons for an episode strictly from verified attributes of valid destination links.
+ */
+export function getDynamicQualityButtonsForEpisode<T extends Partial<EnrichedLink>>(
+  releases: T[]
+): Array<{ combo: QualityCombinationDef; release: T; url: string }> {
+  return QUALITY_COMBINATIONS.map((combo) => {
+    const result = resolveDestinationForQuality(releases, combo);
+    return result ? { combo, ...result } : null;
+  }).filter((item): item is NonNullable<typeof item> => item !== null);
+}
+
+// Extract release profile without fabricating unverified resolution or codec defaults
 function extractReleaseProfile(
   title: string,
   quality?: string,
@@ -362,12 +447,15 @@ function extractReleaseProfile(
   const parsed = parseReleaseDetails(title, url, overrides);
 
   const platform = overrides?.provider || parsed.provider || detectShowPlatform(title, titleDetails);
-  const resolution = parsed.resolutionLabel || '1080p';
-  const resTag = parsed.resolution || '1080p';
+  const verifiedResolution = parsed.resolution;
+  const verifiedResolutionLabel = parsed.resolutionLabel;
+  const resolution = verifiedResolutionLabel || '1080p';
+  const resTag = verifiedResolution || '1080p';
   const source = overrides?.source || parsed.source || 'WEB-DL';
   const dynamicRange = parsed.dynamicRangeLabel === 'Unknown' ? '' : (parsed.dynamicRangeLabel || '');
   const bitDepth = parsed.bitDepth || '';
-  const codec = parsed.codec || (resTag === '2160p' ? 'H.265' : 'H.264');
+  const verifiedCodec = parsed.codec;
+  const codec = verifiedCodec || '';
   const container = parsed.container || '';
   const containerLabel = parsed.containerLabel || '';
   const part = parsed.part || '';
@@ -375,10 +463,13 @@ function extractReleaseProfile(
   return {
     resolution,
     resTag,
+    verifiedResolution,
+    verifiedResolutionLabel,
     source,
     dynamicRange,
     bitDepth,
     codec,
+    verifiedCodec,
     platform,
     container,
     containerLabel,
@@ -393,7 +484,7 @@ function extractReleaseProfile(
       const cleanShow = (showName || 'Series').replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '.');
       const partSeg = part ? `.${part.replace(/-/g, '.')}` : '';
       const dynSeg = dynamicRange && dynamicRange !== 'Conflict' ? `.${dynamicRange.replace(/\s+/g, '.')}` : '';
-      const codecSeg = codec || (resTag === '2160p' ? 'H.265' : 'H.264');
+      const codecSeg = verifiedCodec || (resTag === '2160p' ? 'H.265' : 'H.264');
       const platSeg = platform ? `.${platform}` : '';
       const effSource = platform === 'DSNP' ? 'WEB-DL' : source;
       return `${cleanShow}.${sTag}${partSeg}.${resTag}${platSeg}.${effSource}.DUAL.DDP5.1.Atmos${dynSeg}.${codecSeg}`;
@@ -655,10 +746,19 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
   const [selectedSeason, setSelectedSeason] = useState<number>(1);
   const [openSlideId, setOpenSlideId] = useState<string | null>(null);
 
-  // Verified official episode titles map (from DB or TMDB/Trakt API)
-  const [verifiedEpisodesMap, setVerifiedEpisodesMap] = useState<Map<number, { title: string; overview?: string }>>(new Map());
+  // Verified official episode titles map (from DB or IMDb/TVMaze/TMDB/Trakt API)
+  const [verifiedEpisodesMap, setVerifiedEpisodesMap] = useState<
+    Map<number, { title: string; overview?: string }>
+  >(new Map());
   const [isLoadingVerifiedEpisodes, setIsLoadingVerifiedEpisodes] = useState<boolean>(false);
 
+  // Manual Episode Title Correction States (Admin inline edit without TMDB search)
+  const [editingEpisodeNumber, setEditingEpisodeNumber] = useState<number | null>(null);
+  const [editingEpisodeTitleInput, setEditingEpisodeTitleInput] = useState<string>('');
+  const [isSavingEpisodeTitle, setIsSavingEpisodeTitle] = useState<boolean>(false);
+  const [manualEpisodeTitlesMap, setManualEpisodeTitlesMap] = useState<Map<string, string>>(
+    new Map()
+  );
 
   // Dynamically calculate all seasons in ascending order (Season 1, Season 2, Season 3...) matching screenshot
   const seasonsList = useMemo(() => {
@@ -682,23 +782,52 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
     return customLinks.map((l) => {
       const urlFn = extractFilenameFromUrl(l.url);
       const effectiveTitle = l.title || urlFn || '';
-      const prof = extractReleaseProfile(effectiveTitle, l.quality, titleDetails, l.url, l.manualOverrides);
+      const prof = extractReleaseProfile(
+        effectiveTitle,
+        l.quality,
+        titleDetails,
+        l.url,
+        l.manualOverrides
+      );
       const isPack = l.manualOverrides?.linkType === 'zip_pack' || prof.isPack;
-      const detectedSeason = l.manualOverrides?.seasonNumber || l.seasonNumber || prof.seasonNumber || detectSeasonNumber({ title: effectiveTitle, seasonNumber: l.seasonNumber, url: l.url });
-      const detectedEp = isPack ? undefined : (l.manualOverrides?.episodeNumber || l.episodeNumber || prof.episodeNumber || detectEpisodeNumber({ title: effectiveTitle, episodeNumber: l.episodeNumber, url: l.url }));
-      const detectedType: 'zip_pack' | 'single_episode' = (l.manualOverrides?.linkType as 'zip_pack' | 'single_episode') || (isPack ? 'zip_pack' : 'single_episode');
-      const isSceneRelease = /(?:s\d{1,2}e\d{1,2}|2160p|1080p|720p|480p|\.mkv|\.mp4|web-dl|webdl|bluray)/i.test(effectiveTitle);
-      const detectedQ = l.manualOverrides?.resolution || ((isSceneRelease || !l.quality || l.quality === 'HD')
-        ? detectQuality(effectiveTitle, l.quality, l.url)
-        : l.quality);
-      const detectedAud = l.manualOverrides?.audioLanguage || (l.audioLanguage && l.audioLanguage !== 'Original' ? l.audioLanguage : (prof.audioLanguages || detectAudio(effectiveTitle, l.audioLanguage, l.url)));
-      const detectedSz = l.manualOverrides?.size || l.size || detectSize(effectiveTitle, undefined, l.url);
+      const detectedSeason =
+        l.manualOverrides?.seasonNumber ||
+        l.seasonNumber ||
+        prof.seasonNumber ||
+        detectSeasonNumber({ title: effectiveTitle, seasonNumber: l.seasonNumber, url: l.url });
+      const detectedEp = isPack
+        ? undefined
+        : l.manualOverrides?.episodeNumber ||
+          l.episodeNumber ||
+          prof.episodeNumber ||
+          detectEpisodeNumber({ title: effectiveTitle, episodeNumber: l.episodeNumber, url: l.url });
+      const detectedType: 'zip_pack' | 'single_episode' =
+        (l.manualOverrides?.linkType as 'zip_pack' | 'single_episode') ||
+        (isPack ? 'zip_pack' : 'single_episode');
+      const isSceneRelease =
+        /(?:s\d{1,2}e\d{1,2}|2160p|1080p|720p|480p|\.mkv|\.mp4|web-dl|webdl|bluray)/i.test(
+          effectiveTitle
+        );
+      const detectedQ =
+        l.manualOverrides?.resolution ||
+        (isSceneRelease || !l.quality || l.quality === 'HD'
+          ? detectQuality(effectiveTitle, l.quality, l.url)
+          : l.quality) ||
+        '';
+      const detectedAud =
+        l.manualOverrides?.audioLanguage ||
+        (l.audioLanguage && l.audioLanguage !== 'Original'
+          ? l.audioLanguage
+          : prof.audioLanguages || detectAudio(effectiveTitle, l.audioLanguage, l.url));
+      const detectedSz =
+        l.manualOverrides?.size || l.size || detectSize(effectiveTitle, undefined, l.url);
 
-      const finalTitle = (isSceneRelease && effectiveTitle.includes('.'))
-        ? stripWatermarks(effectiveTitle)
-        : (urlFn && /\.(?:mkv|mp4)/i.test(urlFn))
+      const finalTitle =
+        isSceneRelease && effectiveTitle.includes('.')
+          ? stripWatermarks(effectiveTitle)
+          : urlFn && /\.(?:mkv|mp4)/i.test(urlFn)
           ? stripWatermarks(urlFn)
-          : (l.title || '');
+          : l.title || '';
 
       return {
         ...l,
@@ -706,17 +835,23 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
         seasonNumber: detectedSeason,
         episodeNumber: detectedEp,
         linkType: detectedType,
-        category: detectedType === 'zip_pack' ? 'ZipPack' : (l.category === 'ZipPack' ? 'SingleEpisode' : l.category),
+        category:
+          detectedType === 'zip_pack'
+            ? 'ZipPack'
+            : l.category === 'ZipPack'
+            ? 'SingleEpisode'
+            : l.category,
         quality: detectedQ,
         audioLanguage: detectedAud,
         size: detectedSz,
-        resolution: prof.resolution,
+        resolution:
+          l.manualOverrides?.resolution || prof.verifiedResolutionLabel || l.resolution || undefined,
         source: prof.source,
-        dynamicRange: prof.dynamicRange,
-        bitDepth: prof.bitDepth,
-        codec: prof.codec,
-        container: prof.container,
-        containerLabel: prof.containerLabel,
+        dynamicRange: prof.dynamicRange || l.dynamicRange || undefined,
+        bitDepth: prof.bitDepth || l.bitDepth || undefined,
+        codec: l.manualOverrides?.codec || prof.verifiedCodec || l.codec || undefined,
+        container: prof.container || l.container || undefined,
+        containerLabel: prof.containerLabel || undefined,
       };
     });
   }, [customLinks, titleDetails]);
@@ -733,18 +868,28 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
         return;
       }
 
-      // Group by format key: resolution + source + dynamicRange + codec (e.g. "1080p_WEB-DL_DV_HDR_H.265", "1080p_WEB-DL_SDR_H.265")
-      const formatMap = new Map<string, { resolution: string; source: string; links: EnrichedLink[] }>();
+      // Group by format key: resolution + source + dynamicRange + codec
+      const formatMap = new Map<
+        string,
+        { resolution: string; source: string; links: EnrichedLink[] }
+      >();
 
       currentSeasonLinks.forEach((link) => {
-        const prof = extractReleaseProfile(link.title, link.quality, titleDetails, link.url, link.manualOverrides);
+        const prof = extractReleaseProfile(
+          link.title,
+          link.quality,
+          titleDetails,
+          link.url,
+          link.manualOverrides
+        );
+        const resGroupLabel = link.resolution || prof.resolution || '1080p';
         const dyn = prof.dynamicRange || '';
         const dynSuffix = dyn ? `_${dyn.replace(/\s+/g, '_')}` : '';
         const codecSuffix = prof.codec ? `_${prof.codec.replace(/\s+/g, '_')}` : '';
-        const key = `${link.resolution}_${link.source}${dynSuffix}${codecSuffix}`;
+        const key = `${resGroupLabel}_${link.source}${dynSuffix}${codecSuffix}`;
         if (!formatMap.has(key)) {
           formatMap.set(key, {
-            resolution: link.resolution,
+            resolution: resGroupLabel,
             source: link.source,
             links: [],
           });
@@ -907,9 +1052,10 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
   const handleSelectSeason = (seasonNum: number) => {
     setSelectedSeason(seasonNum);
     setOpenSlideId(null);
+    setEditingEpisodeNumber(null);
   };
 
-  // Fetch verified official episode metadata for the effective season
+  // Fetch verified official episode metadata for the effective season (IMDb -> TVMaze -> TMDB -> Trakt)
   useEffect(() => {
     let isCancelled = false;
     async function fetchSeasonTitles() {
@@ -917,19 +1063,47 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
       setIsLoadingVerifiedEpisodes(true);
       try {
         const showTitle = titleDetails.name || titleDetails.title || '';
-        const res = await fetch(`/api/tv-episodes?id=${encodeURIComponent(titleDetails.id)}&season=${effectiveSeason}&title=${encodeURIComponent(showTitle)}`);
+        const imdbId =
+          titleDetails.external_ids?.imdb_id ||
+          (titleDetails as { imdb_id?: string }).imdb_id ||
+          '';
+        const airDate = titleDetails.first_air_date || titleDetails.release_date || '';
+        const year = airDate ? airDate.slice(0, 4) : '';
+        const queryParams = new URLSearchParams({
+          id: String(titleDetails.id),
+          season: String(effectiveSeason),
+          title: showTitle,
+        });
+        if (imdbId) queryParams.set('imdbId', imdbId);
+        if (year) queryParams.set('year', year);
+
+        const res = await fetch(`/api/tv-episodes?${queryParams.toString()}`);
         if (res.ok) {
           const data = await res.json();
-          if (data.success && Array.isArray(data.episodes) && !isCancelled) {
+          if (Array.isArray(data.episodes) && !isCancelled) {
             const map = new Map<number, { title: string; overview?: string }>();
-            data.episodes.forEach((ep: { episodeNumber?: number | string; title?: string; overview?: string }) => {
-              if (ep.episodeNumber && ep.title) {
-                map.set(Number(ep.episodeNumber), {
-                  title: ep.title.trim(),
-                  overview: ep.overview || '',
-                });
+            data.episodes.forEach(
+              (ep: {
+                episodeNumber?: number | string;
+                episode_number?: number | string;
+                title?: string;
+                name?: string;
+                overview?: string;
+              }) => {
+                const epNum = Number(ep.episodeNumber ?? ep.episode_number);
+                const epTitle = (ep.title || ep.name || '').trim();
+                if (
+                  epNum > 0 &&
+                  epTitle &&
+                  !/^(?:ep(?:isode)?\s*#?\d+|e\d+|s\d+e\d+|tba|tbd|unknown|n\/a)$/i.test(epTitle)
+                ) {
+                  map.set(epNum, {
+                    title: epTitle,
+                    overview: ep.overview || '',
+                  });
+                }
               }
-            });
+            );
             setVerifiedEpisodesMap(map);
           }
         }
@@ -941,8 +1115,19 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
     }
 
     fetchSeasonTitles();
-    return () => { isCancelled = true; };
-  }, [titleDetails.id, titleDetails.name, titleDetails.title, effectiveSeason]);
+    return () => {
+      isCancelled = true;
+    };
+  }, [
+    titleDetails,
+    titleDetails.id,
+    titleDetails.name,
+    titleDetails.title,
+    titleDetails.external_ids?.imdb_id,
+    titleDetails.first_air_date,
+    titleDetails.release_date,
+    effectiveSeason,
+  ]);
 
   // Active season packs for effectiveSeason
   const activeSeasonPacks = useMemo(() => {
@@ -1022,25 +1207,69 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
 
     const epNumbers = Array.from(epMap.keys()).sort((a, b) => a - b);
 
+    const isReleaseFilenameLike = (val?: string): boolean => {
+      if (!val) return false;
+      const t = val.trim();
+      if (/(?:2160p|1080p|720p|480p|web-dl|webdl|webrip|bluray|bdrip|remux|h\.?26[45]|x26[45]|hevc|avc|ddp\d|atmos|\.mkv|\.mp4|\.avi|\.zip|4khdhub|hdhub4u| Vegamovies)/i.test(t)) {
+        return true;
+      }
+      if (t.includes('.') && !t.includes(' ') && t.length > 12) return true;
+      if (/^https?:\/\//i.test(t)) return true;
+      return false;
+    };
+
+    const isCleanVerifiedTitle = (val?: string): boolean => {
+      if (!val || !val.trim()) return false;
+      const t = val.trim();
+      if (/^(?:ep(?:isode)?\s*#?\d+|e\d+|s\d+e\d+|tba|tbd|unknown|n\/a|untitled)$/i.test(t)) {
+        return false;
+      }
+      if (isReleaseFilenameLike(t)) return false;
+      return true;
+    };
+
     return epNumbers.map((epNum) => {
       const epLinks = epMap.get(epNum) || [];
       const sTag = `S${String(effectiveSeason).padStart(2, '0')}E${String(epNum).padStart(2, '0')}`;
       const verifiedObj = verifiedEpisodesMap.get(epNum);
-      const storedTitle = epLinks.find((e) => e.episodeTitle)?.episodeTitle;
-      const officialCandidate = storedTitle || verifiedObj?.title;
 
-      const isVerified = Boolean(
-        officialCandidate &&
-        officialCandidate.trim() &&
-        !officialCandidate.trim().toLowerCase().startsWith('episode ')
-      );
+      // 1. Live manual override in current session
+      const sessionManualTitle = manualEpisodeTitlesMap.get(`${effectiveSeason}_${epNum}`);
+      // 2. Stored manual correction with manualTitleVerified: true
+      const storedManualTitle = epLinks.find(
+        (e) => e.manualTitleVerified && e.episodeTitle && !isReleaseFilenameLike(e.episodeTitle)
+      )?.episodeTitle;
+      // 3. Verified external lookup (IMDb / TVMaze / TMDB / Trakt)
+      const externalVerifiedTitle = isCleanVerifiedTitle(verifiedObj?.title)
+        ? verifiedObj!.title.trim()
+        : undefined;
+      // 4. Stored verified episodeTitle in DB
+      const storedVerifiedTitle = epLinks.find((e) => isCleanVerifiedTitle(e.episodeTitle))?.episodeTitle;
+      // 5. Existing non-filename stored title (even if generic like "Episode 1")
+      const existingNonFilenameTitle = epLinks.find(
+        (e) => e.episodeTitle && e.episodeTitle.trim() && !isReleaseFilenameLike(e.episodeTitle)
+      )?.episodeTitle;
 
+      const resolvedVerifiedCandidate =
+        sessionManualTitle ||
+        storedManualTitle ||
+        externalVerifiedTitle ||
+        storedVerifiedTitle;
+
+      const isVerified = Boolean(resolvedVerifiedCandidate && resolvedVerifiedCandidate.trim());
+
+      // Never invent episode names or treat release filenames as official episode titles!
       const officialTitle = isVerified
-        ? officialCandidate!.trim()
-        : (extractEpisodeTitle(epLinks[0]?.title || '') || `Episode ${epNum}`);
+        ? resolvedVerifiedCandidate!.trim()
+        : existingNonFilenameTitle?.trim() || `Episode ${epNum}`;
 
       // Dot separator ' · ' matching user mockup media_1791796102840_4c86c0a4.png
       const heading = `${sTag} · ${officialTitle}`;
+
+      // Identify any valid destination links that lack verified quality metadata (for admin review)
+      const unverifiedQualityReleases = epLinks.filter(
+        (r) => isValidDestinationUrl(r.url) && !getVerifiedReleaseAttributes(r).hasAnyVerifiedQuality
+      );
 
       return {
         episodeNumber: epNum,
@@ -1048,11 +1277,40 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
         heading,
         officialTitle,
         isVerified,
+        isManualVerified: Boolean(sessionManualTitle || storedManualTitle),
         overview: verifiedObj?.overview,
         releases: epLinks,
+        unverifiedQualityCount: unverifiedQualityReleases.length,
       };
     });
-  }, [enrichedLinks, effectiveSeason, verifiedEpisodesMap]);
+  }, [enrichedLinks, effectiveSeason, verifiedEpisodesMap, manualEpisodeTitlesMap]);
+
+  const handleSaveManualEpisodeTitle = async (epNum: number) => {
+    const trimmed = editingEpisodeTitleInput.trim();
+    if (!trimmed) return;
+    setIsSavingEpisodeTitle(true);
+    try {
+      const res = await updateGlobalEpisodeTitle(titleDetails.id, {
+        seasonNumber: effectiveSeason,
+        episodeNumber: epNum,
+        episodeTitle: trimmed,
+        manualTitleVerified: true,
+        forceOverwrite: true,
+      });
+      if (res.success) {
+        setManualEpisodeTitlesMap((prev) => {
+          const next = new Map(prev);
+          next.set(`${effectiveSeason}_${epNum}`, trimmed);
+          return next;
+        });
+        setEditingEpisodeNumber(null);
+        setEditingEpisodeTitleInput('');
+        if (onLinkAdded) onLinkAdded();
+      }
+    } finally {
+      setIsSavingEpisodeTitle(false);
+    }
+  };
 
   // Accordion toggle: clicking an open tab minimizes it, clicking a minimized tab maximizes it & closes other tabs
   const toggleSlide = (slideKey: string) => {
@@ -1161,11 +1419,11 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
       </div>
 
       {/* 1. SELECT SEASON (media_1790848168477.png reference design) */}
-      <div className="rounded-3xl bg-[#0c0d13] border border-white/5 p-5 sm:p-6 shadow-2xl space-y-3.5">
+      <div className="rounded-2xl sm:rounded-3xl bg-[#0c0d13] border border-white/5 p-3.5 sm:p-6 shadow-2xl space-y-3">
         <label className="text-[11px] font-bold tracking-wider text-zinc-400 uppercase block">
           SELECT SEASON
         </label>
-        <div className="flex flex-wrap items-center gap-2.5 sm:gap-3">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           {seasonsList.map((s) => {
             const isActive = effectiveSeason === s;
             return (
@@ -1173,7 +1431,7 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
                 key={s}
                 type="button"
                 onClick={() => handleSelectSeason(s)}
-                className={`px-5 py-2.5 sm:px-6 sm:py-3 rounded-2xl font-black text-xs sm:text-sm tracking-wider uppercase transition-all cursor-pointer select-none ${
+                className={`min-h-[42px] px-4 py-2 sm:px-6 sm:py-3 rounded-2xl font-black text-xs sm:text-sm tracking-wider uppercase transition-all cursor-pointer select-none ${
                   isActive
                     ? 'bg-gradient-to-r from-blue-600 via-blue-500 to-indigo-600 text-white shadow-[0_4px_24px_rgba(59,130,246,0.65)] border border-blue-400/40 scale-[1.02]'
                     : 'bg-[#14161f] hover:bg-[#1f2230] text-zinc-300 hover:text-white border border-white/5'
@@ -1187,7 +1445,7 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
       </div>
 
       {/* 2. Choose a Download Option Header & Accordion Cards (media_1790899727140.png) */}
-      <div className="space-y-4">
+      <div className="space-y-4 min-w-0 max-w-full">
         {/* Section Title */}
         <div className="space-y-1.5 pt-2 pb-1">
           <p className="text-xs font-bold tracking-widest text-sky-400 uppercase">
@@ -1202,21 +1460,21 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
         </div>
 
         {/* SLIDE: Full Collection / Zip Archive */}
-        <div className="rounded-2xl sm:rounded-3xl overflow-hidden border border-white/10 border-l-4 border-l-cyan-400 shadow-xl transition-all duration-300 bg-[#0e1322]/95 hover:bg-[#12182c]/95">
+        <div className="rounded-2xl sm:rounded-3xl overflow-hidden border border-white/10 border-l-4 border-l-cyan-400 shadow-xl transition-all duration-300 bg-[#0e1322]/95 hover:bg-[#12182c]/95 min-w-0 max-w-full">
           {/* Card Button matching media_1790899727140.png */}
           <button
             type="button"
             onClick={() => toggleSlide('zip')}
-            className="w-full text-left p-4 sm:p-5 flex items-center justify-between gap-4 cursor-pointer select-none focus:outline-none transition-colors"
+            className="w-full text-left p-3.5 sm:p-5 flex items-center justify-between gap-3 sm:gap-4 cursor-pointer select-none focus:outline-none transition-colors min-w-0"
           >
-            <div className="flex items-center gap-3.5 sm:gap-4 min-w-0 flex-1">
-              <div className="w-12 h-12 rounded-2xl bg-[#1c243a] border border-[#2b3756] flex items-center justify-center text-cyan-400 shadow-inner shrink-0">
+            <div className="flex items-center gap-3 sm:gap-4 min-w-0 flex-1">
+              <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-[#1c243a] border border-[#2b3756] flex items-center justify-center text-cyan-400 shadow-inner shrink-0">
                 <ArrowUpRight className="w-5 h-5 text-cyan-400" />
               </div>
 
               <div className="space-y-1 min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <p className="text-[11px] font-bold tracking-widest text-sky-400 uppercase">
+                <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+                  <p className="text-[10px] sm:text-[11px] font-bold tracking-widest text-sky-400 uppercase">
                     FULL COLLECTION / SEASON PACKS
                   </p>
                   {activeSeasonPacks.length > 0 && (
@@ -1225,7 +1483,7 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
                     </span>
                   )}
                 </div>
-                <h4 className="text-lg sm:text-xl font-bold text-white tracking-tight leading-tight truncate">
+                <h4 className="text-base sm:text-xl font-bold text-white tracking-tight leading-tight truncate">
                   Zip Archive / Season Packs
                 </h4>
                 <p className="text-xs text-zinc-400 font-medium truncate">
@@ -1245,7 +1503,7 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
 
           {/* Expanded Body for Zip Archive */}
           {openSlideId === 'zip' && (
-            <div className="bg-[#090c15] p-4 sm:p-6 space-y-4 animate-fadeIn border-t border-white/10">
+            <div className="bg-[#090c15] p-3.5 sm:p-6 space-y-4 animate-fadeIn border-t border-white/10">
               {activeSeasonPacks.length > 0 ? (
                 <div className="space-y-2.5">
                   {activeSeasonPacks.map((packRel) => {
@@ -1384,7 +1642,7 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
                   })}
                 </div>
               ) : (
-                <div className="p-8 rounded-2xl bg-[#0c0d13] border border-white/5 text-center space-y-3.5 shadow-xl">
+                <div className="p-5 sm:p-8 rounded-2xl bg-[#0c0d13] border border-white/5 text-center space-y-3.5 shadow-xl">
                   <div className="w-12 h-12 rounded-2xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center mx-auto text-blue-400">
                     <Layers className="w-6 h-6" />
                   </div>
@@ -1398,7 +1656,7 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
                     <button
                       type="button"
                       onClick={() => setIsRequestModalOpen(true)}
-                      className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs uppercase tracking-wider shadow-lg shadow-blue-600/30 transition-all cursor-pointer"
+                      className="inline-flex items-center justify-center gap-2 w-full sm:w-auto px-5 sm:px-6 py-2.5 min-h-[42px] rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs uppercase tracking-wider shadow-lg shadow-blue-600/30 transition-all cursor-pointer"
                     >
                       <Sparkles className="w-3.5 h-3.5" />
                       <span>Request Season {effectiveSeason} Zip Pack</span>
@@ -1406,7 +1664,7 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
                     {isEffectiveAdmin && (
                       <a
                         href={`/admin?title=${encodeURIComponent(titleDetails.name || titleDetails.title || '')}&id=${titleDetails.id}`}
-                        className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-zinc-800 border border-zinc-700 hover:border-amber-500/40 text-amber-300 hover:text-amber-200 text-xs font-bold transition-colors"
+                        className="inline-flex items-center justify-center gap-1.5 w-full sm:w-auto px-4 py-2.5 min-h-[42px] rounded-xl bg-zinc-800 border border-zinc-700 hover:border-amber-500/40 text-amber-300 hover:text-amber-200 text-xs font-bold transition-colors"
                       >
                         <Plus className="w-3.5 h-3.5" /> Upload in Admin ↗
                       </a>
@@ -1419,54 +1677,99 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
         </div>
 
         {/* EPISODE CARDS WITH DIRECT ONE-CLICK QUALITY BUTTONS */}
-        <div className="space-y-4">
+        <div className="space-y-4 min-w-0 max-w-full">
           {seasonEpisodes.length > 0 ? (
             seasonEpisodes.map((ep) => {
-              const availableButtons = QUALITY_COMBINATIONS.map((combo) => {
-                const result = resolveDestinationForQuality(ep.releases, combo);
-                return result ? { combo, ...result } : null;
-              }).filter((item): item is NonNullable<typeof item> => item !== null);
-
-              // Fallback for releases with non-standard qualities
-              let buttonsToRender = availableButtons;
-              if (buttonsToRender.length === 0 && ep.releases.length > 0) {
-                const validReleases = ep.releases.filter((r) => isValidDestinationUrl(r.url));
-                if (validReleases.length > 0) {
-                  const best = resolveDeterministicRelease(validReleases);
-                  if (best) {
-                    buttonsToRender = [
-                      {
-                        combo: {
-                          key: 'DEFAULT_RELEASE',
-                          label: best.quality || best.resolution || 'Download Episode',
-                        },
-                        release: best,
-                        url: best.url,
-                      },
-                    ];
-                  }
-                }
-              }
+              // Strictly generate buttons only for quality combinations supported by verified metadata of actual links
+              const buttonsToRender = getDynamicQualityButtonsForEpisode(ep.releases);
+              const isEditingThisTitle = editingEpisodeNumber === ep.episodeNumber;
 
               return (
                 <div
                   key={ep.episodeNumber}
-                  className="rounded-2xl sm:rounded-3xl overflow-hidden border border-white/10 shadow-xl transition-all duration-300 bg-[#0e1322]/95 hover:bg-[#12182c]/95 p-4 sm:p-5 space-y-3.5"
+                  className="rounded-2xl sm:rounded-3xl overflow-hidden border border-white/10 shadow-xl transition-all duration-300 bg-[#0e1322]/95 hover:bg-[#12182c]/95 p-3.5 sm:p-5 space-y-3.5 min-w-0 max-w-full"
                 >
                   {/* Header Row: S01E01 · Title and Report Button */}
-                  <div className="flex items-start sm:items-center justify-between gap-4">
-                    <div className="space-y-1 min-w-0 flex-1">
-                      <h4 className="text-base sm:text-lg font-bold text-white flex items-center gap-2 flex-wrap">
-                        <span>{ep.heading}</span>
-                        {!ep.isVerified && (
-                          <span
-                            className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/25 font-semibold"
-                            title="Unverified title. Administrator can verify via Trakt/TMDB."
-                          >
-                            Unverified
+                  <div className="flex items-start justify-between gap-2.5 sm:gap-4 min-w-0">
+                    <div className="space-y-1 min-w-0 flex-1 text-left">
+                      {isEditingThisTitle && (isEffectiveAdmin || isAdmin) ? (
+                        <div className="flex flex-wrap items-center gap-2 min-w-0">
+                          <span className="text-sm font-mono font-bold text-amber-400 shrink-0">
+                            {ep.sTag} ·
                           </span>
-                        )}
-                      </h4>
+                          <input
+                            type="text"
+                            value={editingEpisodeTitleInput}
+                            onChange={(e) => setEditingEpisodeTitleInput(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                handleSaveManualEpisodeTitle(ep.episodeNumber);
+                              } else if (e.key === 'Escape') {
+                                setEditingEpisodeNumber(null);
+                                setEditingEpisodeTitleInput('');
+                              }
+                            }}
+                            placeholder={`Official title for ${ep.sTag}...`}
+                            className="flex-1 min-w-0 w-full sm:w-auto bg-[#090c15] border border-amber-500/40 rounded-lg px-2.5 py-1.5 text-sm text-white focus:outline-none focus:border-amber-400"
+                            autoFocus
+                          />
+                          <button
+                            type="button"
+                            disabled={isSavingEpisodeTitle || !editingEpisodeTitleInput.trim()}
+                            onClick={() => handleSaveManualEpisodeTitle(ep.episodeNumber)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-bold cursor-pointer"
+                            title="Save manual episode title correction (preserves all destination links)"
+                          >
+                            <Check className="w-3.5 h-3.5" />
+                            <span>Save</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingEpisodeNumber(null);
+                              setEditingEpisodeTitleInput('');
+                            }}
+                            className="p-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 cursor-pointer"
+                            title="Cancel"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ) : (
+                        <h4 className="text-sm sm:text-lg font-bold text-white flex items-center gap-1.5 sm:gap-2 flex-wrap min-w-0 break-words leading-snug">
+                          <span className="break-words min-w-0">{ep.heading}</span>
+                          {!ep.isVerified && (
+                            <span
+                              className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/25 font-semibold shrink-0"
+                              title="Unverified title. Administrator can verify via IMDb/TVMaze/TMDB or edit manually."
+                            >
+                              Unverified
+                            </span>
+                          )}
+                          {ep.isManualVerified && (isEffectiveAdmin || isAdmin) && (
+                            <span
+                              className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/25 font-semibold shrink-0"
+                              title="Verified manual title correction (protected from automatic bulk overwrites)"
+                            >
+                              Manual Verified
+                            </span>
+                          )}
+                          {(isEffectiveAdmin || isAdmin) && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingEpisodeNumber(ep.episodeNumber);
+                                setEditingEpisodeTitleInput(ep.officialTitle);
+                              }}
+                              className="p-1.5 rounded-lg bg-white/5 hover:bg-amber-500/20 text-zinc-400 hover:text-amber-300 border border-white/10 hover:border-amber-500/30 transition-colors cursor-pointer shrink-0"
+                              title="Admin: Manually edit episode title without TMDB search (preserves all links)"
+                            >
+                              <Pencil className="w-3 h-3" />
+                            </button>
+                          )}
+                        </h4>
+                      )}
                       <p className="text-xs text-zinc-400 font-medium">
                         Direct 1-Click Downloads · Opens destination in new tab
                       </p>
@@ -1486,23 +1789,23 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
                           quality: 'TV Episode',
                         });
                       }}
-                      className="p-2 rounded-xl bg-[#141824] hover:bg-[#1d2335] text-zinc-400 hover:text-rose-400 border border-white/5 hover:border-rose-500/30 transition-colors cursor-pointer shrink-0"
+                      className="min-w-[38px] min-h-[38px] p-2 rounded-xl bg-[#141824] hover:bg-[#1d2335] text-zinc-400 hover:text-rose-400 border border-white/5 hover:border-rose-500/30 transition-colors cursor-pointer shrink-0 inline-flex items-center justify-center"
                       title="Report broken or defective link for this episode"
                     >
                       <Flag className="w-3.5 h-3.5" />
                     </button>
                   </div>
 
-                  {/* Episode Overview (if available from TMDB/Trakt) */}
+                  {/* Episode Overview (if available from IMDb/TVMaze/TMDB/Trakt) */}
                   {ep.overview && (
-                    <p className="text-[11px] text-zinc-400/90 line-clamp-2 leading-relaxed">
+                    <p className="text-[11px] text-zinc-400/90 line-clamp-2 leading-relaxed text-left">
                       {ep.overview}
                     </p>
                   )}
 
                   {/* DIRECT ONE-CLICK QUALITY BUTTONS (No Release Drawer / No Second Screen) */}
                   <div
-                    className="flex flex-wrap items-center gap-2.5 pt-0.5"
+                    className="flex flex-wrap items-center gap-2 sm:gap-2.5 pt-0.5 max-w-full"
                     role="toolbar"
                     aria-label={`Direct download links for ${ep.sTag}`}
                   >
@@ -1561,7 +1864,7 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
                             href={sanitizeSafeUrl(url)}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className={`group inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all select-none border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 hover:scale-[1.02] shadow-sm cursor-pointer ${badgeStyle}`}
+                            className={`group inline-flex items-center gap-1.5 sm:gap-2 min-h-[40px] px-3 sm:px-3.5 py-2 rounded-xl text-xs font-bold transition-all select-none border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 hover:scale-[1.02] shadow-sm cursor-pointer max-w-full ${badgeStyle}`}
                             title={`Direct Download: ${combo.label} on ${serverName}${detectedSz ? ` (${detectedSz})` : ''}`}
                           >
                             <Download className="w-3.5 h-3.5 shrink-0 opacity-80 group-hover:opacity-100 group-hover:scale-110 transition-transform" />
@@ -1571,13 +1874,17 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
                                 {detectedSz}
                               </span>
                             )}
-                            <ExternalLink className="w-3 h-3 opacity-60 group-hover:opacity-100 transition-opacity" />
+                            <ExternalLink className="w-3 h-3 opacity-60 group-hover:opacity-100 transition-opacity shrink-0" />
                           </a>
                         );
                       })
                     ) : (
-                      <div className="flex items-center gap-3 text-xs text-zinc-500 italic py-1">
-                        <span>No direct download links available for this episode yet.</span>
+                      <div className="flex flex-wrap items-center gap-3 text-xs text-zinc-500 italic py-1">
+                        <span>
+                          {ep.unverifiedQualityCount > 0
+                            ? 'Quality metadata pending verification for this episode.'
+                            : 'No direct download links available for this episode yet.'}
+                        </span>
                         <button
                           type="button"
                           onClick={() => setIsRequestModalOpen(true)}
@@ -1589,13 +1896,26 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
                     )}
                   </div>
 
-                  {/* Admin link: Full release management, editing, and deletion in the Admin Panel */}
+                  {/* Admin link: Full release management, editing, deletion, and uncertain quality review in the Admin Panel */}
                   {(isEffectiveAdmin || isAdmin) && (
-                    <div className="pt-2 border-t border-white/5 mt-3 flex items-center justify-between text-xs text-zinc-400">
-                      <span className="flex items-center gap-1.5 text-zinc-400 font-medium">
-                        <Pencil className="w-3.5 h-3.5 text-amber-400" />
-                        {ep.releases.length} release(s) configured
-                      </span>
+                    <div className="pt-2 border-t border-white/5 mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-zinc-400">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="flex items-center gap-1.5 text-zinc-400 font-medium">
+                          <Pencil className="w-3.5 h-3.5 text-amber-400" />
+                          {ep.releases.length} release(s) configured
+                        </span>
+                        {ep.unverifiedQualityCount > 0 && (
+                          <span
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-300 border border-amber-500/30 text-[10px] font-bold"
+                            title="One or more release records have missing or unverified quality metadata and are hidden from quality buttons until reviewed."
+                          >
+                            <AlertTriangle className="w-3 h-3 text-amber-400" />
+                            <span>
+                              {ep.unverifiedQualityCount} unverified quality record(s) — Review in Admin
+                            </span>
+                          </span>
+                        )}
+                      </div>
                       <a
                         href={`/admin?title=${encodeURIComponent(titleDetails.name || titleDetails.title || '')}&id=${titleDetails.id}&season=${effectiveSeason}`}
                         className="text-xs font-bold text-amber-400 hover:text-amber-300 hover:underline flex items-center gap-1"
@@ -1611,7 +1931,7 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
             })
           ) : (
             /* Season-Level Empty State */
-            <div className="p-8 rounded-2xl bg-[#0c0d13] border border-white/5 text-center space-y-3.5 shadow-xl">
+            <div className="p-5 sm:p-8 rounded-2xl bg-[#0c0d13] border border-white/5 text-center space-y-3.5 shadow-xl">
               <div className="w-12 h-12 rounded-2xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center mx-auto text-blue-400">
                 <FileVideo className="w-6 h-6" />
               </div>
@@ -1625,7 +1945,7 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
                 <button
                   type="button"
                   onClick={() => setIsRequestModalOpen(true)}
-                  className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs uppercase tracking-wider shadow-lg shadow-blue-600/30 transition-all cursor-pointer"
+                  className="inline-flex items-center justify-center gap-2 w-full sm:w-auto px-6 py-2.5 min-h-[42px] rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs uppercase tracking-wider shadow-lg shadow-blue-600/30 transition-all cursor-pointer"
                 >
                   <Sparkles className="w-3.5 h-3.5" />
                   <span>Request Season {effectiveSeason} Links</span>
@@ -1633,7 +1953,7 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
                 {isEffectiveAdmin && (
                   <a
                     href={`/admin?title=${encodeURIComponent(titleDetails.name || titleDetails.title || '')}&id=${titleDetails.id}`}
-                    className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-zinc-800 border border-zinc-700 hover:border-amber-500/40 text-amber-300 hover:text-amber-200 text-xs font-bold transition-colors"
+                    className="inline-flex items-center justify-center gap-1.5 w-full sm:w-auto px-4 py-2.5 min-h-[42px] rounded-xl bg-zinc-800 border border-zinc-700 hover:border-amber-500/40 text-amber-300 hover:text-amber-200 text-xs font-bold transition-colors"
                   >
                     <Plus className="w-3.5 h-3.5" /> Upload in Admin ↗
                   </a>
@@ -1645,7 +1965,7 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
       </div>
 
       {/* Bottom Request Custom Quality & Report Card */}
-      <div className="p-5 sm:p-6 rounded-2xl bg-[#0b0e17] border border-blue-500/25 shadow-xl text-center space-y-3.5 relative overflow-hidden">
+      <div className="p-4 sm:p-6 rounded-2xl bg-[#0b0e17] border border-blue-500/25 shadow-xl text-center space-y-3.5 relative overflow-hidden">
         <div className="absolute top-0 right-0 w-36 h-36 bg-blue-500/10 rounded-full blur-3xl pointer-events-none" />
         <div className="w-10 h-10 rounded-full bg-blue-500/15 border border-blue-500/40 flex items-center justify-center mx-auto text-blue-400 shadow-md shadow-blue-500/10">
           <Info className="w-5 h-5" />
@@ -1653,11 +1973,11 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
         <p className="text-xs sm:text-sm text-zinc-200 font-medium max-w-md mx-auto leading-relaxed">
           Can&apos;t find the episode or quality you want? Request custom format (4K DV HDR, 1080p, Dual Audio) or report a broken link and our team will add it!
         </p>
-        <div className="flex flex-wrap items-center justify-center gap-3">
+        <div className="flex flex-wrap items-center justify-center gap-2.5 sm:gap-3">
           <button
             type="button"
             onClick={() => setIsRequestModalOpen(true)}
-            className="px-8 py-3 rounded-2xl bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-500 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs uppercase tracking-wider shadow-lg shadow-blue-600/30 transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
+            className="w-full sm:w-auto px-6 sm:px-8 py-3 min-h-[44px] rounded-2xl bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-500 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs uppercase tracking-wider shadow-lg shadow-blue-600/30 transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
           >
             REQUEST LINK
           </button>
@@ -1674,7 +1994,7 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
                 reportedUrl: currentUrl,
               });
             }}
-            className="px-6 py-3 rounded-2xl bg-[#141824] hover:bg-[#1d2335] text-zinc-300 hover:text-rose-400 border border-white/10 hover:border-rose-500/40 font-bold text-xs uppercase tracking-wider shadow-lg transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer inline-flex items-center gap-2"
+            className="w-full sm:w-auto justify-center px-6 py-3 min-h-[44px] rounded-2xl bg-[#141824] hover:bg-[#1d2335] text-zinc-300 hover:text-rose-400 border border-white/10 hover:border-rose-500/40 font-bold text-xs uppercase tracking-wider shadow-lg transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer inline-flex items-center gap-2"
             title="Report broken or defective link"
           >
             <Flag className="w-4 h-4 text-zinc-400 group-hover:text-rose-400" />
@@ -1685,8 +2005,8 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
 
       {/* Admin Quick Edit Modal */}
       {editingLink && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
-          <div className="w-full max-w-lg bg-zinc-950 border border-zinc-800 rounded-2xl p-6 space-y-5 shadow-2xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
+          <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto bg-zinc-950 border border-zinc-800 rounded-2xl p-4 sm:p-6 space-y-5 shadow-2xl">
             <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
               <div className="flex items-center gap-2 text-amber-400 font-bold">
                 <Pencil className="w-4 h-4" />
@@ -1703,7 +2023,7 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
             </div>
 
             <form onSubmit={handleSaveEdit} className="space-y-4">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-zinc-400 mb-1">
                     Season Number
@@ -1835,7 +2155,7 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
                 </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                 <div>
                   <label className="block text-[11px] font-semibold text-zinc-400 mb-1">Provider / OTT</label>
                   <input

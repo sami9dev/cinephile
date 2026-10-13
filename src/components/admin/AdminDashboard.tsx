@@ -338,8 +338,9 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
       urlsIntact: boolean;
       proposedOfficialTitle: string;
       proposedHeading: string;
-      source: 'tmdb' | 'trakt' | 'stored' | 'fallback';
+      source: 'imdb' | 'tvmaze' | 'tmdb' | 'trakt' | 'manual' | 'stored' | 'fallback';
       isVerified: boolean;
+      manualTitleVerified?: boolean;
       status: 'clean' | 'needs_update' | 'unverified';
       overview?: string;
     }>
@@ -350,6 +351,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
   const [batchApplyErrorMsg, setBatchApplyErrorMsg] = useState('');
   const [batchFilterStatus, setBatchFilterStatus] = useState<'all' | 'needs_update' | 'unverified'>('all');
   const [batchTargetSeason, setBatchTargetSeason] = useState<number | 'all'>('all');
+  const [batchForceOverwrite, setBatchForceOverwrite] = useState(false);
 
   // Whole Link Replacement State
   const [replaceRawLinksText, setReplaceRawLinksText] = useState('');
@@ -1563,9 +1565,10 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
   };
 
   // Batch Official Episode Titles: Fetch audit diff
-  const handleFetchBatchEpisodeDiff = async (targetSeason?: number | 'all') => {
+  const handleFetchBatchEpisodeDiff = async (targetSeason?: number | 'all', overrideForce?: boolean) => {
     if (!managingTitle) return;
     const seasonToQuery = targetSeason !== undefined ? targetSeason : batchTargetSeason;
+    const forceToUse = overrideForce !== undefined ? overrideForce : batchForceOverwrite;
     setIsBatchVerifying(true);
     setBatchApplyErrorMsg('');
     setBatchApplySuccessMsg('');
@@ -1575,6 +1578,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
       const queryParams = new URLSearchParams({
         movieId: showId,
         showTitle: managingTitle.title,
+        forceOverwrite: forceToUse ? 'true' : 'false',
       });
       if (seasonToQuery !== 'all') {
         queryParams.set('season', String(seasonToQuery));
@@ -1621,6 +1625,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
         seasonNumber: i.seasonNumber,
         episodeNumber: i.episodeNumber,
         episodeTitle: i.proposedOfficialTitle.trim(),
+        manualTitleVerified: i.source === 'manual' ? true : Boolean(i.manualTitleVerified),
       }));
 
       const res = await fetch('/api/admin/verify-episode-titles', {
@@ -1630,6 +1635,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
           action: 'apply',
           movieId: showId,
           updates,
+          forceOverwrite: batchForceOverwrite,
         }),
       });
 
@@ -1655,7 +1661,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
         );
 
         // Re-run preview to refresh clean state
-        handleFetchBatchEpisodeDiff(batchTargetSeason);
+        handleFetchBatchEpisodeDiff(batchTargetSeason, batchForceOverwrite);
       }
     } catch (err: any) {
       setBatchApplyErrorMsg(`Error applying batch updates: ${err?.message || err}`);
@@ -4213,7 +4219,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
             {/* Main Content Workspace */}
             <main className="flex-1 min-w-0 w-full space-y-6">
               {/* Top Bar Header Banner with Dark Cinematic Silhouette */}
-              <header className="bg-[#090d18]/85 backdrop-blur-2xl border border-cyan-500/30 hover:border-cyan-500/50 rounded-[28px] p-5 sm:p-6 lg:p-7 flex flex-col md:flex-row gap-5 items-start md:items-center justify-between shadow-2xl relative overflow-hidden transition-all duration-300">
+              <header className="bg-[#090d18]/85 backdrop-blur-2xl border border-cyan-500/30 hover:border-cyan-500/50 rounded-[28px] p-4 sm:p-6 lg:p-7 flex flex-col md:flex-row gap-4 sm:gap-5 items-start md:items-center justify-between shadow-2xl relative overflow-hidden transition-all duration-300">
                 {/* 1. Ambient Lighting Bloom */}
                 <div className="absolute -top-12 -right-12 w-96 h-96 bg-gradient-to-br from-cyan-500/20 via-blue-600/15 to-transparent rounded-full blur-3xl pointer-events-none" />
                 <div className="absolute -bottom-10 right-1/4 w-80 h-80 bg-rose-600/10 rounded-full blur-2xl pointer-events-none" />
@@ -4222,50 +4228,50 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                 <AdminCinemaSilhouetteGraphic className="absolute right-0 top-0 bottom-0 w-80 sm:w-96 md:w-[420px] h-full opacity-85 pointer-events-none" />
 
                 {/* Left Control Group */}
-                <div className="relative z-10 flex items-center gap-3.5 sm:gap-4 min-w-0">
+                <div className="relative z-10 flex items-center gap-3 sm:gap-4 min-w-0">
                   {/* Mobile Drawer Trigger (< lg) */}
                   <button
                     type="button"
                     onClick={() => setIsMobileNavOpen(!isMobileNavOpen)}
-                    className="lg:hidden p-2.5 rounded-xl bg-slate-900 border border-cyan-500/30 text-cyan-300 hover:text-white cursor-pointer shrink-0"
+                    className="lg:hidden p-2 sm:p-2.5 rounded-xl bg-slate-900 border border-cyan-500/30 text-cyan-300 hover:text-white cursor-pointer shrink-0"
                     aria-label="Toggle Navigation Menu"
                   >
                     {isMobileNavOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
                   </button>
 
-                  <div className="w-13 h-13 sm:w-14 sm:h-14 rounded-2xl bg-cyan-500/15 border-2 border-cyan-400/50 text-cyan-300 flex items-center justify-center shadow-[0_0_20px_rgba(6,182,212,0.35)] shrink-0 font-black text-2xl">
-                    <Shield className="w-7 h-7 text-cyan-400" />
+                  <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl bg-cyan-500/15 border-2 border-cyan-400/50 text-cyan-300 flex items-center justify-center shadow-[0_0_20px_rgba(6,182,212,0.35)] shrink-0 font-black text-2xl">
+                    <Shield className="w-6 h-6 sm:w-7 sm:h-7 text-cyan-400" />
                   </div>
 
                   <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2 mb-1.5">
+                    <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 mb-1 sm:mb-1.5">
                       <span className="px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10px] font-black uppercase tracking-wider shadow-[0_0_10px_rgba(245,158,11,0.2)]">
                         👑 MASTER ADMIN
                       </span>
-                      <span className="inline-flex items-center gap-1.5 text-[10px] text-emerald-400 font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" /> Role: Master Admin • Full Access
+                      <span className="inline-flex items-center gap-1.5 text-[10px] text-emerald-400 font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 truncate">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0" /> Full Access
                       </span>
                     </div>
-                    <h1 className="text-xl sm:text-2xl lg:text-3xl font-black text-white tracking-tight truncate">
+                    <h1 className="text-lg sm:text-2xl lg:text-3xl font-black text-white tracking-tight truncate">
                       Welcome, Shyam
                     </h1>
-                    <p className="text-xs text-slate-300/90 pt-1 leading-relaxed max-w-xl font-normal">
+                    <p className="text-xs text-slate-300/90 pt-0.5 sm:pt-1 leading-relaxed max-w-xl font-normal line-clamp-2 sm:line-clamp-none">
                       Manage your catalog, users, requests, and system integrations from a single control hub.
                     </p>
                   </div>
                 </div>
 
                 {/* Right Action Buttons */}
-                <div className="relative z-10 flex items-center gap-2.5 self-end md:self-center shrink-0">
+                <div className="relative z-10 flex flex-wrap items-center gap-2 sm:gap-2.5 self-start sm:self-end md:self-center shrink-0">
                   <Link
                     href="/"
-                    className="px-4 py-2.5 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-cyan-500/30 hover:border-cyan-400/60 text-slate-200 hover:text-white text-xs font-bold transition-all flex items-center gap-1.5 shadow-md cursor-pointer"
+                    className="px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-cyan-500/30 hover:border-cyan-400/60 text-slate-200 hover:text-white text-xs font-bold transition-all flex items-center gap-1.5 shadow-md cursor-pointer"
                   >
                     <ExternalLink className="w-3.5 h-3.5 text-cyan-400" /> <span className="hidden sm:inline">View</span> Public Site
                   </Link>
                   <button
                     onClick={handleLogout}
-                    className="px-4 py-2.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-400 text-xs font-bold transition-all flex items-center gap-1.5 shadow-md cursor-pointer hover:border-rose-400/50"
+                    className="px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-400 text-xs font-bold transition-all flex items-center gap-1.5 shadow-md cursor-pointer hover:border-rose-400/50"
                     suppressHydrationWarning
                   >
                     <Lock className="w-3.5 h-3.5 text-rose-400" /> Lock Panel
@@ -4383,9 +4389,9 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
       {activeTab === 'overview' && (
         <div className="space-y-6">
           {/* 6 Stat Cards Grid */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3.5">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 sm:gap-3.5">
             {/* 1. Total Tracked Titles */}
-            <div className="p-4.5 rounded-[22px] bg-[#090e1a]/90 backdrop-blur-xl border border-cyan-500/30 hover:border-cyan-400/60 shadow-[0_0_15px_rgba(6,182,212,0.1)] relative overflow-hidden transition-all duration-200 hover:scale-[1.02] flex flex-col justify-between">
+            <div className="p-3.5 sm:p-4.5 rounded-2xl sm:rounded-[22px] bg-[#090e1a]/90 backdrop-blur-xl border border-cyan-500/30 hover:border-cyan-400/60 shadow-[0_0_15px_rgba(6,182,212,0.1)] relative overflow-hidden transition-all duration-200 hover:scale-[1.02] flex flex-col justify-between min-w-0">
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <div className="w-7 h-7 rounded-lg bg-cyan-500/15 text-cyan-400 border border-cyan-500/30 flex items-center justify-center">
@@ -4402,7 +4408,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                 <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">
                   Total Tracked Titles
                 </span>
-                <p className="text-3xl font-black text-cyan-400 my-1" suppressHydrationWarning>
+                <p className="text-2xl sm:text-3xl font-black text-cyan-400 my-1 truncate" suppressHydrationWarning>
                   {isMounted ? (watchlist.length > 0 ? watchlist.length : 1) : 1}
                 </p>
               </div>
@@ -4415,7 +4421,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
             </div>
 
             {/* 2. Total Custom Links */}
-            <div className="p-4.5 rounded-[22px] bg-[#0d0a1c]/90 backdrop-blur-xl border border-purple-500/30 hover:border-purple-400/60 shadow-[0_0_15px_rgba(168,85,247,0.1)] relative overflow-hidden transition-all duration-200 hover:scale-[1.02] flex flex-col justify-between">
+            <div className="p-3.5 sm:p-4.5 rounded-2xl sm:rounded-[22px] bg-[#0d0a1c]/90 backdrop-blur-xl border border-purple-500/30 hover:border-purple-400/60 shadow-[0_0_15px_rgba(168,85,247,0.1)] relative overflow-hidden transition-all duration-200 hover:scale-[1.02] flex flex-col justify-between min-w-0">
               <div>
                 <div className="w-7 h-7 rounded-lg bg-purple-500/15 text-purple-400 border border-purple-500/30 flex items-center justify-center mb-2">
                   <Database className="w-3.5 h-3.5" />
@@ -4423,7 +4429,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                 <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">
                   Total Custom Links
                 </span>
-                <p className="text-3xl font-black text-purple-400 my-1">
+                <p className="text-2xl sm:text-3xl font-black text-purple-400 my-1 truncate">
                   {effectiveTotalLinks > 0 ? effectiveTotalLinks.toLocaleString() : '13,556'}
                 </p>
               </div>
@@ -4440,7 +4446,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
             {/* 3. User Requests */}
             <div
               onClick={() => setActiveTab('requests')}
-              className="p-4.5 rounded-[22px] bg-[#091417]/90 backdrop-blur-xl border border-teal-500/30 hover:border-teal-400/60 shadow-[0_0_15px_rgba(20,184,166,0.1)] relative overflow-hidden transition-all duration-200 hover:scale-[1.02] cursor-pointer flex flex-col justify-between group"
+              className="p-3.5 sm:p-4.5 rounded-2xl sm:rounded-[22px] bg-[#091417]/90 backdrop-blur-xl border border-teal-500/30 hover:border-teal-400/60 shadow-[0_0_15px_rgba(20,184,166,0.1)] relative overflow-hidden transition-all duration-200 hover:scale-[1.02] cursor-pointer flex flex-col justify-between group min-w-0"
             >
               <div>
                 <div className="flex items-center justify-between mb-2">
@@ -4452,7 +4458,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                 <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">
                   User Requests
                 </span>
-                <p className="text-3xl font-black text-teal-400 my-1">
+                <p className="text-2xl sm:text-3xl font-black text-teal-400 my-1 truncate">
                   {pendingRequestsCount > 0 ? pendingRequestsCount : (requestsList.length > 0 ? requestsList.length : 1)}
                 </p>
               </div>
@@ -4469,7 +4475,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
             {/* 4. Defective Links */}
             <div
               onClick={() => setActiveTab('reports')}
-              className="p-4.5 rounded-[22px] bg-[#170a10]/90 backdrop-blur-xl border border-rose-500/30 hover:border-rose-400/60 shadow-[0_0_15px_rgba(244,63,94,0.1)] relative overflow-hidden transition-all duration-200 hover:scale-[1.02] cursor-pointer flex flex-col justify-between group"
+              className="p-3.5 sm:p-4.5 rounded-2xl sm:rounded-[22px] bg-[#170a10]/90 backdrop-blur-xl border border-rose-500/30 hover:border-rose-400/60 shadow-[0_0_15px_rgba(244,63,94,0.1)] relative overflow-hidden transition-all duration-200 hover:scale-[1.02] cursor-pointer flex flex-col justify-between group min-w-0"
             >
               <div>
                 <div className="flex items-center justify-between mb-2">
@@ -4481,7 +4487,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                 <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">
                   Defective Links
                 </span>
-                <p className="text-3xl font-black text-rose-400 my-1">
+                <p className="text-2xl sm:text-3xl font-black text-rose-400 my-1 truncate">
                   {pendingReportsCount > 0 ? pendingReportsCount : (reportsList.length > 0 ? reportsList.length : 1)}
                 </p>
               </div>
@@ -4498,7 +4504,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
             {/* 5. User Accounts */}
             <div
               onClick={() => setActiveTab('users')}
-              className="p-4.5 rounded-[22px] bg-[#171209]/90 backdrop-blur-xl border border-amber-500/30 hover:border-amber-400/60 shadow-[0_0_15px_rgba(245,158,11,0.1)] relative overflow-hidden transition-all duration-200 hover:scale-[1.02] cursor-pointer flex flex-col justify-between group"
+              className="p-3.5 sm:p-4.5 rounded-2xl sm:rounded-[22px] bg-[#171209]/90 backdrop-blur-xl border border-amber-500/30 hover:border-amber-400/60 shadow-[0_0_15px_rgba(245,158,11,0.1)] relative overflow-hidden transition-all duration-200 hover:scale-[1.02] cursor-pointer flex flex-col justify-between group min-w-0"
             >
               <div>
                 <div className="flex items-center justify-between mb-2">
@@ -4510,7 +4516,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                 <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">
                   User Accounts
                 </span>
-                <p className="text-3xl font-black text-amber-400 my-1">
+                <p className="text-2xl sm:text-3xl font-black text-amber-400 my-1 truncate">
                   {registeredUsers.length > 0 ? registeredUsers.length : 4}
                 </p>
               </div>
@@ -4525,7 +4531,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
             </div>
 
             {/* 6. Active Admin */}
-            <div className="p-4.5 rounded-[22px] bg-[#100d1c]/90 backdrop-blur-xl border border-indigo-500/30 hover:border-indigo-400/60 shadow-[0_0_15px_rgba(99,102,241,0.1)] relative overflow-hidden transition-all duration-200 hover:scale-[1.02] flex flex-col justify-between">
+            <div className="p-3.5 sm:p-4.5 rounded-2xl sm:rounded-[22px] bg-[#100d1c]/90 backdrop-blur-xl border border-indigo-500/30 hover:border-indigo-400/60 shadow-[0_0_15px_rgba(99,102,241,0.1)] relative overflow-hidden transition-all duration-200 hover:scale-[1.02] flex flex-col justify-between min-w-0">
               <div>
                 <div className="w-7 h-7 rounded-lg bg-indigo-500/15 text-indigo-400 border border-indigo-500/30 flex items-center justify-center mb-2">
                   <ShieldCheck className="w-3.5 h-3.5" />
@@ -4533,7 +4539,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                 <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">
                   Active Admin
                 </span>
-                <p className="text-3xl font-black text-indigo-400 my-1">Shyam</p>
+                <p className="text-2xl sm:text-3xl font-black text-indigo-400 my-1 truncate">Shyam</p>
               </div>
               <span className="text-[11px] text-indigo-300/80 font-medium">Master Security Level</span>
               {/* Bottom-right indigo wave */}
@@ -4545,17 +4551,17 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
           </div>
 
           {/* Quick Title Jump & Manage (Full Width, Service Status Shifted to Sidebar) */}
-          <div className="w-full p-6 rounded-[26px] bg-[#090d18]/90 backdrop-blur-xl border border-cyan-500/30 shadow-2xl space-y-4">
+          <div className="w-full p-4 sm:p-6 rounded-2xl sm:rounded-[26px] bg-[#090d18]/90 backdrop-blur-xl border border-cyan-500/30 shadow-2xl space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 border-b border-cyan-500/15 pb-3">
               <div>
-                <h3 className="text-sm font-black text-white uppercase tracking-wider flex items-center gap-2">
-                  <LayoutGrid className="w-4 h-4 text-cyan-400" /> Quick Title Jump & Manage
+                <h3 className="text-sm font-black text-white uppercase tracking-wider flex flex-wrap items-center gap-2">
+                  <LayoutGrid className="w-4 h-4 text-cyan-400 shrink-0" /> Quick Title Jump & Manage
                   <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 font-mono font-bold">
                     {linkedTitlesTotal > 0 ? `${linkedTitlesTotal} Linked` : 'Catalog'}
                   </span>
                 </h3>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
                 <div className="relative">
                   <input
                     type="text"
@@ -10598,7 +10604,24 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                             </button>
                           </div>
 
-                          <div className="flex items-center gap-2">
+                          <div className="flex flex-wrap items-center gap-3">
+                            <label
+                              className="inline-flex items-center gap-1.5 text-[11px] text-zinc-300 cursor-pointer select-none bg-zinc-900/80 px-2.5 py-1.5 rounded-xl border border-zinc-800 hover:border-zinc-700"
+                              title="When unchecked, episodes with verified manual title corrections are protected from automatic bulk overwrites."
+                            >
+                              <input
+                                type="checkbox"
+                                checked={batchForceOverwrite}
+                                onChange={(e) => {
+                                  const nextVal = e.target.checked;
+                                  setBatchForceOverwrite(nextVal);
+                                  handleFetchBatchEpisodeDiff(batchTargetSeason, nextVal);
+                                }}
+                                className="rounded border-zinc-600 bg-zinc-800 text-amber-500 focus:ring-amber-500/40"
+                              />
+                              <span>Overwrite Manual Corrections</span>
+                            </label>
+
                             <button
                               type="button"
                               onClick={() => handleApplyBatchEpisodeTitles()}
@@ -10645,7 +10668,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                                     if (batchFilterStatus === 'unverified') return item.status === 'unverified';
                                     return true;
                                   })
-                                  .map((item, idx) => {
+                                  .map((item) => {
                                     const sTag = `S${String(item.seasonNumber).padStart(2, '0')}E${String(item.episodeNumber).padStart(2, '0')}`;
                                     return (
                                       <tr
@@ -10671,12 +10694,16 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                                             onChange={(e) => {
                                               const newTitle = e.target.value;
                                               setBatchEpisodeDiff((prev) =>
-                                                prev.map((it, iIdx) =>
-                                                  iIdx === idx
+                                                prev.map((it) =>
+                                                  it.seasonNumber === item.seasonNumber &&
+                                                  it.episodeNumber === item.episodeNumber
                                                     ? {
                                                         ...it,
                                                         proposedOfficialTitle: newTitle,
-                                                        proposedHeading: `${sTag} — ${newTitle}`,
+                                                        proposedHeading: `${sTag} · ${newTitle}`,
+                                                        source: 'manual',
+                                                        manualTitleVerified: true,
+                                                        isVerified: Boolean(newTitle.trim()),
                                                         status: newTitle.trim() ? 'needs_update' : 'unverified',
                                                       }
                                                     : it
@@ -10689,10 +10716,16 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                                         <td className="p-3 whitespace-nowrap">
                                           <span
                                             className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                                              item.source === 'tmdb'
+                                              item.source === 'imdb'
+                                                ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+                                                : item.source === 'tvmaze'
+                                                ? 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/30'
+                                                : item.source === 'tmdb'
                                                 ? 'bg-blue-500/15 text-blue-300 border border-blue-500/30'
                                                 : item.source === 'trakt'
                                                 ? 'bg-purple-500/15 text-purple-300 border border-purple-500/30'
+                                                : item.source === 'manual'
+                                                ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
                                                 : item.source === 'stored'
                                                 ? 'bg-zinc-700/50 text-zinc-300 border border-zinc-600/50'
                                                 : 'bg-zinc-800 text-zinc-500'

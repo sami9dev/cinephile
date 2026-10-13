@@ -1,4 +1,4 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import { Space_Grotesk, Bebas_Neue, Manrope } from 'next/font/google';
 import localFont from 'next/font/local';
 import './globals.css';
@@ -31,6 +31,12 @@ const manrope = Manrope({
   display: 'swap',
 });
 
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 5,
+};
+
 export const metadata: Metadata = {
   title: 'Cinephile - Discover Movies & TV, Where to Watch & Track Watchlist',
   description: 'Your ultimate cinema command center. Discover trending movies & TV shows, direct high-speed downloads in 4K UHD & 1080p, and streaming availability.',
@@ -52,6 +58,7 @@ export default function RootLayout({
       suppressHydrationWarning
     >
       <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
         <script
           dangerouslySetInnerHTML={{
             __html: `(function(){try{var t=localStorage.getItem('cinefuel_theme');if(t==='light'){document.documentElement.classList.remove('dark');document.documentElement.classList.add('light');}else{document.documentElement.classList.remove('light');document.documentElement.classList.add('dark');}}catch(e){}})();`,
@@ -65,13 +72,13 @@ export default function RootLayout({
         <link rel="dns-prefetch" href="https://upload.wikimedia.org" />
       </head>
       <body
-        className="font-ui bg-[#08090c] text-zinc-100 min-h-screen flex flex-col antialiased selection:bg-amber-500 selection:text-black"
+        className="font-ui bg-[#08090c] text-zinc-100 min-h-screen w-full max-w-full overflow-x-hidden flex flex-col antialiased selection:bg-amber-500 selection:text-black"
         suppressHydrationWarning
       >
         <AuthProvider>
           <WatchlistProvider>
             <Header />
-            <main className="flex-1 pt-16">{children}</main>
+            <main className="flex-1 pt-16 w-full max-w-full overflow-x-hidden min-w-0">{children}</main>
           </WatchlistProvider>
         </AuthProvider>
       </body>

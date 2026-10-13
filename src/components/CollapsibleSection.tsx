@@ -35,23 +35,23 @@ export const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({
   return (
     <div
       id={id}
-      className={`bg-[#0f121a] border border-zinc-800/80 rounded-2xl sm:rounded-3xl shadow-xl transition-all duration-200 overflow-hidden ${className}`}
+      className={`bg-[#0f121a] border border-zinc-800/80 rounded-2xl sm:rounded-3xl shadow-xl transition-all duration-200 overflow-hidden w-full max-w-full min-w-0 ${className}`}
     >
       {/* Clickable Accordion Header */}
       <div
         onClick={() => setIsOpen((prev) => !prev)}
-        className={`w-full p-4 sm:p-5 sm:px-6 cursor-pointer select-none hover:bg-zinc-900/40 transition-colors ${
+        className={`w-full p-3.5 sm:p-5 sm:px-6 cursor-pointer select-none hover:bg-zinc-900/40 transition-colors ${
           isOpen ? 'border-b border-zinc-800/80' : ''
         } ${headerClassName}`}
       >
-        <div className="flex flex-col gap-2.5">
+        <div className="flex flex-col gap-2.5 min-w-0">
           {/* Main Header Row: Title & Icon on Left; Controls on Right */}
-          <div className="flex items-center justify-between gap-3 min-w-0">
+          <div className="flex items-center justify-between gap-2.5 sm:gap-3 min-w-0">
             {/* Left Side: Icon, Title, Subtitle */}
-            <div className="flex items-center gap-2.5 sm:gap-3.5 min-w-0 flex-1">
+            <div className="flex items-center gap-2 sm:gap-3.5 min-w-0 flex-1">
               {icon && <div className="shrink-0 text-amber-400">{icon}</div>}
               <div className="min-w-0 flex-1">
-                <div className="text-base sm:text-lg font-bold text-white tracking-tight flex items-center gap-2 break-words">
+                <div className="text-sm sm:text-lg font-bold text-white tracking-tight flex flex-wrap items-center gap-1.5 sm:gap-2 break-words min-w-0">
                   {title}
                 </div>
                 {subtitle && isOpen && (
@@ -82,9 +82,9 @@ export const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({
             </div>
 
             {/* Mobile Top Right: Badge & Chevron */}
-            <div className="flex sm:hidden items-center gap-2 shrink-0">
+            <div className="flex sm:hidden items-center gap-1.5 shrink-0">
               {badge && (
-                <span className="px-2.5 py-0.5 rounded-full bg-zinc-900/90 border border-zinc-700/80 text-zinc-300 text-xs font-semibold pointer-events-none">
+                <span className="px-2 py-0.5 rounded-full bg-zinc-900/90 border border-zinc-700/80 text-zinc-300 text-[11px] font-semibold pointer-events-none whitespace-nowrap">
                   {badge}
                 </span>
               )}
@@ -116,7 +116,7 @@ export const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({
 
       {/* Expandable Content Body */}
       {isOpen && (
-        <div className={`p-4 sm:p-6 space-y-4 animate-in fade-in-50 duration-200 ${contentClassName}`}>
+        <div className={`p-3.5 sm:p-6 space-y-4 animate-in fade-in-50 duration-200 min-w-0 max-w-full ${contentClassName}`}>
           {children}
         </div>
       )}

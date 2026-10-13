@@ -331,7 +331,7 @@ export function extractEpisodeTitle(filename: string): string {
 export function detectQuality(title: string, defaultQuality?: string, url?: string): string {
   const urlFn = extractFilenameFromUrl(url);
   const text = `${title || ''} ${urlFn}`.trim();
-  if (!text) return defaultQuality || '1080p WEB-DL';
+  if (!text) return defaultQuality || '';
 
   const tags: string[] = [];
   const cleanForQuality = stripWatermarks(text);
@@ -362,15 +362,17 @@ export function detectQuality(title: string, defaultQuality?: string, url?: stri
   else if (/(?:^|[\s._\-[\]()])(?:web-dl|webdl|webrip|web)(?:[\s._\-[\]()]|$)/i.test(cleanForQuality)) tags.push('WEB-DL');
   else if (/(?:^|[\s._\-[\]()])hdtv(?:[\s._\-[\]()]|$)/i.test(cleanForQuality)) tags.push('HDTV');
 
-  // 3. Dynamic Range (Strict explicit identification only - NEVER default to SDR!)
+  // 3. Dynamic Range (Strict explicit identification only - NEVER default to SDR and never conflate DV with HDR!)
   const hasDV = /(?:^|[\s._\-[\]()])(?:dv|dovi|dolby[.\s_-]*vision|hdr[-._]dv|dv[-._]hdr)(?:[\s._\-[\]()]|$)/i.test(cleanForQuality);
   const hasHDR = /(?:^|[\s._\-[\]()])(?:hdr10\+|hdr10|hdr|hlg)(?:[\s._\-[\]()]|$)/i.test(cleanForQuality);
   const hasSDR = /(?:^|[\s._\-[\]()])sdr(?:[\s._\-[\]()]|$)/i.test(cleanForQuality);
 
   if ((hasDV || hasHDR) && hasSDR) {
     tags.push('Conflict');
-  } else if (hasDV) {
+  } else if (hasDV && hasHDR) {
     tags.push('DV HDR');
+  } else if (hasDV) {
+    tags.push('DV');
   } else if (hasHDR) {
     tags.push('HDR');
   } else if (hasSDR) {
@@ -394,7 +396,7 @@ export function detectQuality(title: string, defaultQuality?: string, url?: stri
     return tags.join(' • ');
   }
 
-  return defaultQuality || '1080p WEB-DL';
+  return defaultQuality || '';
 }
 
 /**

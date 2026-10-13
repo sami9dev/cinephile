@@ -81,61 +81,59 @@ export const LatestUploadsGrid: React.FC<LatestUploadsGridProps> = ({
   return (
     <div className="space-y-6">
       {/* Filter Tabs matching Ola Movies styling */}
-      <div className="flex items-center justify-between gap-4 border-b border-zinc-800/80 pb-3">
-        {/* Filter Pills Container */}
-        <div
-          ref={dropdownRef}
-          className="relative flex items-center gap-1.5 p-1 rounded-2xl bg-[#14121f] border border-[#2b2542] max-w-full overflow-x-auto no-scrollbar scroll-smooth shadow-inner"
-        >
-          {/* 1. Home / All */}
-          <Link
-            href="/"
-            onClick={() => setOpenDropdown(null)}
-            className={`font-ui flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold uppercase tracking-wider transition-all whitespace-nowrap shrink-0 ${
-              effectiveTab === 'home'
-                ? 'bg-purple-600 text-white shadow-md shadow-purple-600/30'
-                : 'text-zinc-400 hover:text-white hover:bg-zinc-800/60'
-            }`}
-          >
-            <Home className="w-3.5 h-3.5" />
-            Home
-          </Link>
+      <div className="flex items-center justify-between gap-4 border-b border-zinc-800/80 pb-3 min-w-0 max-w-full">
+        {/* Outer wrapper for non-clipped dropdown popovers */}
+        <div ref={dropdownRef} className="relative max-w-full min-w-0">
+          {/* Horizontally Scrollable Filter Pills Strip */}
+          <div className="flex items-center gap-1.5 p-1 rounded-2xl bg-[#14121f] border border-[#2b2542] max-w-full overflow-x-auto no-scrollbar scroll-smooth shadow-inner">
+            {/* 1. Home / All */}
+            <Link
+              href="/"
+              onClick={() => setOpenDropdown(null)}
+              className={`font-ui flex items-center gap-1.5 px-3 sm:px-3.5 py-2 sm:py-1.5 min-h-[36px] rounded-lg text-xs font-semibold uppercase tracking-wider transition-all whitespace-nowrap shrink-0 ${
+                effectiveTab === 'home'
+                  ? 'bg-purple-600 text-white shadow-md shadow-purple-600/30'
+                  : 'text-zinc-400 hover:text-white hover:bg-zinc-800/60'
+              }`}
+            >
+              <Home className="w-3.5 h-3.5" />
+              Home
+            </Link>
 
-          {/* 2. Movies */}
-          <Link
-            href="/?tab=movie"
-            onClick={() => setOpenDropdown(null)}
-            className={`font-ui flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold uppercase tracking-wider transition-all whitespace-nowrap shrink-0 ${
-              effectiveTab === 'movie'
-                ? 'bg-amber-500 text-black shadow-md shadow-amber-500/30 font-bold'
-                : 'text-zinc-400 hover:text-white hover:bg-zinc-800/60'
-            }`}
-          >
-            <Film className="w-3.5 h-3.5" />
-            Movies
-          </Link>
+            {/* 2. Movies */}
+            <Link
+              href="/?tab=movie"
+              onClick={() => setOpenDropdown(null)}
+              className={`font-ui flex items-center gap-1.5 px-3 sm:px-3.5 py-2 sm:py-1.5 min-h-[36px] rounded-lg text-xs font-semibold uppercase tracking-wider transition-all whitespace-nowrap shrink-0 ${
+                effectiveTab === 'movie'
+                  ? 'bg-amber-500 text-black shadow-md shadow-amber-500/30 font-bold'
+                  : 'text-zinc-400 hover:text-white hover:bg-zinc-800/60'
+              }`}
+            >
+              <Film className="w-3.5 h-3.5" />
+              Movies
+            </Link>
 
-          {/* 3. TV Series */}
-          <Link
-            href="/?tab=tv"
-            onClick={() => setOpenDropdown(null)}
-            className={`font-ui flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold uppercase tracking-wider transition-all whitespace-nowrap shrink-0 ${
-              effectiveTab === 'tv'
-                ? 'bg-sky-500 text-black shadow-md shadow-sky-500/30 font-bold'
-                : 'text-zinc-400 hover:text-white hover:bg-zinc-800/60'
-            }`}
-          >
-            <Tv className="w-3.5 h-3.5" />
-            TV Series
-          </Link>
+            {/* 3. TV Series */}
+            <Link
+              href="/?tab=tv"
+              onClick={() => setOpenDropdown(null)}
+              className={`font-ui flex items-center gap-1.5 px-3 sm:px-3.5 py-2 sm:py-1.5 min-h-[36px] rounded-lg text-xs font-semibold uppercase tracking-wider transition-all whitespace-nowrap shrink-0 ${
+                effectiveTab === 'tv'
+                  ? 'bg-sky-500 text-black shadow-md shadow-sky-500/30 font-bold'
+                  : 'text-zinc-400 hover:text-white hover:bg-zinc-800/60'
+              }`}
+            >
+              <Tv className="w-3.5 h-3.5" />
+              TV Series
+            </Link>
 
-          {/* 4. OTT (with Dropdown trigger) */}
-          <div className="relative shrink-0">
-            <div className="flex items-center">
+            {/* 4. OTT (with Dropdown trigger) */}
+            <div className="relative shrink-0 flex items-center">
               <Link
                 href="/?tab=ott"
                 onClick={() => setOpenDropdown(null)}
-                className={`font-ui flex items-center gap-1.5 pl-3.5 pr-1.5 py-1.5 rounded-l-lg text-xs font-semibold uppercase tracking-wider transition-all whitespace-nowrap ${
+                className={`font-ui flex items-center gap-1.5 pl-3 sm:pl-3.5 pr-1.5 py-2 sm:py-1.5 min-h-[36px] rounded-l-lg text-xs font-semibold uppercase tracking-wider transition-all whitespace-nowrap ${
                   effectiveTab === 'ott'
                     ? 'bg-rose-600 text-white shadow-md shadow-rose-600/30 font-bold'
                     : 'text-zinc-400 hover:text-white hover:bg-zinc-800/60'
@@ -150,7 +148,7 @@ export const LatestUploadsGrid: React.FC<LatestUploadsGridProps> = ({
                   e.stopPropagation();
                   setOpenDropdown(openDropdown === 'ott' ? null : 'ott');
                 }}
-                className={`py-1.5 pr-2.5 pl-1 rounded-r-lg text-xs transition-all ${
+                className={`py-2 sm:py-1.5 pr-2.5 pl-1.5 min-h-[36px] flex items-center rounded-r-lg text-xs transition-all ${
                   effectiveTab === 'ott'
                     ? 'bg-rose-600 text-white shadow-md'
                     : 'text-zinc-400 hover:text-white hover:bg-zinc-800/60'
@@ -162,79 +160,40 @@ export const LatestUploadsGrid: React.FC<LatestUploadsGridProps> = ({
               </button>
             </div>
 
-            {/* OTT Dropdown Menu */}
-            {openDropdown === 'ott' && (
-              <div className="absolute right-0 top-full mt-2 w-52 py-1.5 rounded-xl bg-[#14121f] border border-[#2b2542] shadow-2xl z-50 backdrop-blur-md">
-                <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-zinc-500 border-b border-zinc-800">
-                  Streaming Platforms
-                </div>
-                {OTT_PLATFORMS.map((platform) => {
-                  const href =
-                    platform.ott === 'all'
-                      ? '/?tab=ott'
-                      : `/?tab=ott&ott=${platform.ott}`;
-                  const isSelected =
-                    effectiveTab === 'ott' &&
-                    (platform.ott === 'all'
-                      ? !activeOtt || activeOtt === 'all'
-                      : activeOtt === platform.ott);
-                  return (
-                    <Link
-                      key={platform.ott}
-                      href={href}
-                      onClick={() => setOpenDropdown(null)}
-                      className={`flex items-center justify-between px-3 py-2 text-xs transition-all ${
-                        isSelected
-                          ? 'bg-rose-600/20 text-rose-400 font-bold'
-                          : 'text-zinc-300 hover:bg-zinc-800/80 hover:text-white'
-                      }`}
-                    >
-                      <span className="flex items-center gap-2">
-                        <span>{platform.badge}</span>
-                        <span>{platform.label}</span>
-                      </span>
-                    </Link>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+            {/* 5. Top IMDb */}
+            <Link
+              href="/?tab=top_imdb"
+              onClick={() => setOpenDropdown(null)}
+              className={`font-ui flex items-center gap-1.5 px-3 sm:px-3.5 py-2 sm:py-1.5 min-h-[36px] rounded-lg text-xs font-semibold uppercase tracking-wider transition-all whitespace-nowrap shrink-0 ${
+                effectiveTab === 'top_imdb'
+                  ? 'bg-yellow-500 text-black shadow-md shadow-yellow-500/30 font-bold'
+                  : 'text-zinc-400 hover:text-white hover:bg-zinc-800/60'
+              }`}
+            >
+              <Star className="w-3.5 h-3.5 fill-yellow-400 text-yellow-400" />
+              Top IMDb
+            </Link>
 
-          {/* 5. Top IMDb */}
-          <Link
-            href="/?tab=top_imdb"
-            onClick={() => setOpenDropdown(null)}
-            className={`font-ui flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold uppercase tracking-wider transition-all whitespace-nowrap shrink-0 ${
-              effectiveTab === 'top_imdb'
-                ? 'bg-yellow-500 text-black shadow-md shadow-yellow-500/30 font-bold'
-                : 'text-zinc-400 hover:text-white hover:bg-zinc-800/60'
-            }`}
-          >
-            <Star className="w-3.5 h-3.5 fill-yellow-400 text-yellow-400" />
-            Top IMDb
-          </Link>
+            {/* 6. Anime */}
+            <Link
+              href="/?tab=anime"
+              onClick={() => setOpenDropdown(null)}
+              className={`font-ui flex items-center gap-1.5 px-3 sm:px-3.5 py-2 sm:py-1.5 min-h-[36px] rounded-lg text-xs font-semibold uppercase tracking-wider transition-all whitespace-nowrap shrink-0 ${
+                effectiveTab === 'anime'
+                  ? 'bg-pink-600 text-white shadow-md shadow-pink-600/30 font-bold'
+                  : 'text-zinc-400 hover:text-white hover:bg-zinc-800/60'
+              }`}
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              Anime
+            </Link>
 
-          {/* 6. Anime */}
-          <Link
-            href="/?tab=anime"
-            onClick={() => setOpenDropdown(null)}
-            className={`font-ui flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold uppercase tracking-wider transition-all whitespace-nowrap shrink-0 ${
-              effectiveTab === 'anime'
-                ? 'bg-pink-600 text-white shadow-md shadow-pink-600/30 font-bold'
-                : 'text-zinc-400 hover:text-white hover:bg-zinc-800/60'
-            }`}
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            Anime
-          </Link>
-
-          {/* 7. Quality (with Dropdown trigger) */}
-          <div className="relative shrink-0">
-            <div className="flex items-center">
+            {/* 7. Quality (with Dropdown trigger) */}
+            <div className="relative shrink-0 flex items-center">
               <Link
                 href="/?tab=quality"
                 onClick={() => setOpenDropdown(null)}
-                className={`font-ui flex items-center gap-1.5 pl-3.5 pr-1.5 py-1.5 rounded-l-lg text-xs font-semibold uppercase tracking-wider transition-all whitespace-nowrap ${
+                className={`font-ui flex items-center gap-1.5 pl-3 sm:pl-3.5 pr-1.5 py-2 sm:py-1.5 min-h-[36px] rounded-l-lg text-xs font-semibold uppercase tracking-wider transition-all whitespace-nowrap ${
                   effectiveTab === 'quality'
                     ? 'bg-emerald-500 text-black shadow-md shadow-emerald-500/30 font-bold'
                     : 'text-zinc-400 hover:text-white hover:bg-zinc-800/60'
@@ -249,7 +208,7 @@ export const LatestUploadsGrid: React.FC<LatestUploadsGridProps> = ({
                   e.stopPropagation();
                   setOpenDropdown(openDropdown === 'quality' ? null : 'quality');
                 }}
-                className={`py-1.5 pr-2.5 pl-1 rounded-r-lg text-xs transition-all ${
+                className={`py-2 sm:py-1.5 pr-2.5 pl-1.5 min-h-[36px] flex items-center rounded-r-lg text-xs transition-all ${
                   effectiveTab === 'quality'
                     ? 'bg-emerald-500 text-black shadow-md'
                     : 'text-zinc-400 hover:text-white hover:bg-zinc-800/60'
@@ -260,44 +219,81 @@ export const LatestUploadsGrid: React.FC<LatestUploadsGridProps> = ({
                 <ChevronDown className="w-3 h-3 opacity-80" />
               </button>
             </div>
-
-            {/* Quality Dropdown Menu */}
-            {openDropdown === 'quality' && (
-              <div className="absolute right-0 top-full mt-2 w-52 py-1.5 rounded-xl bg-[#14121f] border border-[#2b2542] shadow-2xl z-50 backdrop-blur-md">
-                <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-zinc-500 border-b border-zinc-800">
-                  Select Resolution
-                </div>
-                {QUALITY_PRESETS.map((preset) => {
-                  const href =
-                    preset.quality === ''
-                      ? '/?tab=quality'
-                      : `/?tab=quality&quality=${preset.quality}`;
-                  const isSelected =
-                    effectiveTab === 'quality' &&
-                    (preset.quality === ''
-                      ? !activeQuality || activeQuality === '4k'
-                      : activeQuality === preset.quality);
-                  return (
-                    <Link
-                      key={preset.label}
-                      href={href}
-                      onClick={() => setOpenDropdown(null)}
-                      className={`flex items-center justify-between px-3 py-2 text-xs transition-all ${
-                        isSelected
-                          ? 'bg-emerald-500/20 text-emerald-400 font-bold'
-                          : 'text-zinc-300 hover:bg-zinc-800/80 hover:text-white'
-                      }`}
-                    >
-                      <span className="flex items-center gap-2">
-                        <span>{preset.badge}</span>
-                        <span>{preset.label}</span>
-                      </span>
-                    </Link>
-                  );
-                })}
-              </div>
-            )}
           </div>
+
+          {/* OTT Dropdown Menu (Rendered outside overflow-x-auto container to prevent clipping) */}
+          {openDropdown === 'ott' && (
+            <div className="absolute left-0 sm:left-auto sm:right-24 top-full mt-2 w-56 max-w-[calc(100vw-2rem)] py-1.5 rounded-xl bg-[#14121f] border border-[#2b2542] shadow-2xl z-50 backdrop-blur-md">
+              <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-zinc-500 border-b border-zinc-800">
+                Streaming Platforms
+              </div>
+              {OTT_PLATFORMS.map((platform) => {
+                const href =
+                  platform.ott === 'all'
+                    ? '/?tab=ott'
+                    : `/?tab=ott&ott=${platform.ott}`;
+                const isSelected =
+                  effectiveTab === 'ott' &&
+                  (platform.ott === 'all'
+                    ? !activeOtt || activeOtt === 'all'
+                    : activeOtt === platform.ott);
+                return (
+                  <Link
+                    key={platform.ott}
+                    href={href}
+                    onClick={() => setOpenDropdown(null)}
+                    className={`flex items-center justify-between px-3 py-2.5 text-xs transition-all ${
+                      isSelected
+                        ? 'bg-rose-600/20 text-rose-400 font-bold'
+                        : 'text-zinc-300 hover:bg-zinc-800/80 hover:text-white'
+                    }`}
+                  >
+                    <span className="flex items-center gap-2">
+                      <span>{platform.badge}</span>
+                      <span>{platform.label}</span>
+                    </span>
+                  </Link>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Quality Dropdown Menu (Rendered outside overflow-x-auto container to prevent clipping) */}
+          {openDropdown === 'quality' && (
+            <div className="absolute right-0 top-full mt-2 w-56 max-w-[calc(100vw-2rem)] py-1.5 rounded-xl bg-[#14121f] border border-[#2b2542] shadow-2xl z-50 backdrop-blur-md">
+              <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-zinc-500 border-b border-zinc-800">
+                Select Resolution
+              </div>
+              {QUALITY_PRESETS.map((preset) => {
+                const href =
+                  preset.quality === ''
+                    ? '/?tab=quality'
+                    : `/?tab=quality&quality=${preset.quality}`;
+                const isSelected =
+                  effectiveTab === 'quality' &&
+                  (preset.quality === ''
+                    ? !activeQuality || activeQuality === '4k'
+                    : activeQuality === preset.quality);
+                return (
+                  <Link
+                    key={preset.label}
+                    href={href}
+                    onClick={() => setOpenDropdown(null)}
+                    className={`flex items-center justify-between px-3 py-2.5 text-xs transition-all ${
+                      isSelected
+                        ? 'bg-emerald-500/20 text-emerald-400 font-bold'
+                        : 'text-zinc-300 hover:bg-zinc-800/80 hover:text-white'
+                    }`}
+                  >
+                    <span className="flex items-center gap-2">
+                      <span>{preset.badge}</span>
+                      <span>{preset.label}</span>
+                    </span>
+                  </Link>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
 

@@ -3,6 +3,7 @@ account_id = "46f7bef008a04d13a6bd134c3a291006"
 main = ".open-next/worker.js"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
+keep_vars = true
 
 [assets]
 directory = ".open-next/assets"
@@ -18,7 +19,7 @@ MONGODB_URI = "mongodb+srv://shyam:shyam081@cluster0.fiwla4n.mongodb.net/?retryW
 MONGODB_DATABASE = "cinefuel"
 UPSTASH_REDIS_REST_URL = "https://nearby-wren-184114.upstash.io"
 UPSTASH_REDIS_REST_TOKEN = "gQAAAAAAAs8yAAIgcDJjOWYwZjkyNzlhNmQ0NTk2YTE2ZTAwNGFhODA0NGIxYg"
-TELEGRAM_BOT_TOKEN = ""
+# TELEGRAM_BOT_TOKEN is bound as an encrypted Worker secret via wrangler secret put TELEGRAM_BOT_TOKEN
 TELEGRAM_BOT_USERNAME = "CineFlue_bot"
 ADMIN_USER = "shyam"
 ADMIN_PASSWORD = "Shyam081"

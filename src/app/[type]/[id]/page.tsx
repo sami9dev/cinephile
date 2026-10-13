@@ -56,9 +56,9 @@ export default async function TitleDetailPage({ params }: PageProps) {
         </div>
 
         {/* Content Box */}
-        <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 w-full flex flex-col md:flex-row gap-6 md:gap-8 items-center md:items-start pt-12 pb-16">
+        <div className="relative max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 w-full flex flex-col md:flex-row gap-6 md:gap-8 items-center md:items-start pt-8 sm:pt-12 pb-16 min-w-0">
           {/* Poster Card */}
-          <div className="w-44 sm:w-56 md:w-64 shrink-0 rounded-2xl overflow-hidden shadow-2xl border-2 border-white/10 bg-zinc-900 group relative">
+          <div className="w-40 sm:w-56 md:w-64 max-w-[65vw] shrink-0 rounded-2xl overflow-hidden shadow-2xl border-2 border-white/10 bg-zinc-900 group relative">
             <Image
               src={posterUrl}
               alt={title}
@@ -70,9 +70,9 @@ export default async function TitleDetailPage({ params }: PageProps) {
           </div>
 
           {/* Text & Meta */}
-          <div className="flex-1 flex flex-col items-center md:items-start text-center md:text-left space-y-3 w-full">
+          <div className="flex-1 min-w-0 flex flex-col items-center md:items-start text-center md:text-left space-y-3 w-full max-w-full">
             {/* Badges */}
-            <div className="flex flex-wrap items-center justify-center md:justify-start gap-2 text-xs font-semibold">
+            <div className="flex flex-wrap items-center justify-center md:justify-start gap-2 text-xs font-semibold max-w-full">
               <span className="font-ui px-2.5 py-1 rounded-md bg-amber-500 text-black uppercase font-bold tracking-wider flex items-center gap-1">
                 {type === 'tv' ? <Tv className="w-3 h-3" /> : <Film className="w-3 h-3" />}
                 {type === 'tv' ? 'TV Series' : 'Movie'}
@@ -103,20 +103,20 @@ export default async function TitleDetailPage({ params }: PageProps) {
             </div>
 
             {/* Title - Cinematic Bebas Neue */}
-            <h1 className="font-display text-4xl sm:text-5xl md:text-6xl lg:text-7xl text-white uppercase tracking-wider leading-[0.95] drop-shadow-md">
+            <h1 className="font-display text-3xl sm:text-5xl md:text-6xl lg:text-7xl text-white uppercase tracking-wider leading-[0.95] drop-shadow-md break-words max-w-full">
               {title}
             </h1>
 
             {/* Tagline */}
             {titleDetails.tagline && (
-              <p className="font-meta text-sm sm:text-base italic text-amber-300/90 font-medium">
+              <p className="font-meta text-sm sm:text-base italic text-amber-300/90 font-medium break-words max-w-full">
                 &quot;{titleDetails.tagline}&quot;
               </p>
             )}
 
             {/* Genres */}
             {titleDetails.genres && titleDetails.genres.length > 0 && (
-              <div className="flex flex-wrap justify-center md:justify-start gap-1.5 pt-1">
+              <div className="flex flex-wrap justify-center md:justify-start gap-1.5 pt-1 max-w-full">
                 {titleDetails.genres.map((g) => (
                   <Link
                     key={g.id}
@@ -130,7 +130,7 @@ export default async function TitleDetailPage({ params }: PageProps) {
             )}
 
             {/* TV Series Season & Episode Vault / Movie Direct Download Links */}
-            <div className="w-full pt-3">
+            <div className="w-full max-w-full min-w-0 pt-3">
               <CustomLinksManager titleDetails={titleDetails} />
             </div>
           </div>

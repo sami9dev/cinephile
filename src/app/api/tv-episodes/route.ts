@@ -1,79 +1,65 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getSeasonEpisodes } from '@/lib/tmdb';
-import { fetchTraktSeasonEpisodes } from '@/lib/trakt';
-
-export const dynamic = 'force-dynamic';
+import { resolveSeasonEpisodes, cleanSeriesQueryTitle } from '@/lib/episodeTitleResolver';
+import { getLinksFromDatabase } from '@/lib/redisDb';
 
 export async function GET(request: NextRequest) {
+  const { searchParams } = new URL(request.url);
+  const id = searchParams.get('id') || searchParams.get('movieId');
+  const imdbId = searchParams.get('imdbId') || undefined;
+  const season = parseInt(searchParams.get('season') || '1', 10);
+  let title = searchParams.get('title') || searchParams.get('query') || undefined;
+  const year = searchParams.get('year') || undefined;
+
+  if (!id && !imdbId && !title) {
+    return NextResponse.json({ success: false, error: 'Missing id, imdbId, or title' }, { status: 400 });
+  }
+
   try {
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id') || searchParams.get('tvId') || searchParams.get('movieId');
-    const seasonRaw = searchParams.get('season') || searchParams.get('seasonNumber') || '1';
-    const query = searchParams.get('title') || searchParams.get('query') || undefined;
-
-    if (!id && !query) {
-      return NextResponse.json(
-        { success: false, error: 'A TV show id or title query is required.' },
-        { status: 400 }
-      );
-    }
-
-    const season = Math.max(0, parseInt(seasonRaw, 10) || 1);
-
-    // 1. Try TMDB API first if id is numeric
-    if (id && /^\d+$/.test(id.trim())) {
-      const tmdbRes = await getSeasonEpisodes(id.trim(), season);
-      if (tmdbRes && Array.isArray(tmdbRes.episodes) && tmdbRes.episodes.length > 0) {
-        const response = NextResponse.json({
-          success: true,
-          season,
-          source: 'tmdb',
-          episodes: tmdbRes.episodes.map((ep) => ({
-            episodeNumber: ep.episode_number,
-            title: ep.name || '',
-            overview: ep.overview || '',
-          })),
-        });
-        response.headers.set('Cache-Control', 'public, s-maxage=86400, stale-while-revalidate=43200');
-        return response;
+    // If title wasn't provided, attempt to infer show title from stored database records
+    if (!title && id) {
+      try {
+        const dbRes = await getLinksFromDatabase(id);
+        const links: Array<{ movieTitle?: string; title?: string }> = Array.isArray(dbRes.links)
+          ? dbRes.links
+          : [];
+        const sample = links.find((l) => l.movieTitle) || links[0];
+        if (sample?.movieTitle) {
+          title = String(sample.movieTitle).trim();
+        } else if (sample?.title) {
+          title = cleanSeriesQueryTitle(sample.title);
+        }
+      } catch {
+        // Ignore database lookup error
       }
     }
 
-    // 2. Try Trakt API fallback (supports TMDB id, IMDb id, or title query)
-    const traktRes = await fetchTraktSeasonEpisodes({
-      tmdbId: id && /^\d+$/.test(id.trim()) ? id.trim() : undefined,
-      imdbId: id && id.trim().startsWith('tt') ? id.trim() : undefined,
-      query: query || (id && !/^\d+$/.test(id.trim()) ? id.trim() : undefined),
-      season,
+    const resolved = await resolveSeasonEpisodes({
+      tmdbId: id || undefined,
+      imdbId,
+      query: title,
+      season: isNaN(season) ? 1 : season,
+      year,
     });
-
-    if (traktRes.success && Array.isArray(traktRes.episodes) && traktRes.episodes.length > 0) {
-      const response = NextResponse.json({
-        success: true,
-        season,
-        source: 'trakt',
-        showTitle: traktRes.showTitle,
-        episodes: traktRes.episodes.map((ep) => ({
-          episodeNumber: ep.episodeNumber,
-          title: ep.title || '',
-          overview: ep.overview || '',
-        })),
-      });
-      response.headers.set('Cache-Control', 'public, s-maxage=86400, stale-while-revalidate=43200');
-      return response;
-    }
 
     return NextResponse.json({
-      success: false,
-      season,
-      episodes: [],
-      error: traktRes.error || 'No verified episode metadata found for this season.',
+      success: true,
+      season_number: resolved.season_number,
+      imdbId: resolved.imdbId,
+      showTitle: resolved.showTitle,
+      source: resolved.source,
+      episodes: resolved.episodes.map((ep) => ({
+        episode_number: ep.episode_number,
+        episodeNumber: ep.episode_number,
+        name: ep.name,
+        title: ep.name,
+        overview: ep.overview || '',
+        still_path: ep.still_path || null,
+        source: ep.source,
+        isVerified: ep.isVerified,
+      })),
     });
-  } catch (err: any) {
-    console.error('Error in GET /api/tv-episodes:', err);
-    return NextResponse.json(
-      { success: false, episodes: [], error: err?.message || 'Failed to fetch episode metadata.' },
-      { status: 500 }
-    );
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Error';
+    return NextResponse.json({ success: false, error: message }, { status: 500 });
   }
 }

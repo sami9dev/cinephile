@@ -418,10 +418,13 @@ export async function updateGlobalEpisodeTitle(
     episodeNumber: number;
     episodeTitle: string;
     linkId?: string;
+    manualTitleVerified?: boolean;
+    forceOverwrite?: boolean;
   }
 ): Promise<{ success: boolean; error?: string }> {
   try {
     const key = String(movieId);
+    const manualVerified = params.manualTitleVerified ?? true;
 
     // Update local storage if present
     if (typeof window !== 'undefined') {
@@ -436,7 +439,11 @@ export async function updateGlobalEpisodeTitle(
                 : Number(l.seasonNumber) === Number(params.seasonNumber) &&
                   Number(l.episodeNumber) === Number(params.episodeNumber);
               if (matches) {
-                return { ...l, episodeTitle: params.episodeTitle.trim() };
+                return {
+                  ...l,
+                  episodeTitle: params.episodeTitle.trim(),
+                  manualTitleVerified: manualVerified,
+                };
               }
               return l;
             });
@@ -457,6 +464,8 @@ export async function updateGlobalEpisodeTitle(
         episodeNumber: params.episodeNumber,
         episodeTitle: params.episodeTitle.trim(),
         linkId: params.linkId,
+        manualTitleVerified: manualVerified,
+        forceOverwrite: params.forceOverwrite ?? true,
       }),
     });
 

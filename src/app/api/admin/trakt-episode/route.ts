@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { validateAdminAuth } from '@/lib/adminAuth';
 import { fetchTraktEpisodeTitle, fetchTraktSeasonEpisodes } from '@/lib/trakt';
+import { resolveSeasonEpisodes } from '@/lib/episodeTitleResolver';
 
 export const dynamic = 'force-dynamic';
 
@@ -42,6 +43,31 @@ export async function GET(request: NextRequest) {
 
     // Season-wide episodes batch fetch
     if (seasonOnly) {
+      // Try multi-source IMDb / TVMaze / TMDB / Trakt resolver first
+      const resolved = await resolveSeasonEpisodes({
+        tmdbId,
+        imdbId,
+        query,
+        season,
+      });
+
+      if (resolved.episodes.length > 0) {
+        return NextResponse.json({
+          success: true,
+          showTitle: resolved.showTitle || query,
+          imdbId: resolved.imdbId,
+          tmdbId: resolved.tmdbId,
+          season,
+          source: resolved.source,
+          episodes: resolved.episodes.map((ep) => ({
+            episodeNumber: ep.episode_number,
+            title: ep.name,
+            overview: ep.overview,
+            source: ep.source,
+          })),
+        });
+      }
+
       const result = await fetchTraktSeasonEpisodes({
         tmdbId,
         imdbId,
@@ -72,6 +98,29 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    // Resolve via multi-source IMDb / TVMaze / TMDB / Trakt resolver
+    const resolved = await resolveSeasonEpisodes({
+      tmdbId,
+      imdbId,
+      query,
+      season,
+    });
+
+    const matchEp = resolved.episodes.find((ep) => ep.episode_number === episode);
+    if (matchEp) {
+      return NextResponse.json({
+        success: true,
+        title: matchEp.name,
+        season,
+        episode,
+        overview: matchEp.overview || '',
+        showTitle: resolved.showTitle || query || '',
+        imdbId: resolved.imdbId,
+        tmdbId: resolved.tmdbId,
+        source: matchEp.source,
+      });
+    }
+
     const result = await fetchTraktEpisodeTitle({
       tmdbId,
       imdbId,
@@ -85,11 +134,10 @@ export async function GET(request: NextRequest) {
     }
 
     return NextResponse.json(result);
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error('Error in GET /api/admin/trakt-episode:', err);
-    return NextResponse.json(
-      { success: false, error: err?.message || 'Internal server error during Trakt title lookup.' },
-      { status: 500 }
-    );
+    const message =
+      err instanceof Error ? err.message : 'Internal server error during episode title lookup.';
+    return NextResponse.json({ success: false, error: message }, { status: 500 });
   }
 }

@@ -102,16 +102,9 @@ export const ServiceStatusPanel: React.FC<ServiceStatusPanelProps> = ({
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [isExpandedInSidebar, setIsExpandedInSidebar] = useState<boolean>(true);
 
-  const fetchStatus = useCallback(
-    async (forceRefresh = false) => {
+  const loadReport = useCallback(
+    async (forceRefresh: boolean) => {
       try {
-        if (forceRefresh) {
-          setRefreshing(true);
-        } else {
-          setLoading(true);
-        }
-        setError(null);
-
         const url = forceRefresh
           ? '/api/admin/service-status?refresh=true'
           : '/api/admin/service-status';
@@ -132,6 +125,7 @@ export const ServiceStatusPanel: React.FC<ServiceStatusPanelProps> = ({
         const data: ServiceStatusReport = await res.json();
         if (data && Array.isArray(data.services)) {
           setReport(data);
+          setError(null);
         } else {
           setError('Invalid status response');
         }
@@ -145,10 +139,60 @@ export const ServiceStatusPanel: React.FC<ServiceStatusPanelProps> = ({
     [getAuthHeaders]
   );
 
+  const fetchStatus = useCallback(
+    async (forceRefresh = false) => {
+      if (forceRefresh) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
+      setError(null);
+      await loadReport(forceRefresh);
+    },
+    [loadReport]
+  );
+
   // Fetch once on mount; do not run on every render
   useEffect(() => {
-    fetchStatus(false);
-  }, [fetchStatus]);
+    let cancelled = false;
+    fetch('/api/admin/service-status', {
+      headers: getAuthHeaders(),
+      cache: 'no-store',
+    })
+      .then(async (res) => {
+        if (cancelled) return;
+        if (!res.ok) {
+          setError(
+            res.status === 401
+              ? 'Admin session required'
+              : `Status check failed (HTTP ${res.status})`
+          );
+          return;
+        }
+        const data: ServiceStatusReport = await res.json();
+        if (cancelled) return;
+        if (data && Array.isArray(data.services)) {
+          setReport(data);
+          setError(null);
+        } else {
+          setError('Invalid status response');
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setError('Unable to reach status endpoint');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [getAuthHeaders]);
 
   const groupedServices = React.useMemo(() => {
     const map: Record<ServiceCategoryGroup, ServiceCheckItem[]> = {
@@ -405,22 +449,22 @@ const ServiceStatusModal: React.FC<ServiceStatusModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto"
+      className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-2.5 sm:p-4 overflow-y-auto"
       onClick={onClose}
     >
       <div
-        className="w-full max-w-4xl rounded-3xl bg-[#090d18] border border-cyan-500/40 shadow-2xl overflow-hidden my-8"
+        className="w-full max-w-4xl rounded-3xl bg-[#090d18] border border-cyan-500/40 shadow-2xl overflow-hidden my-auto max-h-[92vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Modal Header */}
-        <div className="px-6 py-4 bg-gradient-to-r from-slate-950 via-[#0d1324] to-slate-950 border-b border-cyan-500/25 flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-red-500/15 border border-red-500/40 flex items-center justify-center text-red-400 shadow-md">
-              <Activity className="w-5 h-5" />
+        <div className="px-4 sm:px-6 py-3.5 sm:py-4 bg-gradient-to-r from-slate-950 via-[#0d1324] to-slate-950 border-b border-cyan-500/25 flex flex-wrap items-center justify-between gap-3 sm:gap-4 shrink-0">
+          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-red-500/15 border border-red-500/40 flex items-center justify-center text-red-400 shadow-md shrink-0">
+              <Activity className="w-4 h-4 sm:w-5 sm:h-5" />
             </div>
-            <div>
-              <div className="flex items-center gap-2.5">
-                <h3 className="text-base font-black text-white tracking-wide uppercase">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-sm sm:text-base font-black text-white tracking-wide uppercase">
                   System & Service Status Diagnostics
                 </h3>
                 <span
@@ -440,7 +484,7 @@ const ServiceStatusModal: React.FC<ServiceStatusModalProps> = ({
               type="button"
               onClick={onRefresh}
               disabled={refreshing || loading}
-              className="px-3.5 py-2 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/40 text-cyan-300 text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+              className="px-3 sm:px-3.5 py-2 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/40 text-cyan-300 text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
               <span>{refreshing ? 'Checking...' : 'Run Check'}</span>
@@ -458,8 +502,8 @@ const ServiceStatusModal: React.FC<ServiceStatusModalProps> = ({
 
         {/* Summary Counters */}
         {report && (
-          <div className="px-6 py-3 bg-black/50 border-b border-white/5 flex flex-wrap items-center justify-between gap-3 text-xs">
-            <div className="flex flex-wrap items-center gap-4">
+          <div className="px-4 sm:px-6 py-2.5 sm:py-3 bg-black/50 border-b border-white/5 flex flex-wrap items-center justify-between gap-2.5 sm:gap-3 text-xs shrink-0">
+            <div className="flex flex-wrap items-center gap-3 sm:gap-4">
               <span className="flex items-center gap-1.5 text-emerald-400 font-bold">
                 <span className="w-2 h-2 rounded-full bg-emerald-400" />
                 {report.summary.operational} Operational
@@ -487,8 +531,8 @@ const ServiceStatusModal: React.FC<ServiceStatusModalProps> = ({
                 </span>
               )}
             </div>
-            <div className="text-[11px] text-slate-400 font-mono flex items-center gap-2">
-              <Clock className="w-3.5 h-3.5 text-cyan-400" />
+            <div className="text-[11px] text-slate-400 font-mono flex flex-wrap items-center gap-2">
+              <Clock className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
               <span>Last Checked: {formatShortTime(report.checkedAt)}</span>
               {report.cached && (
                 <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 text-[9px]">
@@ -500,7 +544,7 @@ const ServiceStatusModal: React.FC<ServiceStatusModalProps> = ({
         )}
 
         {/* Body Content */}
-        <div className="p-6 max-h-[70vh] overflow-y-auto space-y-6">
+        <div className="p-3.5 sm:p-6 overflow-y-auto space-y-5 sm:space-y-6 flex-1">
           {error && (
             <div className="p-4 rounded-2xl bg-rose-950/50 border border-rose-500/40 text-rose-200 text-xs flex items-center gap-2.5">
               <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />

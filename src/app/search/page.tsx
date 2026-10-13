@@ -211,14 +211,14 @@ function SearchContent() {
       {/* 1. Uploaded Releases Grid */}
       {!loading && filteredUploaded.length > 0 && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between border-b border-zinc-800/80 pb-3">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-full bg-amber-500/20 border border-amber-500/40 flex items-center justify-center">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800/80 pb-3">
+            <div className="flex items-start sm:items-center gap-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-full bg-amber-500/20 border border-amber-500/40 flex items-center justify-center shrink-0 mt-0.5 sm:mt-0">
                 <Download className="w-4 h-4 text-amber-400" />
               </div>
-              <div>
-                <h2 className="font-display text-2xl sm:text-3xl text-white uppercase tracking-wider flex items-center gap-2 leading-none">
-                  {filterTitle}
+              <div className="min-w-0">
+                <h2 className="font-display text-2xl sm:text-3xl text-white uppercase tracking-wider flex flex-wrap items-center gap-2 leading-tight">
+                  <span>{filterTitle}</span>
                   <span className="font-ui text-xs font-bold text-amber-400 px-2 py-0.5 rounded-full bg-amber-400/10 border border-amber-400/20">
                     {filteredUploaded.length} files available
                   </span>
@@ -237,14 +237,14 @@ function SearchContent() {
                   setActiveTab('all');
                   router.replace('/search', { scroll: false });
                 }}
-                className="text-xs text-zinc-400 hover:text-white underline"
+                className="text-xs text-zinc-400 hover:text-white underline shrink-0"
               >
                 Clear Filters
               </button>
             )}
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 sm:gap-6">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 sm:gap-6">
             {filteredUploaded.map((item, idx) => (
               <MovieCard key={`uploaded-${item.id}-${idx}`} item={item} />
             ))}
@@ -256,13 +256,13 @@ function SearchContent() {
       {!loading && filteredTmdb.length > 0 && (
         <div className="space-y-4 pt-6">
           <div className="border-b border-zinc-800 pb-3">
-            <h3 className="text-base font-bold text-zinc-300 flex items-center gap-2">
-              <Layers className="w-4 h-4 text-sky-400" /> More Matching Titles on TMDB
+            <h3 className="text-base font-bold text-zinc-300 flex flex-wrap items-center gap-2">
+              <Layers className="w-4 h-4 text-sky-400 shrink-0" /> More Matching Titles on TMDB
               <span className="text-xs text-zinc-500">({filteredTmdb.length})</span>
             </h3>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 sm:gap-6">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 sm:gap-6">
             {filteredTmdb.map((item, idx) => {
               const isPerson = 'known_for_department' in item || (item as any).media_type === 'person';
 

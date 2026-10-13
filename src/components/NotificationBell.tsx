@@ -218,7 +218,7 @@ export const NotificationBell: React.FC = () => {
 
       {/* Notifications Popover Dropdown */}
       {isOpen && (
-        <div className="absolute right-0 mt-2 w-80 sm:w-96 bg-[#0c0e14]/95 backdrop-blur-2xl border border-zinc-800 rounded-2xl shadow-2xl z-50 overflow-hidden animate-fadeIn">
+        <div className="fixed inset-x-3 top-16 sm:absolute sm:inset-x-auto sm:right-0 sm:top-auto sm:mt-2 w-auto sm:w-96 max-w-[calc(100vw-1.5rem)] bg-[#0c0e14]/95 backdrop-blur-2xl border border-zinc-800 rounded-2xl shadow-2xl z-50 overflow-hidden animate-fadeIn">
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800/80 bg-zinc-900/40">
             <div className="flex items-center gap-2">

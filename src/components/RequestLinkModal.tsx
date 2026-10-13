@@ -159,12 +159,12 @@ export default function RequestLinkModal({
   const posterUrl = prefillPosterPath ? getImageURL(prefillPosterPath, 'w200') : null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto animate-fadeIn">
-      <div className="relative w-full max-w-lg bg-[#0e1118] border border-blue-500/30 rounded-3xl p-6 sm:p-7 shadow-2xl space-y-5 text-white my-8">
+    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fadeIn">
+      <div className="relative w-full max-w-lg bg-[#0e1118] border border-blue-500/30 rounded-3xl p-4 sm:p-7 shadow-2xl space-y-5 text-white my-auto max-h-[92vh] overflow-y-auto">
         {/* Close Button */}
         <button
           onClick={onClose}
-          className="absolute top-5 right-5 p-2 rounded-full bg-zinc-800/80 text-zinc-400 hover:text-white hover:bg-zinc-700 transition-colors"
+          className="absolute top-4 right-4 sm:top-5 sm:right-5 p-2 rounded-full bg-zinc-800/80 text-zinc-400 hover:text-white hover:bg-zinc-700 transition-colors"
           aria-label="Close"
         >
           <X className="w-4 h-4" />
@@ -204,7 +204,7 @@ export default function RequestLinkModal({
               </p>
             </div>
 
-            <div className="p-3.5 rounded-2xl bg-zinc-900/90 border border-zinc-800 flex items-center justify-between text-xs max-w-sm mx-auto">
+            <div className="p-3 sm:p-3.5 rounded-2xl bg-zinc-900/90 border border-zinc-800 flex flex-wrap items-center justify-between gap-2 text-xs max-w-sm mx-auto">
               <span className="text-zinc-400">Current Status:</span>
               <span className="px-2.5 py-0.5 rounded-full bg-zinc-800 text-amber-400 font-bold text-[11px] border border-zinc-700 flex items-center gap-1.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
@@ -233,8 +233,8 @@ export default function RequestLinkModal({
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
             {/* Signed-in user badge */}
-            <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-between text-xs">
-              <div className="flex items-center gap-2 truncate">
+            <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-between gap-2 text-xs pr-8 sm:pr-2.5">
+              <div className="flex items-center gap-2 min-w-0 truncate">
                 <UserCheck className="w-4 h-4 text-emerald-400 shrink-0" />
                 <span className="text-zinc-300 truncate">
                   Requesting as: <strong className="text-white font-bold">{userProfile.displayName || 'Cinephile'}</strong> ({userProfile.email})
@@ -246,7 +246,7 @@ export default function RequestLinkModal({
             </div>
 
             {/* Header / Title Preview */}
-            <div className="flex items-center gap-3.5 border-b border-zinc-800 pb-4">
+            <div className="flex items-center gap-3.5 border-b border-zinc-800 pb-4 pr-6 sm:pr-0">
               {posterUrl ? (
                 <div className="relative w-12 h-16 sm:w-14 sm:h-20 rounded-xl overflow-hidden shrink-0 border border-zinc-700 bg-zinc-900 shadow-md">
                   <Image
@@ -360,7 +360,7 @@ export default function RequestLinkModal({
 
             {/* TV Series Season & Episode Options */}
             {mediaType === 'tv' && (
-              <div className="grid grid-cols-2 gap-3 pt-1">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
                 <div>
                   <label className="text-[11px] font-semibold text-zinc-400 block mb-1">
                     Season (optional)
@@ -421,19 +421,19 @@ export default function RequestLinkModal({
             </div>
 
             {/* Action Buttons */}
-            <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-zinc-800">
+            <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-end gap-2.5 pt-3 border-t border-zinc-800">
               <button
                 type="button"
                 onClick={onClose}
                 disabled={isSubmitting}
-                className="px-4 py-2.5 rounded-xl bg-zinc-800 text-zinc-300 hover:text-white text-xs font-semibold transition-colors"
+                className="w-full sm:w-auto min-h-[42px] px-4 py-2.5 rounded-xl bg-zinc-800 text-zinc-300 hover:text-white text-xs font-semibold transition-colors"
               >
                 Cancel
               </button>
               <button
                 type="submit"
                 disabled={isSubmitting}
-                className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-500 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs shadow-lg shadow-blue-500/25 transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50"
+                className="w-full sm:w-auto min-h-[42px] flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-500 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs shadow-lg shadow-blue-500/25 transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50"
               >
                 {isSubmitting ? (
                   <span>Submitting Request...</span>

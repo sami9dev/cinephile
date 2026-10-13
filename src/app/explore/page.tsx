@@ -80,7 +80,7 @@ export default async function ExplorePage({ searchParams }: ExplorePageProps) {
           </div>
 
           {result.total > 0 && (
-            <div className="flex items-center gap-2 text-xs font-semibold text-zinc-400 self-start md:self-auto">
+            <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-zinc-400 self-start md:self-auto">
               <span className="px-3 py-1 rounded-full bg-amber-400/10 border border-amber-400/20 text-amber-400 font-bold">
                 {result.total} {result.total === 1 ? 'Title' : 'Titles'} Available
               </span>
@@ -94,10 +94,10 @@ export default async function ExplorePage({ searchParams }: ExplorePageProps) {
         {/* Media Type Tabs & Quality Pills */}
         <div className="space-y-3 pt-2">
           {/* Main Media Type Selector */}
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Link
               href={buildUrl(1, { type: '', page: '' })}
-              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all border ${
+              className={`px-3.5 sm:px-4 py-2 rounded-xl text-xs font-bold transition-all border ${
                 activeType === 'all'
                   ? 'bg-amber-500 text-black border-amber-400 shadow-md shadow-amber-500/20'
                   : 'bg-zinc-900/90 text-zinc-300 border-zinc-800 hover:bg-zinc-800 hover:text-white'
@@ -107,7 +107,7 @@ export default async function ExplorePage({ searchParams }: ExplorePageProps) {
             </Link>
             <Link
               href={buildUrl(1, { type: 'movie', page: '' })}
-              className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all border ${
+              className={`flex items-center gap-1.5 px-3.5 sm:px-4 py-2 rounded-xl text-xs font-bold transition-all border ${
                 activeType === 'movie'
                   ? 'bg-amber-500 text-black border-amber-400 shadow-md shadow-amber-500/20'
                   : 'bg-zinc-900/90 text-zinc-300 border-zinc-800 hover:bg-zinc-800 hover:text-white'
@@ -117,7 +117,7 @@ export default async function ExplorePage({ searchParams }: ExplorePageProps) {
             </Link>
             <Link
               href={buildUrl(1, { type: 'tv', page: '' })}
-              className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all border ${
+              className={`flex items-center gap-1.5 px-3.5 sm:px-4 py-2 rounded-xl text-xs font-bold transition-all border ${
                 activeType === 'tv'
                   ? 'bg-sky-500 text-black border-sky-400 shadow-md shadow-sky-500/20'
                   : 'bg-zinc-900/90 text-zinc-300 border-zinc-800 hover:bg-zinc-800 hover:text-white'
@@ -186,7 +186,7 @@ export default async function ExplorePage({ searchParams }: ExplorePageProps) {
       {/* Grid of Results */}
       {result.items && result.items.length > 0 ? (
         <section className="space-y-6">
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 sm:gap-5">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-5">
             {result.items.map((item, idx) => (
               <MovieCard
                 key={`explore-${item.media_type}-${item.id}-${idx}`}

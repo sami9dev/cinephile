@@ -847,13 +847,13 @@ export const CustomLinksManager: React.FC<CustomLinksManagerProps> = ({ titleDet
           </div>
 
         {sortedMovieLinks.length > 0 ? (
-          <div className="space-y-3.5">
+          <div className="space-y-3.5 min-w-0 max-w-full">
             {/* Movie Header Card matching media_1790874784319.png */}
-            <div className="rounded-2xl bg-[#0c1020]/95 border border-[#1e293b]/80 p-4 sm:p-5 flex items-center gap-3.5 shadow-xl">
-              <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-blue-500 via-indigo-500 to-indigo-600 flex items-center justify-center text-white font-black text-xl sm:text-2xl shadow-lg shadow-blue-500/25 shrink-0">
+            <div className="rounded-2xl bg-[#0c1020]/95 border border-[#1e293b]/80 p-3.5 sm:p-5 flex items-center gap-3.5 shadow-xl min-w-0">
+              <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-blue-500 via-indigo-500 to-indigo-600 flex items-center justify-center text-white font-black text-lg sm:text-2xl shadow-lg shadow-blue-500/25 shrink-0">
                 {(titleDetails.title || titleDetails.name || 'M').charAt(0).toUpperCase()}
               </div>
-              <div className="min-w-0 flex-1">
+              <div className="min-w-0 flex-1 text-left">
                 <h3 className="text-base sm:text-lg font-bold text-white tracking-wide truncate">
                   {titleDetails.title || titleDetails.name || 'Movie'}
                 </h3>
@@ -864,24 +864,24 @@ export const CustomLinksManager: React.FC<CustomLinksManagerProps> = ({ titleDet
             </div>
 
             {/* Stack of Movie Download Cards (Reference: media_1790874784319.png) */}
-            <div className="space-y-3 pt-1">
+            <div className="space-y-3 pt-1 min-w-0">
               {sortedMovieLinks.map((link, idx) => {
                 const card = formatMovieCardDetails(link, titleDetails);
 
                 return (
-                  <div key={link.id || idx} className="relative group">
+                  <div key={link.id || idx} className="relative group min-w-0">
                     <a
                       href={sanitizeSafeUrl(link.url)}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className={`block rounded-2xl bg-[#0c1020]/95 hover:bg-[#11172e] border border-[#1e293b]/80 ${card.accentBorder} hover:border-blue-500/50 p-4 sm:p-5 transition-all duration-200 shadow-md hover:shadow-blue-500/10 cursor-pointer select-none`}
+                      className={`block rounded-2xl bg-[#0c1020]/95 hover:bg-[#11172e] border border-[#1e293b]/80 ${card.accentBorder} hover:border-blue-500/50 p-3.5 sm:p-5 transition-all duration-200 shadow-md hover:shadow-blue-500/10 cursor-pointer select-none min-w-0`}
                       title={`Download ${card.title}`}
                     >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="space-y-1.5 min-w-0 flex-1">
+                      <div className="flex items-start justify-between gap-2.5 sm:gap-3 min-w-0">
+                        <div className="space-y-1.5 min-w-0 flex-1 text-left">
                           {/* Top Row: Title + Badges */}
-                          <div className="flex flex-wrap items-center gap-2 sm:gap-2.5">
-                            <span className="font-bold text-white text-base sm:text-lg tracking-wide group-hover:text-blue-300 transition-colors">
+                          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2.5 min-w-0">
+                            <span className="font-bold text-white text-sm sm:text-lg tracking-wide group-hover:text-blue-300 transition-colors break-words min-w-0">
                               {card.title}
                             </span>
                             {card.badges.map((b, bIdx) => (
@@ -892,7 +892,7 @@ export const CustomLinksManager: React.FC<CustomLinksManagerProps> = ({ titleDet
                           </div>
 
                           {/* Bottom Row: Subtext meta line */}
-                          <p className="text-xs text-zinc-400 font-medium flex flex-wrap items-center gap-1.5">
+                          <p className="text-xs text-zinc-400 font-medium flex flex-wrap items-center gap-1.5 break-words">
                             {card.subtext}
                           </p>
                         </div>
@@ -915,7 +915,7 @@ export const CustomLinksManager: React.FC<CustomLinksManagerProps> = ({ titleDet
                               server: detectServer(link.url).name || 'HubCloud',
                             });
                           }}
-                          className="p-2.5 sm:p-3 rounded-2xl bg-[#141824] hover:bg-[#1d2335] text-zinc-400 hover:text-rose-400 border border-white/5 hover:border-rose-500/30 transition-colors cursor-pointer shrink-0 self-center"
+                          className="min-w-[38px] min-h-[38px] p-2 sm:p-3 rounded-2xl bg-[#141824] hover:bg-[#1d2335] text-zinc-400 hover:text-rose-400 border border-white/5 hover:border-rose-500/30 transition-colors cursor-pointer shrink-0 self-center inline-flex items-center justify-center"
                           title="Report broken or defective link"
                         >
                           <Flag className="w-4 h-4" />
@@ -971,7 +971,7 @@ export const CustomLinksManager: React.FC<CustomLinksManagerProps> = ({ titleDet
         )}
 
         {/* Can't find the link you want? Request custom quality or report card */}
-        <div className="mt-5 p-5 sm:p-6 rounded-2xl bg-[#0b0e17] border border-blue-500/25 shadow-xl text-center space-y-3.5 relative overflow-hidden">
+        <div className="mt-5 p-4 sm:p-6 rounded-2xl bg-[#0b0e17] border border-blue-500/25 shadow-xl text-center space-y-3.5 relative overflow-hidden">
           <div className="absolute top-0 right-0 w-36 h-36 bg-blue-500/10 rounded-full blur-3xl pointer-events-none" />
           <div className="w-10 h-10 rounded-full bg-blue-500/15 border border-blue-500/40 flex items-center justify-center mx-auto text-blue-400 shadow-md shadow-blue-500/10">
             <Info className="w-5 h-5" />
@@ -979,11 +979,11 @@ export const CustomLinksManager: React.FC<CustomLinksManagerProps> = ({ titleDet
           <p className="text-xs sm:text-sm text-zinc-200 font-medium max-w-md mx-auto leading-relaxed">
             Can&apos;t find the link you want? Request custom quality or report a broken link and we&apos;ll fix it for you.
           </p>
-          <div className="flex flex-wrap items-center justify-center gap-3">
+          <div className="flex flex-wrap items-center justify-center gap-2.5 sm:gap-3">
             <button
               type="button"
               onClick={() => setIsRequestModalOpen(true)}
-              className="px-8 py-3 rounded-2xl bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-500 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs uppercase tracking-wider shadow-lg shadow-blue-600/30 transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
+              className="w-full sm:w-auto px-6 sm:px-8 py-3 min-h-[44px] rounded-2xl bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-500 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs uppercase tracking-wider shadow-lg shadow-blue-600/30 transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
             >
               REQUEST LINK
             </button>
@@ -1000,7 +1000,7 @@ export const CustomLinksManager: React.FC<CustomLinksManagerProps> = ({ titleDet
                   reportedUrl: currentUrl,
                 });
               }}
-              className="px-6 py-3 rounded-2xl bg-[#141824] hover:bg-[#1d2335] text-zinc-300 hover:text-rose-400 border border-white/10 hover:border-rose-500/40 font-bold text-xs uppercase tracking-wider shadow-lg transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer inline-flex items-center gap-2"
+              className="w-full sm:w-auto justify-center px-6 py-3 min-h-[44px] rounded-2xl bg-[#141824] hover:bg-[#1d2335] text-zinc-300 hover:text-rose-400 border border-white/10 hover:border-rose-500/40 font-bold text-xs uppercase tracking-wider shadow-lg transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer inline-flex items-center gap-2"
               title="Report broken or defective link"
             >
               <Flag className="w-4 h-4 text-zinc-400 group-hover:text-rose-400" />
@@ -1013,8 +1013,8 @@ export const CustomLinksManager: React.FC<CustomLinksManagerProps> = ({ titleDet
 
       {/* Edit Custom Link Modal (Admin Only) */}
       {isAdmin && editingLink && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#11141d] border border-amber-500/40 rounded-3xl p-6 sm:p-7 max-w-lg w-full space-y-4 shadow-2xl animate-scaleIn">
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-[#11141d] border border-amber-500/40 rounded-3xl p-4 sm:p-7 max-w-lg max-h-[90vh] overflow-y-auto w-full space-y-4 shadow-2xl animate-scaleIn">
             <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
               <div className="flex items-center gap-2">
                 <Pencil className="w-4 h-4 text-amber-400" />
@@ -1080,7 +1080,7 @@ export const CustomLinksManager: React.FC<CustomLinksManagerProps> = ({ titleDet
                 </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-2 pt-1">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
                 <div>
                   <label className="text-[10px] font-semibold text-zinc-400 block mb-1">Quality</label>
                   <input
