@@ -20,6 +20,7 @@ import {
   Copy,
   Flag,
   Sparkles,
+  FolderArchive,
 } from 'lucide-react';
 import { TitleDetails, CustomLink } from '@/types';
 import { useWatchlist } from '@/context/WatchlistContext';
@@ -775,14 +776,26 @@ export const CustomLinksManager: React.FC<CustomLinksManagerProps> = ({ titleDet
 
   return (
     <CollapsibleSection
-      title={mediaType === 'tv' ? 'TV Series Season & Episode Vault' : 'Movie Direct Download Links'}
-      icon={mediaType === 'tv' ? <Link2 className="w-5 h-5 text-amber-400" /> : <Download className="w-5 h-5 text-blue-400" />}
+      title={
+        mediaType === 'tv' ? (
+          <div className="flex flex-col text-left">
+            <span className="text-sm sm:text-base font-bold text-white leading-tight">Season &amp; Episode</span>
+            <span className="text-sm sm:text-base font-bold text-white leading-tight">Vault</span>
+          </div>
+        ) : (
+          <div className="flex flex-col text-left">
+            <span className="text-sm sm:text-base font-bold text-white leading-tight">Movie Downloads</span>
+            <span className="text-sm sm:text-base font-bold text-white leading-tight">Vault</span>
+          </div>
+        )
+      }
+      icon={<FolderArchive className="w-5 h-5 text-amber-500" />}
       subtitle={
         mediaType === 'tv'
           ? 'Auto-arranged seasons, batch zip archives, and weekly single episode releases.'
           : 'High-speed cloud downloads across 480p, 720p, 1080p, and 2160p 4K qualities.'
       }
-      badge={`${totalLinkCount} files`}
+      badge={`${totalLinkCount} FILES`}
       defaultOpen={true}
     >
       {/* TV Series Season & Episode Vault */}

@@ -10,6 +10,8 @@ import {
   migrateDomainInDatabase,
   replaceAllLinksForTitle,
   deleteAllLinksForTitle,
+  deleteEntireTitleWithAudit,
+  reassignLinksInDatabase,
   replaceDomainForTitleInDatabase,
   updateTitleMetadata,
   updateEpisodeTitleInDatabase,
@@ -99,8 +101,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(migrationRes);
     }
 
-    if (!movieId) {
-      return NextResponse.json({ error: 'movieId is required' }, { status: 400 });
+    const cleanMovieId = movieId !== undefined && movieId !== null ? String(movieId).trim() : '';
+    if (!cleanMovieId || cleanMovieId.toLowerCase() === 'undefined' || cleanMovieId.toLowerCase() === 'null') {
+      return NextResponse.json({ error: 'movieId is required and must be a valid identifier' }, { status: 400 });
     }
 
     // Handle specific title domain replacement
@@ -186,6 +189,27 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(result);
     }
 
+    // Handle reassigning specific links from one title to another
+    if (action === 'reassign_links') {
+      const { currentMovieId, newMovieId, linkIds, newMetadata } = body;
+      if (!currentMovieId || !newMovieId || !Array.isArray(linkIds) || linkIds.length === 0) {
+        return NextResponse.json(
+          { error: 'currentMovieId, newMovieId, and non-empty linkIds array are required' },
+          { status: 400 }
+        );
+      }
+      const result = await reassignLinksInDatabase(currentMovieId, newMovieId, linkIds, newMetadata);
+      try { revalidatePath('/'); } catch {}
+      return NextResponse.json(result);
+    }
+
+    // Handle permanent deletion of an entire title with audit logging
+    if (action === 'delete_entire_title') {
+      const result = await deleteEntireTitleWithAudit(movieId);
+      try { revalidatePath('/'); } catch {}
+      return NextResponse.json(result);
+    }
+
     // Handle deleting all links for a specific title
     if (action === 'delete_all_links') {
       const result = await deleteAllLinksForTitle(movieId);
@@ -202,12 +226,26 @@ export async function POST(request: NextRequest) {
         }
       }
 
+      const meta = body.metadata || {
+        movieTitle: body.movieTitle,
+        mediaType: body.mediaType,
+        posterPath: body.posterPath,
+        backdropPath: body.backdropPath,
+        releaseDate: body.releaseDate,
+        voteAverage: body.voteAverage,
+      };
       const sanitizedLinks = links.map((l, index) => ({
         ...l,
         id: l.id || `bulk-admin-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 6)}`,
         createdAt: l.createdAt || new Date(Date.now() - index * 1000).toISOString(),
+        ...(meta.movieTitle && !l.movieTitle ? { movieTitle: meta.movieTitle } : {}),
+        ...(meta.mediaType && !l.mediaType ? { mediaType: meta.mediaType } : {}),
+        ...(meta.posterPath && !l.posterPath ? { posterPath: meta.posterPath } : {}),
+        ...(meta.backdropPath && !l.backdropPath ? { backdropPath: meta.backdropPath } : {}),
+        ...(meta.releaseDate && !l.releaseDate ? { releaseDate: meta.releaseDate } : {}),
+        ...(meta.voteAverage && typeof l.voteAverage !== 'number' ? { voteAverage: meta.voteAverage } : {}),
       }));
-      await saveMultipleLinksToDatabase(movieId, sanitizedLinks);
+      await saveMultipleLinksToDatabase(movieId, sanitizedLinks, meta);
       try { revalidatePath('/'); } catch {}
       return NextResponse.json({ success: true, count: sanitizedLinks.length, links: sanitizedLinks });
     }
@@ -221,10 +259,24 @@ export async function POST(request: NextRequest) {
     }
 
     const linkId = link.id || `link-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const meta = body.metadata || {
+      movieTitle: body.movieTitle,
+      mediaType: body.mediaType,
+      posterPath: body.posterPath,
+      backdropPath: body.backdropPath,
+      releaseDate: body.releaseDate,
+      voteAverage: body.voteAverage,
+    };
     const linkObj = {
       ...link,
       id: linkId,
       createdAt: link.createdAt || new Date().toISOString(),
+      ...(meta.movieTitle && !link.movieTitle ? { movieTitle: meta.movieTitle } : {}),
+      ...(meta.mediaType && !link.mediaType ? { mediaType: meta.mediaType } : {}),
+      ...(meta.posterPath && !link.posterPath ? { posterPath: meta.posterPath } : {}),
+      ...(meta.backdropPath && !link.backdropPath ? { backdropPath: meta.backdropPath } : {}),
+      ...(meta.releaseDate && !link.releaseDate ? { releaseDate: meta.releaseDate } : {}),
+      ...(meta.voteAverage && typeof link.voteAverage !== 'number' ? { voteAverage: meta.voteAverage } : {}),
     };
 
     await saveLinkToDatabase(movieId, linkObj);

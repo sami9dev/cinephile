@@ -60,6 +60,7 @@ import {
   FileText,
   Code2,
   Settings2,
+  Send,
 } from 'lucide-react';
 import { useWatchlist } from '@/context/WatchlistContext';
 import { useAuth } from '@/context/AuthContext';
@@ -269,7 +270,11 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
     title: string;
     media_type: 'movie' | 'tv';
     poster_path?: string | null;
+    backdrop_path?: string | null;
     year?: string;
+    release_date?: string;
+    first_air_date?: string;
+    vote_average?: number;
   }>(PINNED_TITLES[0]);
 
   const [targetSearchQuery, setTargetSearchQuery] = useState('');
@@ -310,6 +315,25 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
   const [isSavingTitleMeta, setIsSavingTitleMeta] = useState(false);
   const [titleMetaMsg, setTitleMetaMsg] = useState('');
   const [titleMetaError, setTitleMetaError] = useState('');
+
+  // TMDB Interactive Search & Selective Link Reassignment States
+  const [tmdbSearchQuery, setTmdbSearchQuery] = useState('');
+  const [tmdbSearchResults, setTmdbSearchResults] = useState<any[]>([]);
+  const [isSearchingTmdb, setIsSearchingTmdb] = useState(false);
+  const [tmdbSearchError, setTmdbSearchError] = useState('');
+  const [proposedTmdbCandidate, setProposedTmdbCandidate] = useState<any | null>(null);
+  const [selectedReassignLinkIds, setSelectedReassignLinkIds] = useState<string[]>([]);
+  const [isReassigningLinks, setIsReassigningLinks] = useState(false);
+  const [reassignMsg, setReassignMsg] = useState('');
+  const [reassignError, setReassignError] = useState('');
+
+  // Link Inspection Drawer/Modal State
+  const [inspectingLink, setInspectingLink] = useState<CustomLink | null>(null);
+
+  // Link & Title Deletion Confirmation Modal States
+  const [linkToDelete, setLinkToDelete] = useState<{ id: string; title: string; url: string; movieId: string | number } | null>(null);
+  const [titleToDelete, setTitleToDelete] = useState<LinkedCatalogTitle | null>(null);
+  const [deleteTitleConfirmChecked, setDeleteTitleConfirmChecked] = useState(false);
 
   // Trakt TV Episode Titles State
   const [traktSeason, setTraktSeason] = useState(1);
@@ -946,8 +970,10 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
     name?: string;
     media_type?: string;
     poster_path?: string | null;
+    backdrop_path?: string | null;
     release_date?: string;
     first_air_date?: string;
+    vote_average?: number;
   }) => {
     const resolvedTitle = item.title || item.name || `Title #${item.id}`;
     const resolvedType = (item.media_type === 'tv' ? 'tv' : 'movie') as 'movie' | 'tv';
@@ -958,7 +984,11 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
       title: resolvedTitle,
       media_type: resolvedType,
       poster_path: item.poster_path || null,
+      backdrop_path: item.backdrop_path || null,
       year: resolvedYear,
+      release_date: item.release_date || undefined,
+      first_air_date: (item as any).first_air_date || undefined,
+      vote_average: item.vote_average || undefined,
     };
 
     setSelectedTargetTitle(targetObj);
@@ -1204,7 +1234,10 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
       title: title.title,
       media_type: title.media_type,
       poster_path: title.poster_path,
+      backdrop_path: title.backdrop_path,
       year: title.year,
+      release_date: title.release_date || title.first_air_date,
+      first_air_date: title.first_air_date,
     });
     fetchTitleLinks(title.id);
   };
@@ -1424,6 +1457,177 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
       setTitleMetaError(`❌ Error: ${err.message || 'Network error'}`);
     } finally {
       setIsSavingTitleMeta(false);
+    }
+  };
+
+  // TMDB Interactive Search Handler for Title Manager
+  const handleSearchTmdbForTitle = async (queryToSearch?: string) => {
+    const q = (queryToSearch || tmdbSearchQuery || editTitleName || managingTitle?.title || '').trim();
+    if (!q) return;
+    setIsSearchingTmdb(true);
+    setTmdbSearchError('');
+    try {
+      const res = await fetch(`/api/admin/tmdb-search?q=${encodeURIComponent(q)}`, {
+        headers: getAdminAuthHeaders(),
+      });
+      const data = await res.json();
+      if (res.ok && Array.isArray(data.results)) {
+        setTmdbSearchResults(data.results);
+        if (data.results.length === 0) {
+          setTmdbSearchError('No matching TMDB titles found.');
+        }
+      } else {
+        setTmdbSearchError(data.error || 'Failed to search TMDB');
+      }
+    } catch (err: any) {
+      setTmdbSearchError(err.message || 'Network error');
+    } finally {
+      setIsSearchingTmdb(false);
+    }
+  };
+
+  // Select TMDB Candidate and populate proposed values
+  const handleSelectTmdbCandidate = (candidate: any) => {
+    setProposedTmdbCandidate(candidate);
+    setEditTitleName(candidate.title || candidate.name);
+    setEditTitleYear((candidate.release_date || candidate.first_air_date || '').slice(0, 4));
+    setEditTitleMediaType(candidate.media_type || (candidate.name ? 'tv' : 'movie'));
+    setEditTitleId(String(candidate.id));
+    setEditTitlePoster(candidate.poster_path || '');
+    setEditTitleBackdrop(candidate.backdrop_path || '');
+    setEditTitleOverview(candidate.overview || '');
+    // Preselect all links by default for convenient reassignment
+    setSelectedReassignLinkIds(managingTitleLinks.map((l) => l.id));
+    setReassignMsg('');
+    setReassignError('');
+  };
+
+  // Reassign Selected Links Handler
+  const handleReassignSelectedLinks = async () => {
+    if (!managingTitle || !proposedTmdbCandidate) return;
+    if (selectedReassignLinkIds.length === 0) {
+      setReassignError('Please select at least 1 link to reassign.');
+      return;
+    }
+    setIsReassigningLinks(true);
+    setReassignError('');
+    setReassignMsg('');
+    try {
+      const res = await fetch('/api/curated-links', {
+        method: 'POST',
+        headers: getAdminAuthHeaders(),
+        body: JSON.stringify({
+          action: 'reassign_links',
+          currentMovieId: String(managingTitle.id),
+          newMovieId: String(proposedTmdbCandidate.id),
+          linkIds: selectedReassignLinkIds,
+          newMetadata: {
+            movieTitle: editTitleName.trim() || proposedTmdbCandidate.title || proposedTmdbCandidate.name,
+            mediaType: editTitleMediaType,
+            posterPath: editTitlePoster.trim() || proposedTmdbCandidate.poster_path,
+            backdropPath: editTitleBackdrop.trim() || proposedTmdbCandidate.backdrop_path,
+            releaseDate: editTitleYear.trim() ? `${editTitleYear.trim()}-01-01` : proposedTmdbCandidate.release_date,
+            voteAverage: proposedTmdbCandidate.vote_average || 8.0,
+          },
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setReassignMsg(`✅ Successfully reassigned ${data.reassignedCount} link(s) to "${editTitleName}" (ID: ${proposedTmdbCandidate.id})!`);
+        addLog(`Admin reassigned ${data.reassignedCount} links from ID ${managingTitle.id} to ${proposedTmdbCandidate.id}`, 'success');
+        if (data.remainingCount === 0) {
+          const updatedTitleObj: LinkedCatalogTitle = {
+            ...managingTitle,
+            id: proposedTmdbCandidate.id,
+            title: editTitleName.trim(),
+            year: editTitleYear.trim(),
+            media_type: editTitleMediaType,
+            poster_path: editTitlePoster.trim(),
+            backdrop_path: editTitleBackdrop.trim(),
+          };
+          setManagingTitle(updatedTitleObj);
+          fetchTitleLinks(updatedTitleObj.id);
+        } else {
+          fetchTitleLinks(managingTitle.id);
+        }
+        fetchLinkedCatalogTitles(linkedTitlesPage, linkedTitlesFilter, linkedTitlesSearch);
+        refreshAdminLinks();
+      } else {
+        setReassignError(`❌ ${data.error || 'Failed to reassign links.'}`);
+      }
+    } catch (err: any) {
+      setReassignError(`❌ Error: ${err.message || 'Network error'}`);
+    } finally {
+      setIsReassigningLinks(false);
+    }
+  };
+
+  // Confirm Single Link Deletion Handler
+  const handleConfirmDeleteSingleLink = async () => {
+    if (!linkToDelete) return;
+    try {
+      setDeletingLinkId(linkToDelete.id);
+      setManagingTitleLinks((prev) => prev.filter((l) => l.id !== linkToDelete.id));
+
+      const res = await fetch(
+        `/api/curated-links?movieId=${encodeURIComponent(String(linkToDelete.movieId))}&linkId=${encodeURIComponent(linkToDelete.id)}`,
+        {
+          method: 'DELETE',
+          headers: getAdminAuthHeaders(),
+        }
+      );
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        alert(`Failed to delete link: ${errData.error || res.statusText || 'Server error'}`);
+        if (managingTitle) fetchTitleLinks(managingTitle.id);
+      } else {
+        addLog(`Deleted link #${linkToDelete.id} for title ID ${linkToDelete.movieId}`, 'info');
+      }
+    } catch (err: any) {
+      alert(`Error deleting link: ${err.message}`);
+      if (managingTitle) fetchTitleLinks(managingTitle.id);
+    } finally {
+      setDeletingLinkId(null);
+      setLinkToDelete(null);
+    }
+  };
+
+  // Confirm Entire Title Deletion Handler
+  const handleConfirmDeleteEntireTitle = async () => {
+    if (!titleToDelete) return;
+    try {
+      setIsDeletingAllLinks(true);
+      const res = await fetch('/api/curated-links', {
+        method: 'POST',
+        headers: getAdminAuthHeaders(),
+        body: JSON.stringify({
+          movieId: String(titleToDelete.id),
+          action: 'delete_entire_title',
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        await deleteAllGlobalCustomLinks(Number(titleToDelete.id));
+        setCustomLinksMap((prev) => {
+          const key = String(titleToDelete.id);
+          const next = { ...prev };
+          delete next[key];
+          return next;
+        });
+        setManagingTitleLinks([]);
+        addLog(`Permanently deleted entire title "${titleToDelete.title}" (ID: ${titleToDelete.id}) and created audit backup`, 'success');
+        setTitleManagerModalOpen(false);
+        setTitleToDelete(null);
+        setDeleteTitleConfirmChecked(false);
+        fetchLinkedCatalogTitles(linkedTitlesPage, linkedTitlesFilter, linkedTitlesSearch);
+        refreshAdminLinks();
+      } else {
+        alert(`Failed to delete title: ${data.error || 'Server error'}`);
+      }
+    } catch (err: any) {
+      alert(`Error deleting title: ${err.message}`);
+    } finally {
+      setIsDeletingAllLinks(false);
     }
   };
 
@@ -2995,6 +3199,21 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
     }
 
     const isTVLink = finalCategory === 'SingleEpisode' || finalCategory === 'ZipPack' || selectedTargetTitle.media_type === 'tv';
+    const effectiveMediaType: 'movie' | 'tv' = isTVLink ? 'tv' : 'movie';
+    const movieTitle = selectedTargetTitle.title || '';
+    const posterPath = selectedTargetTitle.poster_path || null;
+    const backdropPath = selectedTargetTitle.backdrop_path || null;
+    const releaseDate = selectedTargetTitle.release_date || selectedTargetTitle.first_air_date || (selectedTargetTitle.year ? `${selectedTargetTitle.year}-01-01` : '');
+    const voteAverage = selectedTargetTitle.vote_average;
+
+    const metadata = {
+      movieTitle,
+      mediaType: effectiveMediaType,
+      posterPath,
+      backdropPath,
+      releaseDate,
+      voteAverage,
+    };
 
     const newLinkObj: CustomLink = {
       id: `link-${Date.now()}`,
@@ -3008,9 +3227,15 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
       quality: newLinkQuality.trim() || parsed.quality,
       audioLanguage: newLinkAudio.trim() || parsed.audioLanguage,
       size: newLinkSize.trim() || parsed.size,
+      movieTitle,
+      mediaType: effectiveMediaType,
+      posterPath,
+      backdropPath,
+      releaseDate,
+      voteAverage,
     };
 
-    saveGlobalCustomLink(selectedTargetTitle.id, newLinkObj);
+    saveGlobalCustomLink(selectedTargetTitle.id, newLinkObj, metadata);
 
     addCustomLink(selectedTargetTitle.id, {
       title: newLinkTitle.trim(),
@@ -3100,6 +3325,22 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
     if (adminBulkParsedItems.length === 0 || !selectedTargetTitle) return;
 
     const isMovie = adminBulkMediaType === 'movie';
+    const effectiveMediaType: 'movie' | 'tv' = isMovie ? 'movie' : 'tv';
+    const movieTitle = selectedTargetTitle.title || '';
+    const posterPath = selectedTargetTitle.poster_path || null;
+    const backdropPath = selectedTargetTitle.backdrop_path || null;
+    const releaseDate = selectedTargetTitle.release_date || selectedTargetTitle.first_air_date || (selectedTargetTitle.year ? `${selectedTargetTitle.year}-01-01` : '');
+    const voteAverage = selectedTargetTitle.vote_average;
+
+    const metadata = {
+      movieTitle,
+      mediaType: effectiveMediaType,
+      posterPath,
+      backdropPath,
+      releaseDate,
+      voteAverage,
+    };
+
     const createdObjs: CustomLink[] = [];
     adminBulkParsedItems.forEach((item, index) => {
       const newObj: CustomLink = {
@@ -3114,11 +3355,17 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
         audioLanguage: item.audioLanguage,
         size: item.size,
         linkType: isMovie ? 'general' : item.linkType,
+        movieTitle,
+        mediaType: effectiveMediaType,
+        posterPath,
+        backdropPath,
+        releaseDate,
+        voteAverage,
       };
       createdObjs.push(newObj);
     });
 
-    saveMultipleGlobalCustomLinks(selectedTargetTitle.id, createdObjs);
+    saveMultipleGlobalCustomLinks(selectedTargetTitle.id, createdObjs, metadata);
 
     setCustomLinksMap((prev) => {
       const key = String(selectedTargetTitle.id);
@@ -3247,6 +3494,21 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
       return;
     }
 
+    const movieTitle = selectedTargetTitle.title || '';
+    const posterPath = selectedTargetTitle.poster_path || null;
+    const backdropPath = selectedTargetTitle.backdrop_path || null;
+    const releaseDate = selectedTargetTitle.release_date || selectedTargetTitle.first_air_date || (selectedTargetTitle.year ? `${selectedTargetTitle.year}-01-01` : '');
+    const voteAverage = selectedTargetTitle.vote_average;
+
+    const metadata = {
+      movieTitle,
+      mediaType: 'tv' as const,
+      posterPath,
+      backdropPath,
+      releaseDate,
+      voteAverage,
+    };
+
     const createdObjs: CustomLink[] = [];
     valid.forEach((ep, index) => {
       let finalUrl = ep.url.trim();
@@ -3266,11 +3528,18 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
         audioLanguage: ep.audio.trim() || adminGridAudio || 'Hindi + English 5.1',
         size: ep.size.trim() || adminGridSize || undefined,
         linkType: 'single_episode',
+        movieTitle,
+        mediaType: 'tv',
+        posterPath,
+        backdropPath,
+        releaseDate,
+        voteAverage,
       };
 
-      saveGlobalCustomLink(selectedTargetTitle.id, newLink);
       createdObjs.push(newLink);
     });
+
+    saveMultipleGlobalCustomLinks(selectedTargetTitle.id, createdObjs, metadata);
 
     setCustomLinksMap((prev) => {
       const key = String(selectedTargetTitle.id);
@@ -9589,6 +9858,15 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                                 {link.audioLanguage || 'Hindi'}
                               </span>
 
+                              <button
+                                type="button"
+                                onClick={() => setInspectingLink(link)}
+                                className="p-1.5 rounded-lg bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 hover:text-cyan-300 transition-colors cursor-pointer"
+                                title="Inspect link metadata & diagnostics"
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                              </button>
+
                               <a
                                 href={link.url}
                                 target="_blank"
@@ -9602,7 +9880,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                               <button
                                 type="button"
                                 disabled={deletingLinkId === link.id}
-                                onClick={() => handleDeleteManagingTitleLink(link.id, link.title)}
+                                onClick={() => setLinkToDelete({ id: link.id, title: link.title, url: link.url, movieId: managingTitle.id })}
                                 className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                                 title="Delete this link"
                               >
@@ -9621,12 +9899,15 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                   {/* Danger Zone: Delete Entire Title */}
                   <div className="pt-4 border-t border-zinc-800 flex items-center justify-between">
                     <span className="text-[11px] text-zinc-500">
-                      Need to wipe all links for this movie/series?
+                      Need to permanently delete this movie/series title and its links?
                     </span>
                     <button
                       type="button"
                       disabled={isDeletingAllLinks}
-                      onClick={() => handleDeleteAllTitleLinks(managingTitle)}
+                      onClick={() => {
+                        setTitleToDelete(managingTitle);
+                        setDeleteTitleConfirmChecked(false);
+                      }}
                       className="px-3 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 text-rose-400 hover:text-rose-300 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {isDeletingAllLinks ? (
@@ -9634,7 +9915,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                       ) : (
                         <Trash2 className="w-3.5 h-3.5" />
                       )}
-                      <span>{isDeletingAllLinks ? 'Deleting All Links...' : 'Delete All Links for this Title'}</span>
+                      <span>Delete Entire Title ({managingTitleLinks.length} Links)</span>
                     </button>
                   </div>
                 </div>
@@ -9975,19 +10256,248 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                 </div>
               )}
 
-              {/* TAB 5: FIX / EDIT TITLE & ID DIRECTLY (NO TMDB SEARCH REQUIRED) */}
+              {/* TAB 5: FIX / EDIT TITLE & REASSIGN LINKS (WITH TMDB SEARCH & SELECTIVE REASSIGNMENT) */}
               {titleManagerTab === 'edit_title' && (
-                <form onSubmit={handleSaveTitleMetadata} className="space-y-4">
-                  <div className="bg-purple-950/20 border border-purple-800/40 rounded-2xl p-4 text-xs text-purple-200/90 leading-relaxed space-y-1">
-                    <p className="font-bold flex items-center gap-1.5 text-purple-300">
-                      <Sparkles className="w-4 h-4 text-purple-400" />
-                      Direct Title & ID Correction (No TMDB Search Required)
-                    </p>
-                    <p className="text-zinc-400 text-[11px]">
-                      Fix scraped mistakes, wrong titles, wrong IDs, or unreleased media without relying on TMDB API search.
-                      Changing the ID will automatically remap all existing links for this title to the new ID.
-                    </p>
+                <div className="space-y-6">
+                  {/* TMDB Interactive Search Section */}
+                  <div className="bg-gradient-to-r from-purple-950/40 via-indigo-950/30 to-purple-950/40 border border-purple-500/30 rounded-2xl p-4 space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 text-purple-300 font-bold text-xs uppercase tracking-wider">
+                        <Search className="w-4 h-4 text-purple-400" />
+                        <span>Search TMDB to Fix Title & Reassign Links</span>
+                      </div>
+                      <span className="text-[10px] text-zinc-400 font-mono">
+                        Authoritative Metadata & Canonical IDs
+                      </span>
+                    </div>
+
+                    <div className="flex gap-2">
+                      <div className="relative flex-1">
+                        <input
+                          type="text"
+                          value={tmdbSearchQuery}
+                          onChange={(e) => setTmdbSearchQuery(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleSearchTmdbForTitle();
+                            }
+                          }}
+                          placeholder={managingTitle?.title || 'Search movie or TV series on TMDB...'}
+                          className="w-full bg-zinc-900/90 border border-purple-500/30 rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-purple-400"
+                        />
+                        <Search className="w-4 h-4 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleSearchTmdbForTitle()}
+                        disabled={isSearchingTmdb}
+                        className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50 shrink-0"
+                      >
+                        {isSearchingTmdb ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
+                        <span>{isSearchingTmdb ? 'Searching...' : 'Search TMDB'}</span>
+                      </button>
+                    </div>
+
+                    {tmdbSearchError && (
+                      <p className="text-[11px] text-amber-400 font-mono bg-amber-500/10 p-2 rounded-lg border border-amber-500/20">
+                        {tmdbSearchError}
+                      </p>
+                    )}
+
+                    {/* Candidate Results */}
+                    {tmdbSearchResults.length > 0 && (
+                      <div className="space-y-2 pt-1">
+                        <p className="text-[11px] font-bold text-zinc-300">Matching TMDB Titles:</p>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-56 overflow-y-auto pr-1 custom-scrollbar">
+                          {tmdbSearchResults.map((candidate) => {
+                            const isSelected = proposedTmdbCandidate?.id === candidate.id;
+                            const year = (candidate.release_date || candidate.first_air_date || '').slice(0, 4);
+                            return (
+                              <div
+                                key={candidate.id}
+                                onClick={() => handleSelectTmdbCandidate(candidate)}
+                                className={`p-2 rounded-xl border flex items-center gap-3 transition-all cursor-pointer ${
+                                  isSelected
+                                    ? 'bg-purple-900/40 border-purple-400 shadow-md ring-1 ring-purple-400'
+                                    : 'bg-zinc-900/70 border-zinc-800 hover:border-purple-500/50'
+                                }`}
+                              >
+                                <div className="w-10 h-14 rounded-lg bg-zinc-800 overflow-hidden shrink-0 border border-white/10">
+                                  <img
+                                    src={getImageURL(candidate.poster_path, 'w200')}
+                                    alt={candidate.title || candidate.name}
+                                    className="w-full h-full object-cover"
+                                    onError={(e) => {
+                                      (e.currentTarget as HTMLImageElement).src = '/placeholder-poster.svg';
+                                    }}
+                                  />
+                                </div>
+                                <div className="min-w-0 flex-1 space-y-0.5 text-left">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span className="font-bold text-white text-xs truncate max-w-[150px]">
+                                      {candidate.title || candidate.name}
+                                    </span>
+                                    {year && <span className="text-[10px] text-zinc-400 font-mono">({year})</span>}
+                                  </div>
+                                  <div className="flex items-center gap-1.5 text-[10px]">
+                                    <span className={`px-1.5 py-0.2 rounded font-black font-mono ${
+                                      candidate.media_type === 'tv' ? 'bg-sky-500/20 text-sky-300' : 'bg-amber-500/20 text-amber-300'
+                                    }`}>
+                                      {candidate.media_type === 'tv' ? 'TV' : 'MOVIE'}
+                                    </span>
+                                    <span className="text-zinc-500 font-mono">ID: {candidate.id}</span>
+                                  </div>
+                                </div>
+                                <button
+                                  type="button"
+                                  className={`px-2 py-1 rounded-lg text-[10px] font-bold shrink-0 ${
+                                    isSelected ? 'bg-purple-500 text-white' : 'bg-zinc-800 text-zinc-300'
+                                  }`}
+                                >
+                                  {isSelected ? '✓ Selected' : 'Select'}
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Proposed Mapping Preview & Selective Reassignment */}
+                    {proposedTmdbCandidate && (
+                      <div className="p-3.5 rounded-xl bg-purple-950/30 border border-purple-500/40 space-y-3 pt-3">
+                        <div className="flex items-center justify-between text-xs font-bold text-purple-300">
+                          <span>Mapping Preview: Current vs Proposed</span>
+                          <span className="text-[10px] text-zinc-400 font-mono">
+                            {managingTitleLinks.length} total links available
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                          <div className="p-2.5 rounded-lg bg-zinc-900/80 border border-zinc-800 space-y-1">
+                            <span className="text-[10px] text-zinc-500 uppercase font-black">Current Title Record</span>
+                            <p className="font-bold text-white truncate">{managingTitle.title}</p>
+                            <p className="font-mono text-[11px] text-zinc-400">
+                              ID: {managingTitle.id} • Type: {managingTitle.media_type.toUpperCase()}
+                            </p>
+                          </div>
+                          <div className="p-2.5 rounded-lg bg-purple-900/30 border border-purple-500/40 space-y-1">
+                            <span className="text-[10px] text-purple-400 uppercase font-black">Proposed TMDB Target</span>
+                            <p className="font-bold text-purple-200 truncate">
+                              {proposedTmdbCandidate.title || proposedTmdbCandidate.name}
+                            </p>
+                            <p className="font-mono text-[11px] text-purple-300">
+                              ID: {proposedTmdbCandidate.id} • Type: {(proposedTmdbCandidate.media_type || 'movie').toUpperCase()}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Selective Links Checkboxes */}
+                        <div className="space-y-2 pt-2 border-t border-purple-500/20">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-zinc-200">
+                              Choose which links to reassign ({selectedReassignLinkIds.length} of {managingTitleLinks.length} selected):
+                            </span>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setSelectedReassignLinkIds(managingTitleLinks.map(l => l.id))}
+                                className="text-[10px] text-purple-400 hover:underline font-bold cursor-pointer"
+                              >
+                                Select All
+                              </button>
+                              <span className="text-zinc-600">|</span>
+                              <button
+                                type="button"
+                                onClick={() => setSelectedReassignLinkIds([])}
+                                className="text-[10px] text-zinc-400 hover:underline font-bold cursor-pointer"
+                              >
+                                Deselect All
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="max-h-40 overflow-y-auto space-y-1 pr-1 custom-scrollbar">
+                            {managingTitleLinks.map((link) => {
+                              const isChecked = selectedReassignLinkIds.includes(link.id);
+                              return (
+                                <label
+                                  key={link.id}
+                                  className={`p-2 rounded-lg border flex items-center justify-between gap-2 text-[11px] cursor-pointer transition-colors ${
+                                    isChecked
+                                      ? 'bg-purple-950/40 border-purple-500/50 text-white'
+                                      : 'bg-zinc-900/50 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                                  }`}
+                                >
+                                  <div className="flex items-center gap-2 min-w-0 flex-1">
+                                    <input
+                                      type="checkbox"
+                                      checked={isChecked}
+                                      onChange={(e) => {
+                                        if (e.target.checked) {
+                                          setSelectedReassignLinkIds(prev => [...prev, link.id]);
+                                        } else {
+                                          setSelectedReassignLinkIds(prev => prev.filter(id => id !== link.id));
+                                        }
+                                      }}
+                                      className="rounded border-zinc-700 text-purple-600 focus:ring-0"
+                                    />
+                                    <span className="font-bold truncate">{link.title}</span>
+                                    <span className="text-[10px] font-mono text-amber-300">[{link.quality || '1080p'}]</span>
+                                  </div>
+                                  <span className="font-mono text-[10px] text-zinc-500 truncate max-w-[150px] shrink-0">
+                                    {link.url}
+                                  </span>
+                                </label>
+                              );
+                            })}
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={handleReassignSelectedLinks}
+                            disabled={isReassigningLinks || selectedReassignLinkIds.length === 0}
+                            className="w-full py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-xs shadow-lg shadow-purple-500/25 flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-50"
+                          >
+                            {isReassigningLinks ? (
+                              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <Sparkles className="w-3.5 h-3.5" />
+                            )}
+                            <span>
+                              {isReassigningLinks
+                                ? 'Reassigning Links...'
+                                : `Reassign ${selectedReassignLinkIds.length} Selected Link(s) to ${proposedTmdbCandidate.title || proposedTmdbCandidate.name}`}
+                            </span>
+                          </button>
+
+                          {reassignMsg && (
+                            <p className="text-xs font-mono font-bold text-emerald-300 bg-emerald-500/10 p-2.5 rounded-lg border border-emerald-500/20">
+                              {reassignMsg}
+                            </p>
+                          )}
+                          {reassignError && (
+                            <p className="text-xs font-mono font-bold text-rose-300 bg-rose-500/10 p-2.5 rounded-lg border border-rose-500/20">
+                              {reassignError}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
+
+                  {/* Manual Title Details Form (Preserved for direct edits) */}
+                  <form onSubmit={handleSaveTitleMetadata} className="space-y-4 pt-2 border-t border-zinc-800">
+                    <div className="bg-purple-950/20 border border-purple-800/40 rounded-2xl p-3.5 text-xs text-purple-200/90 leading-relaxed space-y-1">
+                      <p className="font-bold flex items-center gap-1.5 text-purple-300">
+                        <Edit className="w-3.5 h-3.5 text-purple-400" />
+                        Manual Title Fields & Fallback Customization
+                      </p>
+                      <p className="text-zinc-400 text-[11px]">
+                        You can also fine-tune any field directly below (title name, poster URL, media type, release year) and save.
+                      </p>
+                    </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {/* Title Name */}
@@ -10134,7 +10644,8 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                     </button>
                   </div>
                 </form>
-              )}
+              </div>
+            )}
 
               {/* TAB 6: TRAKT TV EPISODE TITLES */}
               {titleManagerTab === 'trakt_episodes' && managingTitle && (
@@ -10767,6 +11278,297 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                   )}
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+      {/* ========================================================= */}
+      {/* 5. LINK INSPECTION MODAL (PHASE 3 / PHASE 4)              */}
+      {/* ========================================================= */}
+      {inspectingLink && (
+        <div
+          className="fixed inset-0 z-[110] flex items-center justify-center p-3 sm:p-5 bg-black/85 backdrop-blur-md animate-fade-in"
+          onClick={() => setInspectingLink(null)}
+        >
+          <div
+            className="relative w-full max-w-2xl bg-[#0b0e17] border border-cyan-500/30 rounded-3xl shadow-2xl p-6 space-y-4 max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+              <div className="flex items-center gap-2">
+                <span className="p-2 rounded-xl bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
+                  <Eye className="w-4 h-4" />
+                </span>
+                <div>
+                  <h3 className="text-sm sm:text-base font-bold text-white">Link Record Inspection</h3>
+                  <p className="text-[11px] text-zinc-400 font-mono">ID: {inspectingLink.id}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setInspectingLink(null)}
+                className="p-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white transition-colors cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div className="p-3 rounded-xl bg-zinc-900/80 border border-zinc-800 space-y-1">
+                <span className="text-[10px] text-zinc-500 uppercase font-black">Release Title</span>
+                <p className="font-bold text-white break-words">{inspectingLink.title}</p>
+              </div>
+
+              <div className="p-3 rounded-xl bg-zinc-900/80 border border-zinc-800 space-y-1">
+                <span className="text-[10px] text-zinc-500 uppercase font-black">Destination URL</span>
+                <a
+                  href={inspectingLink.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="font-mono text-cyan-400 hover:underline break-all block"
+                >
+                  {inspectingLink.url}
+                </a>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                <div className="p-2.5 rounded-xl bg-zinc-900/60 border border-zinc-800">
+                  <span className="text-[10px] text-zinc-500 block">Quality</span>
+                  <span className="font-bold text-amber-300 font-mono">{inspectingLink.quality || '1080p'}</span>
+                </div>
+                <div className="p-2.5 rounded-xl bg-zinc-900/60 border border-zinc-800">
+                  <span className="text-[10px] text-zinc-500 block">Resolution</span>
+                  <span className="font-bold text-zinc-200 font-mono">{inspectingLink.resolution || inspectingLink.quality || '1080p'}</span>
+                </div>
+                <div className="p-2.5 rounded-xl bg-zinc-900/60 border border-zinc-800">
+                  <span className="text-[10px] text-zinc-500 block">Dynamic Range</span>
+                  <span className="font-bold text-purple-300 font-mono">{inspectingLink.dynamicRange || 'SDR'}</span>
+                </div>
+                <div className="p-2.5 rounded-xl bg-zinc-900/60 border border-zinc-800">
+                  <span className="text-[10px] text-zinc-500 block">Codec</span>
+                  <span className="font-bold text-zinc-200 font-mono">{inspectingLink.codec || 'x264/x265'}</span>
+                </div>
+                <div className="p-2.5 rounded-xl bg-zinc-900/60 border border-zinc-800">
+                  <span className="text-[10px] text-zinc-500 block">Audio</span>
+                  <span className="font-bold text-zinc-200 truncate block">{inspectingLink.audioLanguage || 'Dual Audio'}</span>
+                </div>
+                <div className="p-2.5 rounded-xl bg-zinc-900/60 border border-zinc-800">
+                  <span className="text-[10px] text-zinc-500 block">File Size</span>
+                  <span className="font-bold text-zinc-200 font-mono">{inspectingLink.size || 'N/A'}</span>
+                </div>
+                <div className="p-2.5 rounded-xl bg-zinc-900/60 border border-zinc-800">
+                  <span className="text-[10px] text-zinc-500 block">Server Provider</span>
+                  <span className="font-bold text-cyan-300">{inspectingLink.serverName || inspectingLink.provider || 'Direct'}</span>
+                </div>
+                <div className="p-2.5 rounded-xl bg-zinc-900/60 border border-zinc-800">
+                  <span className="text-[10px] text-zinc-500 block">Linked Media ID</span>
+                  <span className="font-bold text-zinc-300 font-mono">{(inspectingLink as any).movieId || managingTitle?.id}</span>
+                </div>
+                <div className="p-2.5 rounded-xl bg-zinc-900/60 border border-zinc-800">
+                  <span className="text-[10px] text-zinc-500 block">Media Type</span>
+                  <span className="font-bold text-zinc-300 uppercase">{inspectingLink.mediaType || managingTitle?.media_type}</span>
+                </div>
+              </div>
+
+              {/* Telegram Ingestion Diagnostics */}
+              {(inspectingLink.telegramMessageId || inspectingLink.telegramSender || inspectingLink.matchingDecision) && (
+                <div className="p-3.5 rounded-xl bg-sky-950/20 border border-sky-500/25 space-y-2">
+                  <div className="flex items-center gap-1.5 text-sky-400 font-bold text-[11px] uppercase tracking-wider">
+                    <Send className="w-3.5 h-3.5" />
+                    <span>Telegram Ingestion Diagnostics</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-[11px]">
+                    <div>
+                      <span className="text-zinc-500 block text-[10px]">Post Message ID:</span>
+                      <span className="font-mono text-zinc-200">#{inspectingLink.telegramMessageId || 'N/A'}</span>
+                    </div>
+                    <div>
+                      <span className="text-zinc-500 block text-[10px]">Telegram Sender:</span>
+                      <span className="font-mono text-zinc-200">@{inspectingLink.telegramSender || 'N/A'}</span>
+                    </div>
+                    <div>
+                      <span className="text-zinc-500 block text-[10px]">Matching Decision:</span>
+                      <span className="font-mono text-emerald-400">{inspectingLink.matchingDecision || 'auto_matched'}</span>
+                    </div>
+                    <div>
+                      <span className="text-zinc-500 block text-[10px]">Matching Confidence:</span>
+                      <span className="font-mono text-cyan-400">{inspectingLink.matchingConfidence || 'verified'}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="pt-3 border-t border-zinc-800 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setInspectingLink(null)}
+                className="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-white font-bold text-xs transition-colors cursor-pointer"
+              >
+                Close Inspection
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* 6. INDIVIDUAL LINK DELETION CONFIRMATION MODAL (PHASE 4A)  */}
+      {/* ========================================================= */}
+      {linkToDelete && (
+        <div
+          className="fixed inset-0 z-[120] flex items-center justify-center p-3 sm:p-5 bg-black/85 backdrop-blur-md animate-fade-in"
+          onClick={() => setLinkToDelete(null)}
+        >
+          <div
+            className="relative w-full max-w-lg bg-[#0b0e17] border border-rose-500/30 rounded-3xl shadow-2xl p-6 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-rose-500/15 border border-rose-500/40 flex items-center justify-center text-rose-400 shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">Delete Individual Link</h3>
+                <p className="text-xs text-zinc-400">This action permanently removes only this specific link.</p>
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-zinc-900/80 border border-zinc-800 space-y-2 text-xs">
+              <div>
+                <span className="text-[10px] text-zinc-500 uppercase font-black block">Link Display Title</span>
+                <span className="font-bold text-white break-words">{linkToDelete.title}</span>
+              </div>
+              <div>
+                <span className="text-[10px] text-zinc-500 uppercase font-black block">Exact Destination URL</span>
+                <span className="font-mono text-zinc-300 break-all text-[11px]">{linkToDelete.url}</span>
+              </div>
+              <div className="flex items-center justify-between text-[11px] text-zinc-400 font-mono pt-1 border-t border-zinc-800/80">
+                <span>Link ID: {linkToDelete.id}</span>
+                <span>Title ID: {linkToDelete.movieId}</span>
+              </div>
+            </div>
+
+            <p className="text-xs text-zinc-400 bg-rose-500/10 p-3 rounded-xl border border-rose-500/20 text-rose-200">
+              ⚠️ Only this link record will be deleted. The parent title record and all other destination links will remain completely intact.
+            </p>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setLinkToDelete(null)}
+                className="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-semibold transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={deletingLinkId === linkToDelete.id}
+                onClick={handleConfirmDeleteSingleLink}
+                className="px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs shadow-lg shadow-rose-500/20 flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+              >
+                {deletingLinkId === linkToDelete.id ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Trash2 className="w-3.5 h-3.5" />
+                )}
+                <span>{deletingLinkId === linkToDelete.id ? 'Deleting...' : 'Delete This Link'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* 7. ENTIRE TITLE DELETION DUAL-CONFIRMATION MODAL (PHASE 4B)*/}
+      {/* ========================================================= */}
+      {titleToDelete && (
+        <div
+          className="fixed inset-0 z-[120] flex items-center justify-center p-3 sm:p-5 bg-black/85 backdrop-blur-md animate-fade-in"
+          onClick={() => {
+            setTitleToDelete(null);
+            setDeleteTitleConfirmChecked(false);
+          }}
+        >
+          <div
+            className="relative w-full max-w-xl bg-[#0b0e17] border border-rose-500/40 rounded-3xl shadow-2xl p-6 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-rose-500/20 border border-rose-500/50 flex items-center justify-center text-rose-400 shrink-0">
+                <AlertTriangle className="w-5 h-5 text-rose-400" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">Permanently Delete Entire Title</h3>
+                <p className="text-xs text-rose-300">Permanent deletion with pre-delete audit snapshot</p>
+              </div>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-zinc-900/90 border border-zinc-800 space-y-2 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] text-zinc-500 uppercase font-black">Title Name</span>
+                <span className="font-bold text-white text-sm">{titleToDelete.title}</span>
+              </div>
+              <div className="flex items-center justify-between font-mono text-[11px]">
+                <span className="text-zinc-500">Canonical ID:</span>
+                <span className="text-zinc-300">{titleToDelete.id}</span>
+              </div>
+              <div className="flex items-center justify-between font-mono text-[11px]">
+                <span className="text-zinc-500">Media Type:</span>
+                <span className="text-amber-300 font-bold uppercase">{titleToDelete.media_type}</span>
+              </div>
+              <div className="flex items-center justify-between font-mono text-[11px]">
+                <span className="text-zinc-500">Associated Links to Wipe:</span>
+                <span className="text-rose-400 font-bold">{managingTitleLinks.length} Links</span>
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-purple-950/30 border border-purple-500/30 text-purple-200 text-xs space-y-1">
+              <div className="flex items-center gap-1.5 font-bold text-purple-300">
+                <Lock className="w-3.5 h-3.5" />
+                <span>Pre-Delete Audit Protection</span>
+              </div>
+              <p className="text-[11px] text-zinc-400">
+                All {managingTitleLinks.length} destination records will be archived into the system audit log collection before deletion for safety and recovery.
+              </p>
+            </div>
+
+            <label className="flex items-start gap-2.5 p-3 rounded-xl bg-zinc-900/60 border border-zinc-800 cursor-pointer text-xs text-zinc-300">
+              <input
+                type="checkbox"
+                checked={deleteTitleConfirmChecked}
+                onChange={(e) => setDeleteTitleConfirmChecked(e.target.checked)}
+                className="mt-0.5 rounded border-zinc-700 text-rose-600 focus:ring-0"
+              />
+              <span>
+                I confirm that I want to permanently delete <strong className="text-white">"{titleToDelete.title}"</strong> and all its {managingTitleLinks.length} links.
+              </span>
+            </label>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setTitleToDelete(null);
+                  setDeleteTitleConfirmChecked(false);
+                }}
+                className="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-semibold transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isDeletingAllLinks || !deleteTitleConfirmChecked}
+                onClick={handleConfirmDeleteEntireTitle}
+                className="px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs shadow-lg shadow-rose-500/25 flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isDeletingAllLinks ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Trash2 className="w-3.5 h-3.5" />
+                )}
+                <span>{isDeletingAllLinks ? 'Deleting Title...' : 'Permanently Delete Entire Title'}</span>
+              </button>
             </div>
           </div>
         </div>

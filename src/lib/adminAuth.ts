@@ -17,7 +17,7 @@ function getAdminTokenSecret(): string {
     getEnv('AUTH_SECRET');
 
   if (!secret) {
-    return 'cinephile-admin-session-secret-2026-production';
+    throw new Error('Server configuration error: ADMIN_SESSION_SECRET or ADMIN_SECRET_KEY is required for admin session security');
   }
   return secret;
 }
@@ -160,11 +160,7 @@ export async function validateAdminAuth(req: NextRequest | Request): Promise<boo
 
   // 1. Check Server-to-Server Admin Secret Key (Timing-safe comparison)
   const configuredSecret = (getEnv('ADMIN_SECRET_KEY') || getEnv('ADMIN_PASSWORD') || '').trim();
-  if (
-    (configuredSecret && timingSafeEqualStrings(providedToken, configuredSecret)) ||
-    providedToken === 'Shyam081' ||
-    providedToken === 'shyam_admin_pass'
-  ) {
+  if (configuredSecret && timingSafeEqualStrings(providedToken, configuredSecret)) {
     return true;
   }
 

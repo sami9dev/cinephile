@@ -194,6 +194,27 @@ export const ServiceStatusPanel: React.FC<ServiceStatusPanelProps> = ({
     };
   }, [getAuthHeaders]);
 
+  // Exclude unconfigured optional services (Trakt, MDBList, Firebase Auth) from cluttering UI
+  const UNCONFIGURED_OPTIONAL_SERVICE_IDS = React.useMemo(() => new Set(['trakt', 'mdblist', 'firebase_auth']), []);
+
+  const visibleServices = React.useMemo(() => {
+    if (!report?.services) return [];
+    return report.services.filter(
+      (svc) => !(UNCONFIGURED_OPTIONAL_SERVICE_IDS.has(svc.id) && svc.status === 'Not Configured')
+    );
+  }, [report, UNCONFIGURED_OPTIONAL_SERVICE_IDS]);
+
+  const visibleSummary = React.useMemo(() => {
+    return {
+      total: visibleServices.length,
+      operational: visibleServices.filter((s) => s.status === 'Operational').length,
+      degraded: visibleServices.filter((s) => s.status === 'Degraded').length,
+      offline: visibleServices.filter((s) => s.status === 'Offline').length,
+      notConfigured: visibleServices.filter((s) => s.status === 'Not Configured').length,
+      unknown: visibleServices.filter((s) => s.status === 'Unknown').length,
+    };
+  }, [visibleServices]);
+
   const groupedServices = React.useMemo(() => {
     const map: Record<ServiceCategoryGroup, ServiceCheckItem[]> = {
       APIs: [],
@@ -201,14 +222,13 @@ export const ServiceStatusPanel: React.FC<ServiceStatusPanelProps> = ({
       'Hosting & Deployment': [],
       'Bots & Automation': [],
     };
-    if (!report?.services) return map;
-    for (const svc of report.services) {
+    for (const svc of visibleServices) {
       if (map[svc.group]) {
         map[svc.group].push(svc);
       }
     }
     return map;
-  }, [report]);
+  }, [visibleServices]);
 
   const overallStatus: ServiceHealthState = report?.overallStatus || 'Unknown';
   const overallStyles = getStatusStyles(overallStatus);
@@ -238,7 +258,7 @@ export const ServiceStatusPanel: React.FC<ServiceStatusPanelProps> = ({
             </div>
             {report ? (
               <div className="space-y-1.5">
-                {report.services.slice(0, 6).map((svc) => {
+                {visibleServices.slice(0, 6).map((svc) => {
                   const st = getStatusStyles(svc.status);
                   return (
                     <div
@@ -259,7 +279,7 @@ export const ServiceStatusPanel: React.FC<ServiceStatusPanelProps> = ({
                 })}
                 <div className="pt-1 border-t border-white/10 text-[10px] text-cyan-400 flex items-center justify-between">
                   <span>Checked: {formatShortTime(report.checkedAt)}</span>
-                  <span>Click for all {report.services.length} services →</span>
+                  <span>Click for all {visibleServices.length} services →</span>
                 </div>
               </div>
             ) : (
@@ -273,6 +293,7 @@ export const ServiceStatusPanel: React.FC<ServiceStatusPanelProps> = ({
         {isModalOpen && (
           <ServiceStatusModal
             report={report}
+            summary={visibleSummary}
             loading={loading}
             refreshing={refreshing}
             error={error}
@@ -404,7 +425,7 @@ export const ServiceStatusPanel: React.FC<ServiceStatusPanelProps> = ({
               className="text-cyan-400 hover:text-cyan-300 font-bold hover:underline cursor-pointer flex items-center gap-1"
             >
               <Activity className="w-2.5 h-2.5" />
-              <span>Full Diagnostics ({report.summary.operational}/{report.summary.total})</span>
+              <span>Full Diagnostics ({visibleSummary.operational}/{visibleSummary.total})</span>
             </button>
           </div>
         )}
@@ -413,6 +434,7 @@ export const ServiceStatusPanel: React.FC<ServiceStatusPanelProps> = ({
       {isModalOpen && (
         <ServiceStatusModal
           report={report}
+          summary={visibleSummary}
           loading={loading}
           refreshing={refreshing}
           error={error}
@@ -427,6 +449,14 @@ export const ServiceStatusPanel: React.FC<ServiceStatusPanelProps> = ({
 
 interface ServiceStatusModalProps {
   report: ServiceStatusReport | null;
+  summary: {
+    total: number;
+    operational: number;
+    degraded: number;
+    offline: number;
+    notConfigured: number;
+    unknown: number;
+  };
   loading: boolean;
   refreshing: boolean;
   error: string | null;
@@ -437,6 +467,7 @@ interface ServiceStatusModalProps {
 
 const ServiceStatusModal: React.FC<ServiceStatusModalProps> = ({
   report,
+  summary,
   loading,
   refreshing,
   error,
@@ -506,28 +537,30 @@ const ServiceStatusModal: React.FC<ServiceStatusModalProps> = ({
             <div className="flex flex-wrap items-center gap-3 sm:gap-4">
               <span className="flex items-center gap-1.5 text-emerald-400 font-bold">
                 <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                {report.summary.operational} Operational
+                {summary.operational} Operational
               </span>
-              {report.summary.degraded > 0 && (
+              {summary.degraded > 0 && (
                 <span className="flex items-center gap-1.5 text-amber-400 font-bold">
                   <span className="w-2 h-2 rounded-full bg-amber-400" />
-                  {report.summary.degraded} Degraded
+                  {summary.degraded} Degraded
                 </span>
               )}
-              {report.summary.offline > 0 && (
+              {summary.offline > 0 && (
                 <span className="flex items-center gap-1.5 text-rose-400 font-bold">
                   <span className="w-2 h-2 rounded-full bg-rose-500" />
-                  {report.summary.offline} Offline
+                  {summary.offline} Offline
                 </span>
               )}
-              <span className="flex items-center gap-1.5 text-zinc-400 font-medium">
-                <span className="w-2 h-2 rounded-full bg-zinc-500" />
-                {report.summary.notConfigured} Not Configured
-              </span>
-              {report.summary.unknown > 0 && (
+              {summary.notConfigured > 0 && (
+                <span className="flex items-center gap-1.5 text-zinc-400 font-medium">
+                  <span className="w-2 h-2 rounded-full bg-zinc-500" />
+                  {summary.notConfigured} Not Configured
+                </span>
+              )}
+              {summary.unknown > 0 && (
                 <span className="flex items-center gap-1.5 text-slate-400 font-medium">
                   <span className="w-2 h-2 rounded-full bg-slate-400" />
-                  {report.summary.unknown} Unknown
+                  {summary.unknown} Unknown
                 </span>
               )}
             </div>

@@ -35,23 +35,27 @@ export const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({
   return (
     <div
       id={id}
-      className={`bg-[#0f121a] border border-zinc-800/80 rounded-2xl sm:rounded-3xl shadow-xl transition-all duration-200 overflow-hidden w-full max-w-full min-w-0 ${className}`}
+      className={`bg-[#121420]/95 border border-white/10 rounded-2xl sm:rounded-3xl shadow-xl transition-all duration-200 overflow-hidden w-full max-w-full min-w-0 ${className}`}
     >
       {/* Clickable Accordion Header */}
       <div
         onClick={() => setIsOpen((prev) => !prev)}
         className={`w-full p-3.5 sm:p-5 sm:px-6 cursor-pointer select-none hover:bg-zinc-900/40 transition-colors ${
-          isOpen ? 'border-b border-zinc-800/80' : ''
+          isOpen ? 'border-b border-white/10' : ''
         } ${headerClassName}`}
       >
         <div className="flex flex-col gap-2.5 min-w-0">
           {/* Main Header Row: Title & Icon on Left; Controls on Right */}
           <div className="flex items-center justify-between gap-2.5 sm:gap-3 min-w-0">
             {/* Left Side: Icon, Title, Subtitle */}
-            <div className="flex items-center gap-2 sm:gap-3.5 min-w-0 flex-1">
-              {icon && <div className="shrink-0 text-amber-400">{icon}</div>}
+            <div className="flex items-center gap-3 sm:gap-3.5 min-w-0 flex-1">
+              {icon && (
+                <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-500 shrink-0">
+                  {icon}
+                </div>
+              )}
               <div className="min-w-0 flex-1">
-                <div className="text-sm sm:text-lg font-bold text-white tracking-tight flex flex-wrap items-center gap-1.5 sm:gap-2 break-words min-w-0">
+                <div className="text-sm sm:text-base font-bold text-white tracking-tight flex flex-wrap items-center gap-1.5 sm:gap-2 break-words min-w-0">
                   {title}
                 </div>
                 {subtitle && isOpen && (
@@ -64,41 +68,25 @@ export const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({
             <div className="hidden sm:flex items-center gap-3 shrink-0">
               {action && <div onClick={(e) => e.stopPropagation()}>{action}</div>}
               {badge && (
-                <span className="px-3 py-1 rounded-full bg-zinc-900/90 border border-zinc-700/80 text-zinc-300 text-xs font-semibold pointer-events-none">
+                <span className="px-2.5 py-1 rounded-full bg-[#1c2132] text-zinc-300 text-xs font-semibold tracking-wider uppercase border border-white/5 pointer-events-none whitespace-nowrap">
                   {badge}
                 </span>
               )}
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setIsOpen((prev) => !prev);
-                }}
-                className="w-8 h-8 rounded-full border border-amber-500/50 bg-[#161922] text-amber-400 flex items-center justify-center hover:bg-amber-500/20 hover:border-amber-400 transition-all shadow-md active:scale-95 cursor-pointer"
-                aria-label={isOpen ? 'Collapse section' : 'Expand section'}
-              >
-                {isOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-              </button>
+              <div className="w-7 h-7 flex items-center justify-center text-zinc-400">
+                <ChevronDown className={`w-5 h-5 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
+              </div>
             </div>
 
             {/* Mobile Top Right: Badge & Chevron */}
-            <div className="flex sm:hidden items-center gap-1.5 shrink-0">
+            <div className="flex sm:hidden items-center gap-2 shrink-0">
               {badge && (
-                <span className="px-2 py-0.5 rounded-full bg-zinc-900/90 border border-zinc-700/80 text-zinc-300 text-[11px] font-semibold pointer-events-none whitespace-nowrap">
+                <span className="px-2 py-0.5 rounded-full bg-[#1c2132] text-zinc-300 text-[11px] font-semibold tracking-wider uppercase border border-white/5 pointer-events-none whitespace-nowrap">
                   {badge}
                 </span>
               )}
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setIsOpen((prev) => !prev);
-                }}
-                className="w-8 h-8 rounded-full border border-amber-500/50 bg-[#161922] text-amber-400 flex items-center justify-center hover:bg-amber-500/20 hover:border-amber-400 transition-all shadow-md active:scale-95 cursor-pointer"
-                aria-label={isOpen ? 'Collapse section' : 'Expand section'}
-              >
-                {isOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-              </button>
+              <div className="w-6 h-6 flex items-center justify-center text-zinc-400">
+                <ChevronDown className={`w-4 h-4 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
+              </div>
             </div>
           </div>
 

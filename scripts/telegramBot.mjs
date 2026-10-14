@@ -6,6 +6,7 @@ import { Redis } from '@upstash/redis';
 import { MongoClient } from 'mongodb';
 import http from 'http';
 import { parseReleaseDetails, formatTelegramReleaseSummary } from '../src/lib/releaseParser.ts';
+import { resolveCanonicalMedia } from '../src/lib/canonicalMedia.ts';
 
 // Ensure IPv4 lookup precedence for stable TMDB API and external cloud connections
 try {
@@ -547,7 +548,31 @@ function rankTmdbResults(items, cleanQ, targetYear, forcedType) {
   });
 
   scored.sort((a, b) => b.score - a.score);
-  return scored[0]?.item || null;
+  if (!scored[0]) return null;
+
+  const top = scored[0];
+  const item = { ...top.item };
+
+  // Ambiguity detection: if top 2 results have close scores and different IDs
+  if (scored.length > 1 && top.score > 0 && scored[1].score > 0) {
+    const scoreDiff = top.score - scored[1].score;
+    if (scoreDiff < 15 && top.item.id !== scored[1].item.id) {
+      item.matchingDecision = 'ambiguous_review_needed';
+      item.matchingConfidence = 'low_ambiguous';
+      item.candidates = scored.slice(0, 3).map((s) => ({
+        id: s.item.id,
+        title: s.item.title || s.item.name,
+        media_type: s.item.media_type,
+        release_date: s.item.release_date || s.item.first_air_date,
+        score: s.score,
+      }));
+      return item;
+    }
+  }
+
+  item.matchingDecision = 'auto_matched';
+  item.matchingConfidence = top.score >= 100 ? 'high' : 'medium';
+  return item;
 }
 
 // Global in-memory cache for TMDB results (persists across polls)
@@ -635,6 +660,30 @@ async function searchTmdb(query, year, forcedType = null) {
 
   // If IMDb gave a confident title match, resolve with TMDB Find endpoint (or use IMDb directly!)
   if (imdbCandidate && imdbCandidate.id) {
+    // Check canonical media map first to prevent numeric IMDb ID collision
+    const canonical = resolveCanonicalMedia(imdbCandidate.id, forcedType);
+    if (canonical) {
+      console.log(`🎯 Canonical Media Map locked [${imdbCandidate.id}]: ${canonical.title} (${canonical.mediaType}) -> ID ${canonical.canonicalId}`);
+      const canonicalMatched = {
+        id: canonical.canonicalId,
+        imdb_id: imdbCandidate.id,
+        title: canonical.title,
+        name: canonical.title,
+        overview: `Available for high-speed download on CineFuel.`,
+        poster_path: canonical.posterPath,
+        backdrop_path: canonical.backdropPath || canonical.posterPath,
+        release_date: canonical.releaseDate || '2024-01-01',
+        first_air_date: canonical.releaseDate || '2024-01-01',
+        vote_average: canonical.voteAverage || 8.0,
+        vote_count: 1000,
+        media_type: canonical.mediaType,
+        matchingDecision: 'canonical_mapped',
+        matchingConfidence: 'high_canonical',
+      };
+      globalTmdbCache.set(cacheKey, canonicalMatched);
+      return canonicalMatched;
+    }
+
     try {
       const findUrl = `https://api.themoviedb.org/3/find/${imdbCandidate.id}?api_key=${TMDB_API_KEY}&external_source=imdb_id`;
       const findRes = await safeFetch(findUrl, { timeoutMs: 2500 }, 1).catch(() => null);
@@ -648,6 +697,8 @@ async function searchTmdb(query, year, forcedType = null) {
           const matched = rankTmdbResults(combined, cleanQ, year, forcedType);
           if (matched) {
             console.log(`🎯 Dual Identifier (TMDB + IMDb) locked [${imdbCandidate.id}]: ${matched.title || matched.name} (${matched.media_type})`);
+            matched.matchingDecision = matched.matchingDecision || 'tmdb_imdb_find_locked';
+            matched.matchingConfidence = 'high_verified';
             globalTmdbCache.set(cacheKey, matched);
             return matched;
           }
@@ -655,27 +706,8 @@ async function searchTmdb(query, year, forcedType = null) {
       }
     } catch {}
 
-    // Resilient fallback: If TMDB Find timed out or was blocked, use authoritative IMDb metadata directly!
-    const numId = parseInt(imdbCandidate.id.replace(/\D/g, ''), 10) || Math.floor(Math.random() * 900000 + 100000);
-    const mType = (forcedType === 'tv' || imdbCandidate.q === 'TV series' || imdbCandidate.q === 'TV mini-series') ? 'tv' : 'movie';
-    const imdbImg = imdbCandidate.i?.imageUrl || '/placeholder-poster.svg';
-    const imdbMatched = {
-      id: numId,
-      imdb_id: imdbCandidate.id,
-      title: imdbCandidate.l || cleanQ,
-      name: imdbCandidate.l || cleanQ,
-      overview: `Starring ${imdbCandidate.s || 'Acclaimed Cast'}. Available for high-speed download on CineFuel.`,
-      poster_path: imdbImg,
-      backdrop_path: imdbImg,
-      release_date: imdbCandidate.y ? `${imdbCandidate.y}-01-01` : '2026-01-01',
-      first_air_date: imdbCandidate.y ? `${imdbCandidate.y}-01-01` : '2026-01-01',
-      vote_average: 8.4,
-      vote_count: 1000,
-      media_type: mType,
-    };
-    console.log(`⭐ IMDb Direct Lock [${imdbCandidate.id}]: ${imdbMatched.title} (${imdbMatched.media_type})`);
-    globalTmdbCache.set(cacheKey, imdbMatched);
-    return imdbMatched;
+    // Note: If TMDB Find did not resolve the IMDb ID, proceed directly to TMDB multi-search
+    // using clean title and release year. Do NOT synthesize a raw numeric IMDb ID.
   }
 
   // 2. Fallback to TMDB Multi-Search Ranking if IMDb didn't match or timed out
@@ -2450,25 +2482,36 @@ CineFuel Auto-Uploader is online! Send any movie or TV series link with details 
     })
   );
 
+  const quarantinedItems = [];
+
   for (const { block, meta } of blockItems) {
     const key = `${meta.titleQuery.toLowerCase()}_${meta.year || 'any'}_${meta.mediaType || 'any'}`;
     let tmdbItem = searchResults.get(key);
-    if (!tmdbItem) {
-      console.warn(`Creating resilient fallback card for: ${meta.titleQuery}`);
-      const hashId = Math.abs(meta.titleQuery.split('').reduce((acc, char) => (acc << 5) - acc + char.charCodeAt(0), 0)) % 900000 + 100000;
-      tmdbItem = {
-        id: hashId,
-        title: meta.titleQuery,
-        name: meta.titleQuery,
-        overview: 'Available for streaming & high-speed download on CineFuel.',
-        poster_path: '/placeholder-poster.svg',
-        backdrop_path: '/placeholder-backdrop.svg',
-        release_date: meta.year ? `${meta.year}-01-01` : '2026-01-01',
-        first_air_date: meta.year ? `${meta.year}-01-01` : '2026-01-01',
-        vote_average: 8.0,
-        vote_count: 500,
-        media_type: meta.mediaType === 'tv' ? 'tv' : 'movie',
-      };
+
+    // Prevent ambiguous or unresolved posts from being automatically published
+    const isAmbiguous = tmdbItem?.matchingDecision === 'ambiguous_review_needed' || tmdbItem?.matchingConfidence === 'low_ambiguous';
+    const isUnresolved = !tmdbItem || !tmdbItem.id || tmdbItem.matchingDecision === 'unresolved_quarantine';
+
+    if (isAmbiguous || isUnresolved) {
+      const reason = isAmbiguous ? 'ambiguous_title_match' : 'unresolved_canonical_id';
+      console.warn(`🛑 Quarantining release for admin review (${reason}): "${meta.titleQuery}" -> ${meta.url}`);
+      quarantinedItems.push({
+        reason,
+        titleQuery: meta.titleQuery,
+        year: meta.year,
+        mediaType: meta.mediaType,
+        rawReleaseTitle: meta.rawReleaseTitle,
+        url: meta.url,
+        quality: meta.quality,
+        audio: meta.audio,
+        size: meta.size,
+        telegramMessageId: msg?.message_id,
+        telegramChatId: chatId,
+        telegramSender: msg?.from?.username || msg?.from?.first_name || 'telegram',
+        tmdbCandidates: tmdbItem?.candidates || (tmdbItem ? [tmdbItem] : []),
+        createdAt: new Date().toISOString(),
+      });
+      continue; // Strictly prevents publishing to public catalog
     }
 
     // Strict Movie vs TV Classification:
@@ -2549,6 +2592,11 @@ CineFuel Auto-Uploader is online! Send any movie or TV series link with details 
       codec: meta.parsedRelease?.codec,
       resolution: meta.parsedRelease?.resolution,
       provider: meta.parsedRelease?.provider,
+      telegramMessageId: msg?.message_id,
+      telegramChatId: chatId,
+      telegramSender: msg?.from?.username || msg?.from?.first_name || 'telegram',
+      matchingDecision: tmdbItem?.matchingDecision || 'auto_matched',
+      matchingConfidence: tmdbItem?.matchingConfidence || (tmdbItem?.imdb_id ? 'high_imdb' : 'standard_tmdb'),
       createdAt: new Date().toISOString(),
     };
 
@@ -2576,7 +2624,17 @@ CineFuel Auto-Uploader is online! Send any movie or TV series link with details 
     });
   }
 
-  // Save all links in a single high-speed batch
+  // 1. Persist quarantined releases to MongoDB for admin review
+  if (quarantinedItems.length > 0 && mongoDb) {
+    try {
+      await mongoDb.collection('quarantine_telegram_posts').insertMany(quarantinedItems);
+      console.log(`🛡️ Persisted ${quarantinedItems.length} quarantined release(s) to quarantine_telegram_posts in MongoDB`);
+    } catch (qErr) {
+      console.warn('MongoDB quarantine persistence warning:', qErr.message);
+    }
+  }
+
+  // 2. Save all approved links in a single high-speed batch
   if (Object.keys(linksByMovieId).length > 0) {
     await saveMultipleLinks(linksByMovieId);
     console.log(`✅ Batch published ${publishedItems.length} links across ${Object.keys(linksByMovieId).length} titles!`);
@@ -2611,6 +2669,15 @@ CineFuel Auto-Uploader is online! Send any movie or TV series link with details 
 
   // 5. Send Confirmation Message back to Telegram matching media_1790946099611.png
   if (publishedItems.length === 0) {
+    if (quarantinedItems.length > 0) {
+      const qSummary = quarantinedItems
+        .map((q) => `• <b>${escapeHtml(q.titleQuery)}</b> (${q.reason === 'ambiguous_title_match' ? 'Ambiguous TMDB Match' : 'Unresolved Canonical ID'})`)
+        .join('\n');
+      return sendTelegram(
+        chatId,
+        `⚠️ <b>Releases Quarantined for Admin Review</b>\n\n${qSummary}\n\n<i>These releases were NOT published to the public catalog because canonical title verification requires admin review.</i>`
+      );
+    }
     return sendTelegram(chatId, `⚠️ *Could Not Process Releases*\nCould not find TMDB matches for the titles provided. Please verify spelling.`);
   }
 

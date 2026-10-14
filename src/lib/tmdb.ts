@@ -1,5 +1,6 @@
 import { TitleDetails, PersonDetails, WatchProvidersData } from '@/types';
 import { MOCK_TITLES, TRENDING_LIST, TOP_RATED_LIST, UPCOMING_LIST } from './mockData';
+import { resolveCanonicalMedia, CANONICAL_MEDIA_MAP, CanonicalMediaInfo } from './canonicalMedia';
 
 const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
 const TMDB_IMAGE_BASE = 'https://image.tmdb.org/t/p';
@@ -325,6 +326,48 @@ export async function getTitleDetails(mediaType: 'movie' | 'tv', id: number | st
     } catch {}
   }
 
+  // 1c. Check canonical media dictionary
+  const canonical = resolveCanonicalMedia(numId, mediaType);
+  if (canonical) {
+    return {
+      id: canonical.canonicalId,
+      media_type: canonical.mediaType,
+      title: canonical.title,
+      name: canonical.title,
+      overview: `${canonical.title} is available for high-speed download & streaming on CineFuel.`,
+      poster_path: canonical.posterPath,
+      backdrop_path: canonical.backdropPath || canonical.posterPath,
+      release_date: canonical.releaseDate || '2024-01-01',
+      first_air_date: canonical.releaseDate || '2024-01-01',
+      vote_average: canonical.voteAverage || 7.8,
+      vote_count: 1000,
+      original_language: 'en',
+      genres: [{ id: 18, name: canonical.mediaType === 'tv' ? 'TV Series' : 'Feature Film' }],
+      credits: {
+        cast: [
+          { id: 1, name: 'Lead Cast', character: 'Main Protagonist', profile_path: null },
+          { id: 2, name: 'Supporting Performer', character: 'Key Role', profile_path: null },
+        ],
+        crew: [{ id: 10, name: 'Visionary Director', job: 'Director', department: 'Directing', profile_path: null }],
+      },
+      videos: {
+        results: [{ id: '1', key: 'Way9Dexny3w', name: 'Official Trailer', site: 'YouTube', type: 'Trailer', official: true }],
+      },
+      'watch/providers': {
+        results: {
+          IN: {
+            flatrate: [
+              { provider_id: 119, provider_name: 'Amazon Prime Video', logo_path: '/emthp39XA2zhcoYLhp9ow8056vB.jpg' },
+            ],
+          },
+        },
+      },
+      similar: {
+        results: TRENDING_LIST.slice(0, 6),
+      },
+    };
+  }
+
   // 2. Check direct mock dictionary by key
   const key = `${mediaType}-${numId}`;
   if (MOCK_TITLES[key]) {
@@ -615,6 +658,8 @@ export function cleanTitleString(raw?: string): string {
     .trim();
 }
 
+export * from './canonicalMedia';
+
 /**
  * Returns a lightweight, safe TitleDetails object optimized for catalog card rendering.
  * Does NOT perform expensive subrequests, and avoids serializing giant cast/crew/video trees into SSR HTML.
@@ -626,42 +671,37 @@ export function getLightweightTitleCard(
   linksCount = 1
 ): TitleDetails {
   const numId = Number(id) || 1;
-  const strId = String(id);
-  const key = `${mediaType}-${numId}`;
+  const canonical = resolveCanonicalMedia(numId, mediaType);
+  const effectiveMediaType = canonical?.mediaType || mediaType;
+  const effectiveId = canonical?.canonicalId || numId;
+  const key = `${effectiveMediaType}-${effectiveId}`;
 
-  // 1. Authoritative metadata from stored custom link document
-  if (doc?.movieTitle || doc?.posterPath || doc?.poster_path || doc?.backdropPath || doc?.backdrop_path || doc?.title) {
-    const rawTitle = (doc.movieTitle && doc.movieTitle !== 'undefined' ? doc.movieTitle : '') || cleanTitleString(doc.title) || 'Featured Title';
-    let poster =
-      doc.posterPath ||
-      doc.poster_path ||
-      doc.backdropPath ||
-      doc.backdrop_path ||
-      '/placeholder-poster.svg';
-    let backdrop =
-      doc.backdropPath ||
-      doc.backdrop_path ||
-      doc.posterPath ||
-      doc.poster_path ||
-      '/placeholder-backdrop.svg';
+  // Helper to validate string field and reject "undefined", "null", or placeholder values
+  const cleanStr = (val: unknown): string | null => {
+    if (typeof val !== 'string') return null;
+    const t = val.trim();
+    if (!t || t === 'undefined' || t === 'null' || t.includes('placeholder')) return null;
+    return t;
+  };
 
-    let releaseDate = doc.releaseDate || '2024-01-01';
-    let overview = doc.overview || 'Available for streaming & high-speed download on CineFuel.';
-    let voteAverage = doc.voteAverage || 7.8;
+  // 1. Authoritative metadata from stored custom link document or canonical map
+  if (doc?.movieTitle || doc?.posterPath || doc?.poster_path || doc?.backdropPath || doc?.backdrop_path || doc?.title || canonical) {
+    const rawDocTitle = cleanStr(doc.movieTitle);
+    const cleanDocTitle = rawDocTitle || cleanTitleString(doc.title);
+    const rawTitle = cleanDocTitle && cleanDocTitle !== 'Featured Title' ? cleanDocTitle : (canonical?.title || 'Featured Title');
 
-    // Rich fallback for Carrie (2026 Mike Flanagan Prime Video Series)
-    const normTitle = rawTitle.toLowerCase().trim();
-    if (normTitle === 'carrie' || numId === 288673 || String(doc.title || '').toLowerCase().includes('carrie.s01')) {
-      const carrieImg = 'https://upload.wikimedia.org/wikipedia/en/7/7c/Carrie_%28miniseries_poster%29.png';
-      if (!poster || poster.includes('placeholder')) poster = carrieImg;
-      if (!backdrop || backdrop.includes('placeholder')) backdrop = carrieImg;
-      releaseDate = '2026-10-07';
-      overview = 'A sheltered high school girl with telekinetic powers faces viral bullying in Mike Flanagan’s 2026 adaptation of Stephen King’s classic.';
-      voteAverage = 7.8;
-    }
+    const cleanPosterPath = cleanStr(doc.posterPath) || cleanStr(doc.poster_path);
+    const cleanBackdropPath = cleanStr(doc.backdropPath) || cleanStr(doc.backdrop_path);
+
+    const poster = cleanPosterPath || canonical?.posterPath || cleanBackdropPath || canonical?.backdropPath || '/placeholder-poster.svg';
+    const backdrop = cleanBackdropPath || canonical?.backdropPath || cleanPosterPath || canonical?.posterPath || '/placeholder-backdrop.svg';
+
+    const releaseDate = cleanStr(doc.releaseDate) || canonical?.releaseDate || '';
+    const overview = doc.overview || `${rawTitle} is available for streaming & high-speed download on CineFuel.`;
+    const voteAverage = typeof doc.voteAverage === 'number' && doc.voteAverage > 0 ? doc.voteAverage : (canonical?.voteAverage || 7.8);
 
     return {
-      id: numId,
+      id: effectiveId,
       title: rawTitle,
       name: rawTitle,
       overview,
@@ -671,9 +711,9 @@ export function getLightweightTitleCard(
       first_air_date: releaseDate,
       vote_average: voteAverage,
       vote_count: 1000,
-      media_type: mediaType,
+      media_type: effectiveMediaType,
       original_language: doc.originalLanguage || 'en',
-      genres: [{ id: 28, name: 'Featured' }],
+      genres: [{ id: 28, name: effectiveMediaType === 'tv' ? 'TV Series' : 'Feature Film' }],
       uploadMeta: doc?.uploadMeta || {},
       linksCount,
     } as TitleDetails;
@@ -683,7 +723,7 @@ export function getLightweightTitleCard(
   const mock = MOCK_TITLES[key];
   if (mock) {
     return {
-      id: numId,
+      id: effectiveId,
       title: mock.title || mock.name || 'Untitled',
       name: mock.name || mock.title || 'Untitled',
       overview: mock.overview || 'Available for streaming & high-speed download on CineFuel.',
@@ -693,9 +733,9 @@ export function getLightweightTitleCard(
       first_air_date: mock.first_air_date || mock.release_date || '',
       vote_average: mock.vote_average || 8.0,
       vote_count: mock.vote_count || 1000,
-      media_type: mediaType,
+      media_type: effectiveMediaType,
       original_language: mock.original_language || 'en',
-      genres: mock.genres || [{ id: 28, name: 'Featured' }],
+      genres: mock.genres || [{ id: 28, name: effectiveMediaType === 'tv' ? 'TV Series' : 'Feature Film' }],
       uploadMeta: doc?.uploadMeta || {},
       linksCount,
     } as TitleDetails;
@@ -707,10 +747,10 @@ export function getLightweightTitleCard(
     ...TOP_RATED_LIST,
     ...UPCOMING_LIST,
   ];
-  const found = allCurated.find((item) => String(item.id) === strId);
+  const found = allCurated.find((item) => String(item.id) === String(effectiveId));
   if (found) {
     return {
-      id: numId,
+      id: effectiveId,
       title: found.title || found.name || 'Untitled',
       name: found.name || found.title || 'Untitled',
       overview: found.overview || 'Available for streaming & high-speed download on CineFuel.',
@@ -720,9 +760,9 @@ export function getLightweightTitleCard(
       first_air_date: found.first_air_date || found.release_date || '',
       vote_average: found.vote_average || 8.0,
       vote_count: found.vote_count || 1000,
-      media_type: mediaType,
+      media_type: effectiveMediaType,
       original_language: found.original_language || 'en',
-      genres: found.genres || [{ id: 28, name: 'Featured' }],
+      genres: found.genres || [{ id: 28, name: effectiveMediaType === 'tv' ? 'TV Series' : 'Feature Film' }],
       uploadMeta: doc?.uploadMeta || {},
       linksCount,
     } as TitleDetails;
@@ -731,7 +771,7 @@ export function getLightweightTitleCard(
   // 4. Safe fallback placeholder (clean CineFuel placeholders, no false movie posters)
   const rawTitle = cleanTitleString(doc?.title) || 'Featured Title';
   return {
-    id: numId,
+    id: effectiveId,
     title: rawTitle,
     name: rawTitle,
     overview: doc?.overview || 'Available for streaming & high-speed download on CineFuel.',
@@ -741,9 +781,9 @@ export function getLightweightTitleCard(
     first_air_date: doc?.releaseDate || '2024-01-01',
     vote_average: doc?.voteAverage || 7.8,
     vote_count: 1000,
-    media_type: mediaType,
+    media_type: effectiveMediaType,
     original_language: doc?.originalLanguage || 'en',
-    genres: [{ id: 28, name: 'Featured' }],
+    genres: [{ id: 28, name: effectiveMediaType === 'tv' ? 'TV Series' : 'Feature Film' }],
     uploadMeta: doc?.uploadMeta || {},
     linksCount,
   } as TitleDetails;
@@ -787,4 +827,7 @@ export async function getSeasonEpisodes(
 
   return null;
 }
+
+export { resolveCanonicalMedia, CANONICAL_MEDIA_MAP } from './canonicalMedia';
+export type { CanonicalMediaInfo } from './canonicalMedia';
 

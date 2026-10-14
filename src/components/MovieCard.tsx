@@ -58,15 +58,21 @@ export const MovieCard: React.FC<MovieCardProps> = ({
   const year = releaseDate ? releaseDate.split('-')[0] : '';
 
   const isLandscape = aspect === 'landscape';
-  const hasValidBackdrop = typeof item.backdrop_path === 'string' && !item.backdrop_path.includes('placeholder');
-  const hasValidPoster = typeof item.poster_path === 'string' && !item.poster_path.includes('placeholder');
+  const hasValidBackdrop = typeof item.backdrop_path === 'string' &&
+    !item.backdrop_path.includes('placeholder') &&
+    item.backdrop_path !== 'undefined' &&
+    item.backdrop_path !== 'null';
+  const hasValidPoster = typeof item.poster_path === 'string' &&
+    !item.poster_path.includes('placeholder') &&
+    item.poster_path !== 'undefined' &&
+    item.poster_path !== 'null';
   
   const chosenPath = isLandscape
-    ? (hasValidBackdrop ? item.backdrop_path : hasValidPoster ? item.poster_path : item.backdrop_path || item.poster_path)
-    : (hasValidPoster ? item.poster_path : hasValidBackdrop ? item.backdrop_path : item.poster_path);
+    ? (hasValidBackdrop ? item.backdrop_path : hasValidPoster ? item.poster_path : null)
+    : (hasValidPoster ? item.poster_path : hasValidBackdrop ? item.backdrop_path : null);
 
   const fallbackUrl = isLandscape ? '/placeholder-backdrop.svg' : '/placeholder-poster.svg';
-  const computedPosterUrl = typeof chosenPath === 'string' && !chosenPath.includes('placeholder')
+  const computedPosterUrl = chosenPath
     ? getImageURL(chosenPath, isLandscape ? 'w500' : 'w300')
     : fallbackUrl;
 
@@ -193,9 +199,15 @@ export const MovieCard: React.FC<MovieCardProps> = ({
           {/* Branded fallback overlay if no remote image exists */}
           {Boolean(imgSrc && typeof imgSrc === 'string' && imgSrc.includes('placeholder')) && (
             <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center bg-zinc-950/75 backdrop-blur-[2px] z-[5]">
-              <Film className="w-8 h-8 text-amber-400/90 mb-1.5" />
+              {mediaType === 'tv' ? (
+                <Tv className="w-8 h-8 text-indigo-400 mb-1.5" />
+              ) : (
+                <Film className="w-8 h-8 text-amber-400/90 mb-1.5" />
+              )}
               <span className="text-sm font-bold text-zinc-100 line-clamp-1 px-3 tracking-wide">{title}</span>
-              <span className="text-[11px] font-medium text-zinc-400 mt-0.5">{year || 'Latest Release'}</span>
+              <span className="text-[11px] font-medium text-zinc-400 mt-0.5">
+                {year && /^\d{4}$/.test(year) ? year : (mediaType === 'tv' ? 'TV Series' : 'Feature Film')}
+              </span>
             </div>
           )}
 
@@ -320,9 +332,15 @@ export const MovieCard: React.FC<MovieCardProps> = ({
         {/* Branded fallback overlay if no remote image exists */}
         {Boolean(imgSrc && typeof imgSrc === 'string' && imgSrc.includes('placeholder')) && (
           <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center bg-zinc-950/75 backdrop-blur-[2px] z-[5]">
-            <Film className="w-10 h-10 text-amber-400/90 mb-2" />
+            {mediaType === 'tv' ? (
+              <Tv className="w-10 h-10 text-indigo-400 mb-2" />
+            ) : (
+              <Film className="w-10 h-10 text-amber-400/90 mb-2" />
+            )}
             <span className="text-xs font-bold text-zinc-100 line-clamp-2 px-2 tracking-wide">{title}</span>
-            <span className="text-[10px] font-medium text-zinc-400 mt-1">{year || 'Latest Release'}</span>
+            <span className="text-[10px] font-medium text-zinc-400 mt-1">
+              {year && /^\d{4}$/.test(year) ? year : (mediaType === 'tv' ? 'TV Series' : 'Feature Film')}
+            </span>
           </div>
         )}
 

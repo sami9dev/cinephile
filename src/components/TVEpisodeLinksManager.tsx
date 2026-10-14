@@ -1923,6 +1923,9 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
                     <div key={resolution} className="space-y-2">
                       {/* Resolution Header Bar (e.g. 2160p) */}
                       <div className="w-full rounded-xl bg-[#151922] border border-white/5 px-5 py-3 flex items-center gap-3">
+                        <div className="w-5 h-5 flex items-center justify-center text-amber-400/80 shrink-0">
+                          <Layers className="w-4 h-4" />
+                        </div>
                         <span className="text-sm sm:text-base font-bold text-zinc-200 tracking-wide">
                           {resolution}
                         </span>

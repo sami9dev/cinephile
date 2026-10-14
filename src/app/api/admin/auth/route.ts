@@ -92,14 +92,18 @@ export async function POST(req: NextRequest) {
       const cleanUser = String(username).trim().toLowerCase();
       const cleanPass = String(password).trim();
 
-      const expectedUser = (getEnv('ADMIN_USER') || 'shyam').trim().toLowerCase();
+      const expectedUser = (getEnv('ADMIN_USER') || getEnv('ADMIN_USERNAME') || '').trim().toLowerCase();
       const configuredPass = (getEnv('ADMIN_SECRET_KEY') || getEnv('ADMIN_PASSWORD') || '').trim();
 
-      const isUserMatch = timingSafeEqualStrings(cleanUser, expectedUser) || cleanUser === 'shyam';
-      const isPassMatch =
-        (configuredPass && timingSafeEqualStrings(cleanPass, configuredPass)) ||
-        cleanPass.toLowerCase() === 'shyam081' ||
-        cleanPass === 'shyam_admin_pass';
+      if (!expectedUser || !configuredPass) {
+        return NextResponse.json(
+          { success: false, error: 'Administrator credentials are not configured on the server' },
+          { status: 500 }
+        );
+      }
+
+      const isUserMatch = timingSafeEqualStrings(cleanUser, expectedUser);
+      const isPassMatch = timingSafeEqualStrings(cleanPass, configuredPass);
 
       if (isUserMatch && isPassMatch) {
         const sessionToken = await createAdminSessionToken(cleanUser);

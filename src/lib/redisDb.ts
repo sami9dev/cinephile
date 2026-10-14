@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { getDatabase, resetMongoClient } from '@/lib/mongodb';
 import { TitleDetails } from '@/types';
-import { getTitleDetails, getLightweightTitleCard, cleanTitleString } from '@/lib/tmdb';
+import { getTitleDetails, getLightweightTitleCard, cleanTitleString, resolveCanonicalMedia } from '@/lib/tmdb';
 import { detectShowPlatform, stripWatermarks, detectSeasonNumber, detectEpisodeNumber } from '@/lib/seasonParser';
 
 import { getEnv } from '@/lib/env';
@@ -375,7 +375,9 @@ async function proxyMutationToUpstream(method: 'POST' | 'DELETE', path: string, 
   if (!isCloudflare) return false;
 
   const upstreamBase = getEnv('UPSTREAM_API_URL') || 'https://cinephile-app.vercel.app';
-  const adminSecret = getEnv('ADMIN_SECRET_KEY') || 'Shyam081';
+  const adminSecret = (getEnv('ADMIN_SECRET_KEY') || getEnv('ADMIN_PASSWORD') || '').trim();
+  if (!adminSecret) return false;
+  const adminUser = (getEnv('ADMIN_USER') || getEnv('ADMIN_USERNAME') || 'admin').trim();
   const url = `${upstreamBase}${path}`;
 
   try {
@@ -384,7 +386,7 @@ async function proxyMutationToUpstream(method: 'POST' | 'DELETE', path: string, 
     const headers: Record<string, string> = {
       'x-admin-key': adminSecret,
       'authorization': `Bearer ${adminSecret}`,
-      'x-admin-user': 'shyam',
+      'x-admin-user': adminUser,
       'User-Agent': 'Cloudflare-Worker-CineFuel',
     };
     if (body) {
@@ -535,7 +537,7 @@ export function isLinkAlreadyInDatabase(movieId: number | string, url: string): 
 /**
  * Saves multiple links to Upstash Redis and local JSON backup in one atomic operation
  */
-export async function saveMultipleLinksToDatabase(movieId: number | string, links: any[]): Promise<boolean> {
+export async function saveMultipleLinksToDatabase(movieId: number | string, links: any[], metadata?: any): Promise<boolean> {
   if (!links || links.length === 0) return true;
   const key = String(movieId);
   let persisted = false;
@@ -547,6 +549,7 @@ export async function saveMultipleLinksToDatabase(movieId: number | string, link
       const ok = await proxyMutationToUpstream('POST', '/api/curated-links', {
         movieId: key,
         links,
+        metadata,
       });
       if (ok) persisted = true;
     } catch {}
@@ -560,15 +563,24 @@ export async function saveMultipleLinksToDatabase(movieId: number | string, link
         {
           movieId: key,
           $or: [
-            { posterPath: { $exists: true, $nin: [null, ''] } },
-            { movieTitle: { $exists: true, $nin: [null, ''] } },
+            { posterPath: { $exists: true, $nin: [null, '', 'undefined', '/placeholder-poster.svg'] } },
+            { movieTitle: { $exists: true, $nin: [null, '', 'undefined'] } },
           ],
         },
         { sort: { createdAt: -1 } }
       );
       const ops = links.map((l) => {
         const enriched = { ...l };
+        if (metadata) {
+          if (!enriched.movieTitle && metadata.movieTitle) enriched.movieTitle = metadata.movieTitle;
+          if (!enriched.mediaType && metadata.mediaType) enriched.mediaType = metadata.mediaType;
+          if (!enriched.posterPath && metadata.posterPath) enriched.posterPath = metadata.posterPath;
+          if (!enriched.backdropPath && metadata.backdropPath) enriched.backdropPath = metadata.backdropPath;
+          if (!enriched.releaseDate && metadata.releaseDate) enriched.releaseDate = metadata.releaseDate;
+          if (typeof enriched.voteAverage !== 'number' && typeof metadata.voteAverage === 'number') enriched.voteAverage = metadata.voteAverage;
+        }
         if (existingDoc) {
+          if (!enriched.movieTitle && existingDoc.movieTitle) enriched.movieTitle = existingDoc.movieTitle;
           if (!enriched.posterPath) enriched.posterPath = existingDoc.posterPath || existingDoc.poster_path;
           if (!enriched.backdropPath) enriched.backdropPath = existingDoc.backdropPath || existingDoc.backdrop_path;
           if (existingDoc.mediaType === 'movie') {
@@ -1127,9 +1139,14 @@ export async function replaceAllLinksForTitle(
   }
 
   // 3. MongoDB Atlas
-  try {
-    const db = await getDatabase();
-    if (db) {
+  const hasMongo = Boolean(getEnv('MONGODB_URI'));
+
+  if (hasMongo && !isCloudflare) {
+    try {
+      const db = await getDatabase();
+      if (!db) {
+        throw new Error(`Primary database connection unavailable for replaceAllLinksForTitle(${key})`);
+      }
       const collection = db.collection('links');
       let existingDoc: any = null;
       if (!metadata?.movieTitle || !metadata?.posterPath) {
@@ -1156,9 +1173,10 @@ export async function replaceAllLinksForTitle(
         });
         await collection.insertMany(docsToInsert);
       }
+    } catch (err: any) {
+      console.error('MongoDB Atlas replaceAllLinksForTitle error:', err.message);
+      throw new Error(`Database write failed during replaceAllLinksForTitle: ${err.message}`);
     }
-  } catch (err: any) {
-    console.warn('MongoDB Atlas replaceAllLinksForTitle error:', err.message);
   }
 
   await invalidateCatalogCache().catch(() => {});
@@ -1264,6 +1282,222 @@ export async function updateTitleMetadata(
 
   await invalidateCatalogCache().catch(() => {});
   return { success: true, updatedCount: links.length, newId: newKey };
+}
+
+/**
+ * Reassigns specific link IDs from currentMovieId to newMovieId, preserving
+ * the exact destination URL, internal link ID, quality, codec, audio, etc.
+ * Supports partial reassignment (moving 1 or more links) or full reassignment.
+ * If all links are reassigned, currentMovieId is removed from database.
+ */
+export async function reassignLinksInDatabase(
+  currentMovieId: number | string,
+  newMovieId: number | string,
+  linkIds: string[],
+  newMetadata?: {
+    movieTitle?: string;
+    mediaType?: 'movie' | 'tv';
+    posterPath?: string;
+    backdropPath?: string;
+    releaseDate?: string;
+    voteAverage?: number;
+  }
+): Promise<{
+  success: boolean;
+  reassignedCount: number;
+  remainingCount: number;
+  destinationCount: number;
+}> {
+  const oldKey = String(currentMovieId).trim();
+  const newKey = String(newMovieId).trim();
+  if (!oldKey || !newKey) throw new Error('currentMovieId and newMovieId are required');
+  if (!Array.isArray(linkIds) || linkIds.length === 0) throw new Error('linkIds must be a non-empty array');
+
+  const linkIdSet = new Set(linkIds.map((id) => String(id)));
+
+  // 1. Fetch current links from source
+  const currentRes = await getLinksFromDatabase(oldKey);
+  const currentLinks = Array.isArray(currentRes.links) ? currentRes.links : [];
+
+  const linksToMove = currentLinks.filter((l) => linkIdSet.has(String(l.id)));
+  const remainingLinks = currentLinks.filter((l) => !linkIdSet.has(String(l.id)));
+
+  if (linksToMove.length === 0) {
+    throw new Error('No matching links found under currentMovieId with the provided linkIds');
+  }
+
+  // 2. Fetch destination links
+  const destRes = await getLinksFromDatabase(newKey);
+  const destLinks = Array.isArray(destRes.links) ? [...destRes.links] : [];
+
+  const nowIso = new Date().toISOString();
+  const explicitReleaseDate = newMetadata?.releaseDate ? String(newMetadata.releaseDate).trim() : null;
+
+  // 3. Update the moved links to newKey, preserving exact URL, ID, quality, etc.
+  const updatedMovedLinks = linksToMove.map((l) => ({
+    ...l,
+    movieId: newKey,
+    updatedAt: nowIso,
+    ...(newMetadata?.movieTitle ? { movieTitle: newMetadata.movieTitle } : {}),
+    ...(newMetadata?.posterPath ? { posterPath: newMetadata.posterPath } : {}),
+    ...(newMetadata?.backdropPath ? { backdropPath: newMetadata.backdropPath } : {}),
+    ...(newMetadata?.mediaType ? { mediaType: newMetadata.mediaType } : {}),
+    ...(explicitReleaseDate ? { releaseDate: explicitReleaseDate } : (l.releaseDate ? { releaseDate: l.releaseDate } : {})),
+    ...(newMetadata?.voteAverage !== undefined ? { voteAverage: newMetadata.voteAverage } : {}),
+  }));
+
+  // Append to destination without duplicating ID
+  const finalDestLinks = [...destLinks.filter((dl) => !linkIdSet.has(String(dl.id))), ...updatedMovedLinks];
+
+  // 4. Update MongoDB Atlas in-place (atomic and respects unique id index without duplicate key collision)
+  const hasMongo = Boolean(getEnv('MONGODB_URI'));
+  const isCloudflare = typeof (globalThis as any).WebSocketPair !== 'undefined' || Boolean(getEnv('WORKER_NAME'));
+  let db: any = null;
+
+  if (hasMongo && !isCloudflare) {
+    db = await getDatabase();
+    if (!db) {
+      throw new Error(`Primary database connection unavailable for reassignLinksInDatabase(${oldKey} -> ${newKey})`);
+    }
+    const collection = db.collection('links');
+    const updatePayload: Record<string, any> = {
+      movieId: newKey,
+      updatedAt: nowIso,
+    };
+    if (newMetadata?.movieTitle) updatePayload.movieTitle = newMetadata.movieTitle;
+    if (newMetadata?.posterPath) updatePayload.posterPath = newMetadata.posterPath;
+    if (newMetadata?.backdropPath) updatePayload.backdropPath = newMetadata.backdropPath;
+    if (newMetadata?.mediaType) updatePayload.mediaType = newMetadata.mediaType;
+    if (explicitReleaseDate) updatePayload.releaseDate = explicitReleaseDate;
+    if (newMetadata?.voteAverage !== undefined) updatePayload.voteAverage = newMetadata.voteAverage;
+
+    try {
+      await collection.updateMany(
+        {
+          id: { $in: Array.from(linkIdSet) },
+          $or: [{ movieId: oldKey }, { movieId: Number(oldKey) }],
+        },
+        {
+          $set: updatePayload,
+        }
+      );
+    } catch (dbErr: any) {
+      console.error('MongoDB Atlas reassignLinksInDatabase error:', dbErr.message);
+      throw new Error(`Database write failed during reassignLinksInDatabase: ${dbErr.message}`);
+    }
+  }
+
+  // 5. Update Upstash Redis
+  const redisClient = getRedisClient();
+  if (redisClient) {
+    try {
+      if (remainingLinks.length === 0) {
+        await redisClient.hdel(REDIS_HASH_KEY, oldKey);
+      } else {
+        await redisClient.hset(REDIS_HASH_KEY, { [oldKey]: remainingLinks });
+      }
+      await redisClient.hset(REDIS_HASH_KEY, { [newKey]: finalDestLinks });
+    } catch (redisErr: any) {
+      console.warn('Upstash Redis link reassignment warning:', redisErr.message);
+    }
+  }
+
+  // 6. Update Local Fallback Storage
+  try {
+    const local = getLocalFallbackLinks();
+    if (remainingLinks.length === 0) {
+      delete local[oldKey];
+    } else {
+      local[oldKey] = remainingLinks;
+    }
+    local[newKey] = finalDestLinks;
+    saveLocalFallbackLinks(local);
+  } catch {}
+
+  // 7. Record audit entry
+  try {
+    if (db) {
+      await db.collection('audit_reassignments').insertOne({
+        action: 'reassign_links',
+        sourceMovieId: oldKey,
+        destinationMovieId: newKey,
+        reassignedLinkIds: Array.from(linkIdSet),
+        reassignedCount: linksToMove.length,
+        timestamp: nowIso,
+        newMetadata: newMetadata || {},
+      }).catch(() => {});
+    }
+  } catch {}
+
+  await invalidateCatalogCache().catch(() => {});
+
+  return {
+    success: true,
+    reassignedCount: linksToMove.length,
+    remainingCount: remainingLinks.length,
+    destinationCount: finalDestLinks.length,
+  };
+}
+
+/**
+ * Permanently deletes an entire title and all its associated links,
+ * while creating an audit backup log in MongoDB and local storage.
+ */
+export async function deleteEntireTitleWithAudit(
+  movieId: number | string
+): Promise<{
+  success: boolean;
+  deletedCount: number;
+  auditBackup: {
+    movieId: string;
+    title?: string;
+    mediaType?: string;
+    deletedCount: number;
+    deletedAt: string;
+  };
+}> {
+  const key = String(movieId).trim();
+  if (!key) throw new Error('movieId is required');
+
+  const res = await getLinksFromDatabase(key);
+  const links = Array.isArray(res.links) ? res.links : [];
+  const first = links[0];
+  const auditBackup = {
+    movieId: key,
+    title: first?.movieTitle || first?.title || `Title #${key}`,
+    mediaType: first?.mediaType || 'unknown',
+    deletedCount: links.length,
+    deletedAt: new Date().toISOString(),
+    linksSnapshot: links,
+  };
+
+  // 1. Durably save audit backup in MongoDB before proceeding with any deletion
+  const db = await getDatabase();
+  if (!db) {
+    throw new Error(`Database connection unavailable: deletion of title #${key} aborted for safety to prevent unaudited data loss`);
+  }
+  try {
+    await db.collection('audit_title_deletions').insertOne(auditBackup);
+  } catch (auditErr: any) {
+    throw new Error(`Audit backup write failed: deletion of title #${key} aborted for safety (${auditErr?.message || 'audit error'})`);
+  }
+
+  // 2. Perform deletion only after audit snapshot is durably confirmed
+  await deleteAllLinksForTitle(key);
+
+  await invalidateCatalogCache().catch(() => {});
+
+  return {
+    success: true,
+    deletedCount: links.length,
+    auditBackup: {
+      movieId: auditBackup.movieId,
+      title: auditBackup.title,
+      mediaType: auditBackup.mediaType,
+      deletedCount: auditBackup.deletedCount,
+      deletedAt: auditBackup.deletedAt,
+    },
+  };
 }
 
 /**
@@ -1915,52 +2149,104 @@ export async function getPaginatedUploadedTitles(
 
         const aggResults = await collection.aggregate(pipeline).toArray();
 
+        // Cleanse string literals "undefined", "null", or placeholder strings
+        const cleanString = (val?: any): string | null => {
+          if (typeof val !== 'string') return null;
+          const trimmed = val.trim();
+          if (!trimmed || trimmed === 'undefined' || trimmed === 'null' || trimmed.includes('placeholder')) return null;
+          return trimmed;
+        };
+
         // Enrich the current page entries (at most safeLimit records) into lightweight card objects
-        const items = aggResults.map((item: any) => {
+        const rawItems = aggResults.map((item: any) => {
           const mId = String(item._id || item.latestDoc?.movieId || '');
           const baseDoc = item.latestDoc || {};
           const doc = {
             ...baseDoc,
-            movieTitle: baseDoc.movieTitle || item.groupMovieTitle || '',
+            movieTitle: cleanString(baseDoc.movieTitle) || cleanString(item.groupMovieTitle) || '',
             posterPath:
-              baseDoc.posterPath ||
-              item.groupPosterPath ||
-              baseDoc.poster_path ||
-              item.groupPosterPathSnake ||
+              cleanString(baseDoc.posterPath) ||
+              cleanString(item.groupPosterPath) ||
+              cleanString(baseDoc.poster_path) ||
+              cleanString(item.groupPosterPathSnake) ||
               null,
             backdropPath:
-              baseDoc.backdropPath ||
-              item.groupBackdropPath ||
-              baseDoc.backdrop_path ||
-              item.groupBackdropPathSnake ||
+              cleanString(baseDoc.backdropPath) ||
+              cleanString(item.groupBackdropPath) ||
+              cleanString(baseDoc.backdrop_path) ||
+              cleanString(item.groupBackdropPathSnake) ||
               null,
           };
 
+          // Canonical Media Resolution (Authority over raw ID anomalies)
+          const canonical = resolveCanonicalMedia(mId);
+
           // Strict Movie vs TV Classification:
-          // 1. If explicit mediaType is 'movie' (or any link in group is 'movie'), it is a MOVIE
-          // 2. A movie must NEVER be rendered as TV series or assigned season/episode UI
+          // 1. Authoritative canonical mediaType takes highest priority if present
+          // 2. If explicit mediaType in document/group is 'movie', it is a MOVIE
+          // 3. If explicit mediaType is 'tv', it is TV
+          // 4. Filename codec tokens like x264, x265, 5.1, 7.1 must NEVER trigger TV/season detection!
           let mediaType: 'movie' | 'tv' = 'movie';
-          const explicitType = doc.mediaType || (item.allMediaTypes?.includes('movie') ? 'movie' : (item.allMediaTypes?.includes('tv') ? 'tv' : undefined));
-          if (explicitType === 'movie') {
-            mediaType = 'movie';
-          } else if (explicitType === 'tv') {
-            mediaType = 'tv';
-          } else {
-            const isTv =
-              (typeof doc.seasonNumber === 'number' && doc.seasonNumber > 0 && doc.seasonNumber < 200) ||
-              doc.linkType === 'zip_pack' ||
-              doc.linkType === 'single_episode' ||
-              doc.category === 'ZipPack' ||
-              doc.category === 'SingleEpisode' ||
-              /\bs\d{1,2}e\d{1,2}\b|\bseason\s*\d+\b/i.test(doc.title || '');
-            mediaType = isTv ? 'tv' : 'movie';
+
+          // Detect conflict between stored media types in group
+          const cleanMediaTypes = (item.allMediaTypes || []).filter((t: any) => t === 'movie' || t === 'tv');
+          if (cleanMediaTypes.includes('movie') && cleanMediaTypes.includes('tv')) {
+            console.warn(`[Classification Conflict] Title ${mId} contains conflicting media types:`, cleanMediaTypes);
           }
+
+          if (canonical?.mediaType) {
+            mediaType = canonical.mediaType;
+          } else {
+            const rawExplicit = baseDoc.mediaType === 'movie' || baseDoc.mediaType === 'tv'
+              ? baseDoc.mediaType
+              : (cleanMediaTypes.includes('movie') ? 'movie' : (cleanMediaTypes.includes('tv') ? 'tv' : undefined));
+
+            if (rawExplicit === 'movie') {
+              mediaType = 'movie';
+            } else if (rawExplicit === 'tv') {
+              mediaType = 'tv';
+            } else {
+              // Safe explicit fallback: Only genuine season/episode patterns; NEVER audio/video codec tokens!
+              const cleanTitle = (doc.title || '').replace(/\b(?:x26[45]|h26[45]|hevc|avc|[1257]\.[01]|1080p|2160p|720p|4k)\b/gi, ' ');
+              const hasStrictSeasonPattern = /\b[Ss](?:eason\s*)?0*[1-9]\d{0,1}[Ee]0*[1-9]\d{0,2}\b/i.test(cleanTitle);
+              const isTv =
+                (typeof doc.seasonNumber === 'number' && doc.seasonNumber > 0 && doc.seasonNumber < 200 && (doc.linkType === 'single_episode' || doc.linkType === 'zip_pack' || doc.category === 'SingleEpisode' || doc.category === 'ZipPack')) ||
+                hasStrictSeasonPattern;
+              mediaType = isTv ? 'tv' : 'movie';
+            }
+          }
+
           const card = getLightweightTitleCard(mediaType, mId, doc, item.linksCount || 1);
           return {
             ...card,
             uploadMeta: extractUploadMeta(doc, mediaType, card),
           };
         }).filter(Boolean) as TitleDetails[];
+
+        // Deduplicate cards by canonical media ID + explicit media type
+        const items: TitleDetails[] = [];
+        const seenCardMap = new Map<string, number>();
+
+        for (const card of rawItems) {
+          const cardKey = `${card.media_type}:${card.id}`;
+          if (seenCardMap.has(cardKey)) {
+            const existingIdx = seenCardMap.get(cardKey)!;
+            const existing = items[existingIdx];
+            // Merge link counts
+            existing.linksCount = (existing.linksCount || 1) + (card.linksCount || 1);
+            // Upgrade artwork if existing has placeholder but incoming has genuine poster
+            const existingHasPlaceholder = !existing.poster_path || existing.poster_path.includes('placeholder');
+            const incomingHasRealPoster = card.poster_path && !card.poster_path.includes('placeholder');
+            if (existingHasPlaceholder && incomingHasRealPoster) {
+              existing.poster_path = card.poster_path;
+              existing.backdrop_path = card.backdrop_path || card.poster_path;
+              existing.vote_average = card.vote_average || existing.vote_average;
+            }
+          } else {
+            seenCardMap.set(cardKey, items.length);
+            items.push(card);
+          }
+        }
         const hasMore = safePage < totalPages;
         const lastItem = aggResults[aggResults.length - 1];
         const nextCursor =

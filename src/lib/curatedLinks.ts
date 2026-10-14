@@ -108,7 +108,7 @@ export async function syncServerLinks(movieId?: number): Promise<void> {
 /**
  * Save a new custom link into global storage (Admin only)
  */
-export function saveGlobalCustomLink(movieId: number, link: CustomLink): void {
+export function saveGlobalCustomLink(movieId: number, link: CustomLink, metadata?: Record<string, any>): void {
   if (typeof window === 'undefined') return;
   try {
     const stored = safeGetLocalStorage('cinefuel_custom_links');
@@ -135,7 +135,7 @@ export function saveGlobalCustomLink(movieId: number, link: CustomLink): void {
     fetch('/api/curated-links', {
       method: 'POST',
       headers: getAdminHeaders(),
-      body: JSON.stringify({ movieId, link }),
+      body: JSON.stringify({ movieId, link, metadata }),
     }).catch(() => {});
   } catch (err) {
     console.error('Failed to save global custom link:', err);
@@ -145,7 +145,7 @@ export function saveGlobalCustomLink(movieId: number, link: CustomLink): void {
 /**
  * Save multiple custom links in a single atomic batch (Admin only)
  */
-export function saveMultipleGlobalCustomLinks(movieId: number, newLinks: CustomLink[]): void {
+export function saveMultipleGlobalCustomLinks(movieId: number, newLinks: CustomLink[], metadata?: Record<string, any>): void {
   if (typeof window === 'undefined' || !newLinks || newLinks.length === 0) return;
   try {
     const stored = safeGetLocalStorage('cinefuel_custom_links');
@@ -174,7 +174,7 @@ export function saveMultipleGlobalCustomLinks(movieId: number, newLinks: CustomL
     fetch('/api/curated-links', {
       method: 'POST',
       headers: getAdminHeaders(),
-      body: JSON.stringify({ movieId, links: newLinks }),
+      body: JSON.stringify({ movieId, links: newLinks, metadata }),
     }).catch(() => {});
   } catch (err) {
     console.error('Failed to save multiple global custom links:', err);

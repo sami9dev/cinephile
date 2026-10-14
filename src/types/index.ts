@@ -152,6 +152,7 @@ export interface TitleDetails {
     rawTitle?: string;
     statusText?: string;
   };
+  linksCount?: number;
 }
 
 export interface PersonDetails {
@@ -191,6 +192,7 @@ export interface CustomLink {
   serverName?: string; // 'HubCloud' | 'GDFlix' | 'Google Drive' | 'Mega'
   serverBadge?: string; // '⚡ Server 1: HubCloud'
   movieTitle?: string;
+  mediaType?: 'movie' | 'tv';
   originalLanguage?: string;
   originCountry?: string[];
   posterPath?: string | null;
@@ -203,6 +205,11 @@ export interface CustomLink {
   codec?: string;
   resolution?: string;
   provider?: string;
+  telegramMessageId?: number;
+  telegramChatId?: number;
+  telegramSender?: string;
+  matchingDecision?: string;
+  matchingConfidence?: string;
   manualOverrides?: {
     container?: string;
     packType?: string;
