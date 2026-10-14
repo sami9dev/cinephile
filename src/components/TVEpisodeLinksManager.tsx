@@ -1750,10 +1750,10 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
           <button
             type="button"
             onClick={() => setPacksAccordionOpen((prev) => !(prev ?? isPacksOpen))}
-            className="w-full rounded-xl bg-[#1e232b] hover:bg-[#252b34] border border-white/5 px-5 py-3.5 flex items-center justify-between cursor-pointer transition-colors select-none group"
+            className="w-full rounded-xl bg-[#1e232b] hover:bg-[#252b34] border border-white/5 px-5 py-3.5 flex items-center gap-3 cursor-pointer transition-colors select-none group text-left"
             aria-expanded={isPacksOpen}
           >
-            <div className="flex items-center text-zinc-400 group-hover:text-zinc-200 transition-colors">
+            <div className="w-5 h-5 flex items-center justify-center text-zinc-400 group-hover:text-zinc-200 transition-colors shrink-0">
               {isPacksOpen ? (
                 <ChevronUp className="w-5 h-5 text-zinc-300" />
               ) : (
@@ -1898,10 +1898,10 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
           <button
             type="button"
             onClick={() => setEpisodesAccordionOpen((prev) => !(prev ?? isEpisodesOpen))}
-            className="w-full rounded-xl bg-[#1e232b] hover:bg-[#252b34] border border-white/5 px-5 py-3.5 flex items-center justify-between cursor-pointer transition-colors select-none group"
+            className="w-full rounded-xl bg-[#1e232b] hover:bg-[#252b34] border border-white/5 px-5 py-3.5 flex items-center gap-3 cursor-pointer transition-colors select-none group text-left"
             aria-expanded={isEpisodesOpen}
           >
-            <div className="flex items-center text-zinc-400 group-hover:text-zinc-200 transition-colors">
+            <div className="w-5 h-5 flex items-center justify-center text-zinc-400 group-hover:text-zinc-200 transition-colors shrink-0">
               {isEpisodesOpen ? (
                 <ChevronUp className="w-5 h-5 text-zinc-300" />
               ) : (
@@ -1922,13 +1922,13 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
                   return (
                     <div key={resolution} className="space-y-2">
                       {/* Resolution Header Bar (e.g. 2160p) */}
-                      <div className="w-full rounded-xl bg-[#151922] border border-white/5 px-5 py-3 flex items-center">
+                      <div className="w-full rounded-xl bg-[#151922] border border-white/5 px-5 py-3 flex items-center gap-3">
                         <span className="text-sm sm:text-base font-bold text-zinc-200 tracking-wide">
                           {resolution}
                         </span>
                       </div>
 
-                      {/* Quality Sub-Accordions (e.g. 2160p SDR, 2160p Hybrid, etc.) */}
+                      {/* Quality Sub-Accordions (e.g. 2160p DV HDR, 2160p SDR, etc.) */}
                       {tiers.map((tier) => {
                         const isSubTierOpen = isTierOpen(tier.id);
                         return (
@@ -1937,10 +1937,10 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
                             <button
                               type="button"
                               onClick={() => toggleTier(tier.id)}
-                              className="w-full rounded-xl bg-[#1e232b] hover:bg-[#252b34] border border-white/5 px-5 py-3 flex items-center justify-between cursor-pointer transition-colors select-none group"
+                              className="w-full rounded-xl bg-[#1e232b] hover:bg-[#252b34] border border-white/5 px-5 py-3 flex items-center gap-3 cursor-pointer transition-colors select-none group text-left"
                               aria-expanded={isSubTierOpen}
                             >
-                              <div className="flex items-center text-zinc-400 group-hover:text-zinc-200 transition-colors">
+                              <div className="w-5 h-5 flex items-center justify-center text-zinc-400 group-hover:text-zinc-200 transition-colors shrink-0">
                                 {isSubTierOpen ? (
                                   <ChevronUp className="w-4 h-4 text-zinc-300" />
                                 ) : (
