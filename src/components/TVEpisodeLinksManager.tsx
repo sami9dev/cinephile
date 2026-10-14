@@ -18,8 +18,6 @@ import {
   Layers,
   ExternalLink,
   Flag,
-  Check,
-  X,
   AlertTriangle,
   Filter,
 } from 'lucide-react';
@@ -29,7 +27,6 @@ import { useWatchlist } from '@/context/WatchlistContext';
 import {
   updateGlobalCustomLink,
   deleteGlobalCustomLink,
-  updateGlobalEpisodeTitle,
 } from '@/lib/curatedLinks';
 import {
   detectSeasonNumber,
@@ -795,10 +792,6 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
   >(new Map());
   const [isLoadingVerifiedEpisodes, setIsLoadingVerifiedEpisodes] = useState<boolean>(false);
 
-  // Manual Episode Title Correction States (Admin inline edit without TMDB search)
-  const [editingEpisodeNumber, setEditingEpisodeNumber] = useState<number | null>(null);
-  const [editingEpisodeTitleInput, setEditingEpisodeTitleInput] = useState<string>('');
-  const [isSavingEpisodeTitle, setIsSavingEpisodeTitle] = useState<boolean>(false);
   const [manualEpisodeTitlesMap, setManualEpisodeTitlesMap] = useState<Map<string, string>>(
     new Map()
   );
@@ -1114,7 +1107,6 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
     setSelectedSeason(seasonNum);
     setSelectedQualityFilter('All');
     setOpenSlideId(null);
-    setEditingEpisodeNumber(null);
   };
 
   // Fetch verified official episode metadata for the effective season (IMDb -> TVMaze -> TMDB -> Trakt)
@@ -1373,32 +1365,6 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
     );
   }, [seasonEpisodes, selectedQualityFilter]);
 
-  const handleSaveManualEpisodeTitle = async (epNum: number) => {
-    const trimmed = editingEpisodeTitleInput.trim();
-    if (!trimmed) return;
-    setIsSavingEpisodeTitle(true);
-    try {
-      const res = await updateGlobalEpisodeTitle(titleDetails.id, {
-        seasonNumber: effectiveSeason,
-        episodeNumber: epNum,
-        episodeTitle: trimmed,
-        manualTitleVerified: true,
-        forceOverwrite: true,
-      });
-      if (res.success) {
-        setManualEpisodeTitlesMap((prev) => {
-          const next = new Map(prev);
-          next.set(`${effectiveSeason}_${epNum}`, trimmed);
-          return next;
-        });
-        setEditingEpisodeNumber(null);
-        setEditingEpisodeTitleInput('');
-        if (onLinkAdded) onLinkAdded();
-      }
-    } finally {
-      setIsSavingEpisodeTitle(false);
-    }
-  };
 
   // Accordion toggle: clicking an open tab minimizes it, clicking a minimized tab maximizes it & closes other tabs
   const toggleSlide = (slideKey: string) => {
@@ -1853,114 +1819,18 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
               filteredSeasonEpisodes.map((ep) => {
                 // Strictly generate buttons only for quality combinations supported by verified metadata of actual links
                 const buttonsToRender = getDynamicQualityButtonsForEpisode(ep.releases);
-                const isEditingThisTitle = editingEpisodeNumber === ep.episodeNumber;
-
                 return (
                   <div
                     key={ep.episodeNumber}
                     className="rounded-2xl sm:rounded-3xl overflow-hidden border border-white/10 shadow-xl transition-all duration-300 bg-[#0e1322]/95 hover:bg-[#12182c]/95 p-3.5 sm:p-5 space-y-3.5 min-w-0 max-w-full"
                   >
-                    {/* Header Row: S01E01 Badge · Title · Verified/Unverified Pill · Report Button */}
-                    <div className="flex items-start justify-between gap-2.5 sm:gap-4 min-w-0">
-                      <div className="space-y-1.5 min-w-0 flex-1 text-left">
-                        {isEditingThisTitle && (isEffectiveAdmin || isAdmin) ? (
-                          <div className="flex flex-wrap items-center gap-2 min-w-0">
-                            <span className="px-2.5 py-1 rounded-lg bg-blue-500/15 text-blue-300 border border-blue-500/30 font-mono font-bold text-xs shrink-0 tracking-wider">
-                              {ep.sTag}
-                            </span>
-                            <input
-                              type="text"
-                              value={editingEpisodeTitleInput}
-                              onChange={(e) => setEditingEpisodeTitleInput(e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') {
-                                  e.preventDefault();
-                                  handleSaveManualEpisodeTitle(ep.episodeNumber);
-                                } else if (e.key === 'Escape') {
-                                  setEditingEpisodeNumber(null);
-                                  setEditingEpisodeTitleInput('');
-                                }
-                              }}
-                              placeholder={`Official title for ${ep.sTag}...`}
-                              className="flex-1 min-w-0 w-full sm:w-auto bg-[#090c15] border border-amber-500/40 rounded-lg px-2.5 py-1.5 text-sm text-white focus:outline-none focus:border-amber-400"
-                              autoFocus
-                            />
-                            <button
-                              type="button"
-                              disabled={isSavingEpisodeTitle || !editingEpisodeTitleInput.trim()}
-                              onClick={() => handleSaveManualEpisodeTitle(ep.episodeNumber)}
-                              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-bold cursor-pointer"
-                              title="Save manual episode title correction (preserves all destination links)"
-                            >
-                              <Check className="w-3.5 h-3.5" />
-                              <span>Save</span>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setEditingEpisodeNumber(null);
-                                setEditingEpisodeTitleInput('');
-                              }}
-                              className="p-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 cursor-pointer"
-                              title="Cancel"
-                            >
-                              <X className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-2 sm:gap-2.5 flex-wrap min-w-0">
-                            {/* Dedicated S01E01 Monospace Pill Badge */}
-                            <span className="px-2.5 py-1 rounded-lg bg-blue-500/15 text-blue-300 border border-blue-500/30 font-mono font-bold text-xs shrink-0 tracking-wider">
-                              {ep.sTag}
-                            </span>
-
-                            {/* Official Episode Title */}
-                            <h4 className="text-sm sm:text-lg font-bold text-white tracking-tight break-words min-w-0 leading-snug">
-                              {ep.officialTitle || `Episode ${ep.episodeNumber}`}
-                            </h4>
-
-                            {/* Verification Pill */}
-                            {ep.isManualVerified ? (
-                              <span
-                                className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-semibold shrink-0"
-                                title="Verified manual title correction (protected from automatic bulk overwrites)"
-                              >
-                                <Check className="w-3 h-3 text-emerald-400" />
-                                <span>Verified</span>
-                              </span>
-                            ) : ep.isVerified ? (
-                              <span
-                                className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-semibold shrink-0"
-                                title="Verified title retrieved from IMDb/TMDB/TVMaze"
-                              >
-                                <Check className="w-3 h-3 text-emerald-400" />
-                                <span>Verified</span>
-                              </span>
-                            ) : (
-                              <span
-                                className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30 font-semibold shrink-0"
-                                title="Unverified title. Administrator can verify via IMDb/TVMaze/TMDB or edit manually."
-                              >
-                                Unverified
-                              </span>
-                            )}
-
-                            {/* Admin Inline Edit Pencil */}
-                            {(isEffectiveAdmin || isAdmin) && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setEditingEpisodeNumber(ep.episodeNumber);
-                                  setEditingEpisodeTitleInput(ep.officialTitle);
-                                }}
-                                className="p-1.5 rounded-lg bg-white/5 hover:bg-amber-500/20 text-zinc-400 hover:text-amber-300 border border-white/10 hover:border-amber-500/30 transition-colors cursor-pointer shrink-0"
-                                title="Admin: Manually edit episode title without TMDB search (preserves all links)"
-                              >
-                                <Pencil className="w-3 h-3" />
-                              </button>
-                            )}
-                          </div>
-                        )}
+                    {/* Header Row: S01E01 Badge · Direct Downloads subtitle · Report Button */}
+                    <div className="flex items-center justify-between gap-2.5 sm:gap-4 min-w-0">
+                      <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1 flex-wrap text-left">
+                        {/* Dedicated S01E01 Monospace Pill Badge */}
+                        <span className="px-2.5 py-1 rounded-lg bg-blue-500/15 text-blue-300 border border-blue-500/30 font-mono font-bold text-xs sm:text-sm shrink-0 tracking-wider">
+                          {ep.sTag}
+                        </span>
                         <p className="text-xs text-zinc-400 font-medium">
                           Direct 1-Click Downloads · Opens destination in new tab
                         </p>
@@ -1975,24 +1845,17 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
                             mediaTitle: titleDetails.name || titleDetails.title || 'TV Series',
                             mediaType: 'tv',
                             posterPath: titleDetails.poster_path,
-                            linkTitle: `${ep.sTag} · ${ep.officialTitle || `Episode ${ep.episodeNumber}`}`,
+                            linkTitle: ep.sTag,
                             reportedUrl: ep.releases[0]?.url || '',
                             quality: 'TV Episode',
                           });
                         }}
-                        className="min-w-[38px] min-h-[38px] p-2 rounded-xl bg-[#141824] hover:bg-[#1d2335] text-zinc-400 hover:text-rose-400 border border-white/5 hover:border-rose-500/30 transition-colors cursor-pointer shrink-0 inline-flex items-center justify-center"
+                        className="min-w-[36px] min-h-[36px] p-2 rounded-xl bg-[#141824] hover:bg-[#1d2335] text-zinc-400 hover:text-rose-400 border border-white/5 hover:border-rose-500/30 transition-colors cursor-pointer shrink-0 inline-flex items-center justify-center"
                         title="Report broken or defective link for this episode"
                       >
                         <Flag className="w-3.5 h-3.5" />
                       </button>
                     </div>
-
-                    {/* Episode Overview (if available from IMDb/TVMaze/TMDB/Trakt) */}
-                    {ep.overview && (
-                      <p className="text-[11px] sm:text-xs text-zinc-400/90 line-clamp-2 leading-relaxed text-left">
-                        {ep.overview}
-                      </p>
-                    )}
 
                     {/* DIRECT ONE-CLICK QUALITY BUTTONS */}
                     <div
