@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { getDatabase } from '@/lib/mongodb';
+import { getSupabaseAdminClient } from '@/lib/supabase';
 import { getRedisClient } from '@/lib/redisDb';
 import { getUserByFirebaseUid } from '@/lib/usersDb';
 import { UserRequest, DefectiveLinkReport, UserNotification } from '@/types';
@@ -67,55 +67,58 @@ export function saveLocalFallbackNotifications(data: UserNotification[]): boolea
   }
 }
 
-let indexesCreated = false;
-
 /**
- * Ensures indexes exist on the notifications collection in MongoDB
+ * Ensures indexes exist on the notifications store (managed by Supabase migrations)
  */
-export async function ensureNotificationIndexes(dbName?: string): Promise<void> {
-  if (indexesCreated) return;
-  try {
-    const db = await getDatabase(dbName);
-    if (!db) return;
-    const collection = db.collection('notifications');
+export async function ensureNotificationIndexes(_dbName?: string): Promise<void> {
+  // Handled natively by Supabase schema indexes
+}
 
-    await collection.createIndex({ firebaseUid: 1, createdAt: -1 }, { background: true });
-    await collection.createIndex({ firebaseUid: 1, read: 1, createdAt: -1 }, { background: true });
+function mapNotificationToSupabaseRow(notif: UserNotification): Record<string, any> {
+  return {
+    id: notif.id,
+    user_id: notif.userId || notif.firebaseUid,
+    firebase_uid: notif.firebaseUid || notif.userId,
+    request_id: notif.requestId || null,
+    report_id: notif.reportId || null,
+    type: notif.type,
+    title: notif.title,
+    message: notif.message,
+    media_title: notif.mediaTitle,
+    movie_id: notif.movieId !== undefined && notif.movieId !== null ? String(notif.movieId) : null,
+    media_type: notif.mediaType || 'movie',
+    link_url: notif.linkUrl || '/',
+    poster_path: notif.posterPath || null,
+    read: Boolean(notif.read),
+    read_at: notif.readAt || null,
+    admin_reply: notif.adminReply || null,
+    replacement_url: notif.replacementUrl || null,
+    created_at: notif.createdAt || new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+}
 
-    try {
-      await collection.createIndex(
-        { requestId: 1, type: 1 },
-        { unique: true, sparse: true, background: true }
-      );
-    } catch (idxErr: any) {
-      if (idxErr.code === 86 || idxErr.codeName === 'IndexKeySpecsConflict') {
-        await collection.dropIndex('requestId_1_type_1').catch(() => {});
-        await collection.createIndex(
-          { requestId: 1, type: 1 },
-          { unique: true, sparse: true, background: true }
-        );
-      }
-    }
-
-    try {
-      await collection.createIndex(
-        { reportId: 1, type: 1 },
-        { unique: true, sparse: true, background: true }
-      );
-    } catch (idxErr: any) {
-      if (idxErr.code === 86 || idxErr.codeName === 'IndexKeySpecsConflict') {
-        await collection.dropIndex('reportId_1_type_1').catch(() => {});
-        await collection.createIndex(
-          { reportId: 1, type: 1 },
-          { unique: true, sparse: true, background: true }
-        );
-      }
-    }
-
-    indexesCreated = true;
-  } catch (err: any) {
-    console.warn('Notification indexes check:', err.message);
-  }
+function mapSupabaseRowToNotification(row: any): UserNotification {
+  return {
+    id: row.id,
+    userId: row.user_id || row.firebase_uid,
+    firebaseUid: row.firebase_uid || row.user_id,
+    requestId: row.request_id || undefined,
+    reportId: row.report_id || undefined,
+    type: row.type,
+    title: row.title,
+    message: row.message,
+    mediaTitle: row.media_title || '',
+    movieId: row.movie_id || undefined,
+    mediaType: row.media_type || 'movie',
+    linkUrl: row.link_url || '/',
+    posterPath: row.poster_path || null,
+    read: Boolean(row.read),
+    createdAt: row.created_at,
+    readAt: row.read_at || null,
+    adminReply: row.admin_reply || undefined,
+    replacementUrl: row.replacement_url || undefined,
+  };
 }
 
 /**
@@ -124,25 +127,13 @@ export async function ensureNotificationIndexes(dbName?: string): Promise<void> 
 export async function isUserNotificationEnabled(
   firebaseUid: string,
   category: 'request' | 'report',
-  db?: any
+  _db?: any
 ): Promise<boolean> {
   try {
     const cleanUid = (firebaseUid || '').trim();
     if (!cleanUid) return true;
 
-    // 1. Try MongoDB
-    if (db) {
-      const userDoc = await db.collection('users').findOne({
-        $or: [{ firebaseUid: cleanUid }, { uid: cleanUid }],
-      });
-      if (userDoc?.notificationPreferences) {
-        return category === 'request'
-          ? userDoc.notificationPreferences.inAppRequests !== false
-          : userDoc.notificationPreferences.inAppReports !== false;
-      }
-    }
-
-    // 2. Try User Profile directory lookup (checks Mongo, Redis, local)
+    // Check user profile directory lookup (checks Supabase, Redis, local)
     const profile = await getUserByFirebaseUid(cleanUid);
     if (profile?.notificationPreferences) {
       return category === 'request'
@@ -157,52 +148,44 @@ export async function isUserNotificationEnabled(
 }
 
 /**
- * Internal helper to persist a notification across MongoDB, Upstash Redis, and Local JSON.
+ * Internal helper to persist a notification across Supabase, Upstash Redis, and Local JSON.
  * Returns true if persisted in at least one layer.
  */
 async function saveNotificationRecord(
   notif: UserNotification,
-  dbName?: string
+  _dbName?: string
 ): Promise<{ success: boolean; created: boolean; notification: UserNotification }> {
   let persisted = false;
-  let isDuplicate = false;
 
-  // 1. MongoDB Atlas
+  // 1. Supabase
   try {
-    const db = await getDatabase(dbName);
-    if (db) {
-      await ensureNotificationIndexes(dbName);
-      const collection = db.collection('notifications');
-
-      // Idempotency check in Mongo
-      const query: any = { id: notif.id };
+    const supabase = getSupabaseAdminClient();
+    if (supabase) {
+      // Idempotency check in Supabase
+      let query = supabase.from('notifications').select('*').limit(1);
       if (notif.requestId && notif.type !== 'ADMIN_REPLY') {
-        query.$or = [{ id: notif.id }, { requestId: notif.requestId, type: notif.type }];
+        query = query.or(`id.eq.${notif.id},and(request_id.eq.${notif.requestId},type.eq.${notif.type})`);
       } else if (notif.reportId && notif.type !== 'ADMIN_REPLY') {
-        query.$or = [{ id: notif.id }, { reportId: notif.reportId, type: notif.type }];
+        query = query.or(`id.eq.${notif.id},and(report_id.eq.${notif.reportId},type.eq.${notif.type})`);
+      } else {
+        query = query.eq('id', notif.id);
       }
 
-      const existing = await collection.findOne(query);
+      const { data: existing } = await query.maybeSingle();
       if (existing) {
-        const { _id, ...rest } = existing;
-        return { success: true, created: false, notification: rest as UserNotification };
+        return { success: true, created: false, notification: mapSupabaseRowToNotification(existing) };
       }
 
-      try {
-        await collection.insertOne({ ...notif });
+      const row = mapNotificationToSupabaseRow(notif);
+      const { error: insertErr } = await supabase.from('notifications').upsert(row, { onConflict: 'id' });
+      if (!insertErr) {
         persisted = true;
-      } catch (insertErr: any) {
-        if (insertErr.code === 11000 || String(insertErr.message).includes('E11000')) {
-          const found = await collection.findOne(query);
-          if (found) {
-            const { _id, ...rest } = found;
-            return { success: true, created: false, notification: rest as UserNotification };
-          }
-        }
+      } else {
+        console.warn('Supabase notification save warning:', insertErr.message);
       }
     }
-  } catch (mongoErr: any) {
-    console.warn('MongoDB notification save warning:', mongoErr.message);
+  } catch (supabaseErr: any) {
+    console.warn('Supabase notification save error:', supabaseErr.message);
   }
 
   // 2. Upstash Redis
@@ -249,12 +232,7 @@ async function saveNotificationRecord(
     }
   }
 
-  if (!persisted) {
-    console.warn('Notification was not persisted: no storage backend was available.');
-    return { success: false, created: false, notification: notif };
-  }
-
-  return { success: true, created: true, notification: notif };
+  return { success: persisted, created: true, notification: notif };
 }
 
 /**
@@ -592,12 +570,12 @@ export async function createAdminReplyNotification(
 }
 
 /**
- * Retrieves paginated notifications for a verified user across MongoDB Atlas, Upstash Redis, and Local JSON.
+ * Retrieves paginated notifications for a verified user across Supabase, Upstash Redis, and Local JSON.
  */
 export async function getUserNotifications(
   firebaseUid: string,
   options: { page?: number; limit?: number; unreadOnly?: boolean } = {},
-  dbName?: string
+  _dbName?: string
 ): Promise<{
   notifications: UserNotification[];
   total: number;
@@ -623,51 +601,43 @@ export async function getUserNotifications(
   const page = Math.max(1, options.page || 1);
   const limit = Math.max(1, Math.min(50, options.limit || 20));
 
-  // 1. Try MongoDB Atlas
+  // 1. Try Supabase
   try {
-    const db = await getDatabase(dbName);
-    if (db) {
-      const collection = db.collection('notifications');
-
-      const filter: any = {
-        $or: [{ firebaseUid: uid }, { userId: uid }],
-      };
+    const supabase = getSupabaseAdminClient();
+    if (supabase) {
+      let query = supabase.from('notifications').select('*', { count: 'exact' });
+      query = query.or(`firebase_uid.eq.${uid},user_id.eq.${uid}`);
       if (options.unreadOnly) {
-        filter.read = false;
+        query = query.eq('read', false);
       }
+      query = query.order('created_at', { ascending: false });
+      query = query.range((page - 1) * limit, page * limit - 1);
 
-      const unreadCount = await collection.countDocuments({
-        $or: [{ firebaseUid: uid }, { userId: uid }],
-        read: false,
-      }).catch(() => 0);
+      const { data, count, error } = await query;
+      if (!error && data) {
+        const notifications = data.map(mapSupabaseRowToNotification);
+        const total = count ?? data.length;
+        const totalPages = Math.max(1, Math.ceil(total / limit));
 
-      const total = await collection.countDocuments(filter).catch(() => 0);
-      const totalPages = Math.max(1, Math.ceil(total / limit));
+        const { count: unreadCountVal } = await supabase
+          .from('notifications')
+          .select('*', { count: 'exact', head: true })
+          .or(`firebase_uid.eq.${uid},user_id.eq.${uid}`)
+          .eq('read', false);
 
-      const docs = await collection
-        .find(filter)
-        .sort({ createdAt: -1 })
-        .skip((page - 1) * limit)
-        .limit(limit)
-        .toArray();
-
-      const notifications: UserNotification[] = docs.map((d: any) => {
-        const { _id, ...rest } = d;
-        return rest as UserNotification;
-      });
-
-      return {
-        notifications,
-        total,
-        unreadCount,
-        page,
-        totalPages,
-        limit,
-        hasMore: page < totalPages,
-      };
+        return {
+          notifications,
+          total,
+          unreadCount: unreadCountVal ?? notifications.filter((n) => !n.read).length,
+          page,
+          totalPages,
+          limit,
+          hasMore: page < totalPages,
+        };
+      }
     }
   } catch (err: any) {
-    console.warn('MongoDB Atlas notifications read fallback:', err.message);
+    console.warn('Supabase notifications read fallback:', err.message);
   }
 
   // 2. Try Upstash Redis
@@ -727,21 +697,25 @@ export async function getUserNotifications(
 /**
  * Gets efficient unread notification count for authenticated header badge
  */
-export async function getUnreadNotificationCount(firebaseUid: string, dbName?: string): Promise<number> {
+export async function getUnreadNotificationCount(firebaseUid: string, _dbName?: string): Promise<number> {
   const uid = (firebaseUid || '').trim();
   if (!uid) return 0;
 
-  // 1. Try MongoDB
+  // 1. Try Supabase
   try {
-    const db = await getDatabase(dbName);
-    if (db) {
-      return await db.collection('notifications').countDocuments({
-        $or: [{ firebaseUid: uid }, { userId: uid }],
-        read: false,
-      }).catch(() => 0);
+    const supabase = getSupabaseAdminClient();
+    if (supabase) {
+      const { count } = await supabase
+        .from('notifications')
+        .select('*', { count: 'exact', head: true })
+        .or(`firebase_uid.eq.${uid},user_id.eq.${uid}`)
+        .eq('read', false);
+      if (typeof count === 'number') {
+        return count;
+      }
     }
   } catch (err: any) {
-    console.warn('MongoDB Atlas countUnread fallback:', err.message);
+    console.warn('Supabase countUnread fallback:', err.message);
   }
 
   // 2. Try Upstash Redis
@@ -767,7 +741,7 @@ export async function getUnreadNotificationCount(firebaseUid: string, dbName?: s
 export async function markNotificationAsRead(
   notificationId: string,
   firebaseUid: string,
-  dbName?: string
+  _dbName?: string
 ): Promise<{ success: boolean; found: boolean }> {
   const uid = (firebaseUid || '').trim();
   const id = (notificationId || '').trim();
@@ -775,29 +749,26 @@ export async function markNotificationAsRead(
 
   let found = false;
 
-  // 1. MongoDB Atlas
+  // 1. Supabase
   try {
-    const db = await getDatabase(dbName);
-    if (db) {
-      const result = await db.collection('notifications').updateOne(
-        {
-          id,
-          $or: [{ firebaseUid: uid }, { userId: uid }],
-        },
-        {
-          $set: {
-            read: true,
-            readAt: new Date().toISOString(),
-            updatedAt: new Date(),
-          },
-        }
-      );
-      if (result.matchedCount > 0) {
+    const supabase = getSupabaseAdminClient();
+    if (supabase) {
+      const { data, error } = await supabase
+        .from('notifications')
+        .update({
+          read: true,
+          read_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', id)
+        .or(`firebase_uid.eq.${uid},user_id.eq.${uid}`)
+        .select('id');
+      if (!error && data && data.length > 0) {
         found = true;
       }
     }
   } catch (err: any) {
-    console.warn('MongoDB markNotificationAsRead warning:', err.message);
+    console.warn('Supabase markNotificationAsRead warning:', err.message);
   }
 
   // 2. Upstash Redis
@@ -855,34 +826,33 @@ export async function markNotificationAsRead(
  */
 export async function markAllNotificationsAsRead(
   firebaseUid: string,
-  dbName?: string
+  _dbName?: string
 ): Promise<{ success: boolean; count: number }> {
   const uid = (firebaseUid || '').trim();
   if (!uid) return { success: false, count: 0 };
 
   let count = 0;
 
-  // 1. MongoDB Atlas
+  // 1. Supabase
   try {
-    const db = await getDatabase(dbName);
-    if (db) {
-      const result = await db.collection('notifications').updateMany(
-        {
-          $or: [{ firebaseUid: uid }, { userId: uid }],
-          read: false,
-        },
-        {
-          $set: {
-            read: true,
-            readAt: new Date().toISOString(),
-            updatedAt: new Date(),
-          },
-        }
-      );
-      count = result.modifiedCount;
+    const supabase = getSupabaseAdminClient();
+    if (supabase) {
+      const { data, error } = await supabase
+        .from('notifications')
+        .update({
+          read: true,
+          read_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .or(`firebase_uid.eq.${uid},user_id.eq.${uid}`)
+        .eq('read', false)
+        .select('id');
+      if (!error && data) {
+        count = data.length;
+      }
     }
   } catch (err: any) {
-    console.warn('MongoDB markAllNotificationsAsRead warning:', err.message);
+    console.warn('Supabase markAllNotificationsAsRead warning:', err.message);
   }
 
   // 2. Upstash Redis

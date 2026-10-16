@@ -46,32 +46,6 @@ export interface WatchProvidersData {
   ads?: WatchProviderInfo[];
 }
 
-export interface MDBListRatingItem {
-  source: string; // 'imdb' | 'tmdb' | 'trakt' | 'tomatoes' | 'tomatoes_audience' | 'metacritic' | 'letterboxd' | 'mal' | 'anilist'
-  value: number; // Normalized (e.g., 8.4, 92%, etc.)
-  score?: number; // 0 - 100
-  votes?: number;
-  url?: string;
-}
-
-export interface MDBListResponse {
-  id?: number;
-  title?: string;
-  year?: number;
-  type?: 'movie' | 'show';
-  imdbid?: string;
-  tmdbid?: number;
-  traktid?: number;
-  score?: number; // MDBList overall rating score (0 - 100)
-  score_average?: number;
-  ratings?: MDBListRatingItem[];
-  certification?: string; // PG-13, R, TV-MA, U/A
-  commonsense?: number;
-  budget?: number;
-  revenue?: number;
-  runtime?: number;
-}
-
 export interface TitleDetails {
   id: number;
   title: string;
@@ -110,17 +84,11 @@ export interface TitleDetails {
     imdb_id?: string;
     tmdb_id?: number;
     tvdb_id?: number;
-    mdblist_id?: number;
-    trakt_id?: number;
     instagram_id?: string;
     twitter_id?: string;
   };
   imdb_rating?: number;
   imdb_votes?: string;
-  mdblist_score?: number;
-  mdblist_ratings?: MDBListRatingItem[];
-  trakt_rating?: number;
-  trakt_votes?: number;
   credits?: {
     cast: CastMember[];
     crew: CrewMember[];
@@ -177,10 +145,13 @@ export interface PersonDetails {
 
 export interface CustomLink {
   id: string;
+  movieId?: string | number;
   title: string;
+  overview?: string;
   url: string;
   category: 'Recent' | 'Streaming' | 'Subtitles' | 'Discussion' | 'Review' | 'Download' | 'Official' | 'Other' | 'ZipPack' | 'SingleEpisode';
   createdAt: string;
+  updatedAt?: string;
   seasonNumber?: number;
   episodeNumber?: number;
   episodeTitle?: string;
@@ -310,20 +281,11 @@ export interface RecommendationItem {
   category: 'rated_match' | 'genre_affinity' | 'actor_director' | 'top_unwatched';
 }
 
-export interface MdblistConfig {
-  apiKey: string;
-  isConnected: boolean;
-  username?: string;
-  lastSyncedAt?: string;
-}
-
 export interface AppSettings {
   tmdbApiKey: string;
   omdbApiKey: string;
-  mdblistApiKey: string;
   defaultRegion: string; // 'IN' default
   theme: 'dark' | 'midnight' | 'oled' | 'light';
-  autoSyncMdblist: boolean;
 }
 
 export interface UserRequest {

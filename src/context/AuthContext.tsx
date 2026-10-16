@@ -237,7 +237,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return { success: false, error: 'Sign-in was cancelled.' };
       }
 
-      // Smooth 1-click Google session fallback directly to MongoDB Atlas
+      // Smooth 1-click Google session fallback directly to Supabase Database
       try {
         const storedUser = typeof window !== 'undefined' ? localStorage.getItem('cinefuel_user_profile') : null;
         let defaultEmail = customEmail || 'shyam@gmail.com';

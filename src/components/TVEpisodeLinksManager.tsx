@@ -790,7 +790,7 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
   const [episodesAccordionOpen, setEpisodesAccordionOpen] = useState<boolean | null>(null);
   const [manuallyToggledTiers, setManuallyToggledTiers] = useState<Record<string, boolean>>({});
 
-  // Verified official episode titles map (from DB or IMDb/TVMaze/TMDB/Trakt API)
+  // Verified official episode titles map (from DB or IMDb/TVMaze/TMDB API)
   const [verifiedEpisodesMap, setVerifiedEpisodesMap] = useState<
     Map<number, { title: string; overview?: string }>
   >(new Map());
@@ -1114,7 +1114,7 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
     setManuallyToggledTiers({});
   };
 
-  // Fetch verified official episode metadata for the effective season (IMDb -> TVMaze -> TMDB -> Trakt)
+  // Fetch verified official episode metadata for the effective season (IMDb -> TVMaze -> TMDB)
   useEffect(() => {
     let isCancelled = false;
     async function fetchSeasonTitles() {
@@ -1543,7 +1543,7 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
       const storedManualTitle = epLinks.find(
         (e) => e.manualTitleVerified && e.episodeTitle && !isReleaseFilenameLike(e.episodeTitle)
       )?.episodeTitle;
-      // 3. Verified external lookup (IMDb / TVMaze / TMDB / Trakt)
+      // 3. Verified external lookup (IMDb / TVMaze / TMDB)
       const externalVerifiedTitle = isCleanVerifiedTitle(verifiedObj?.title)
         ? verifiedObj!.title.trim()
         : undefined;

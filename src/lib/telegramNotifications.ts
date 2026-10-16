@@ -1,4 +1,4 @@
-import { getDatabase } from '@/lib/mongodb';
+import { getSupabaseAdminClient } from '@/lib/supabase';
 import { getEnv } from '@/lib/env';
 import {
   UserRequest,
@@ -9,8 +9,6 @@ import {
   NotificationDelivery,
 } from '@/types';
 import { formatTelegramReleaseSummary } from '@/lib/releaseParser';
-
-let telegramIndexesCreated = false;
 
 function getBotToken(): string {
   return (getEnv('TELEGRAM_BOT_TOKEN') || process.env.TELEGRAM_BOT_TOKEN || '').trim();
@@ -34,31 +32,38 @@ function escapeHtml(str: string): string {
 }
 
 /**
- * Ensures required indexes on Telegram collections exist
+ * Ensures required indexes on Telegram collections (managed by Supabase migrations)
  */
-export async function ensureTelegramIndexes(dbName?: string): Promise<void> {
-  if (telegramIndexesCreated) return;
-  try {
-    const db = await getDatabase(dbName);
-    if (!db) return;
+export async function ensureTelegramIndexes(_dbName?: string): Promise<void> {
+  // Handled natively by Supabase schema indexes
+}
 
-    const linksCol = db.collection('telegram_links');
-    await linksCol.createIndex({ firebaseUid: 1 }, { unique: true, background: true });
-    await linksCol.createIndex({ telegramChatId: 1 }, { background: true });
+function mapTelegramLinkToSupabaseRow(link: TelegramLink): Record<string, any> {
+  return {
+    firebase_uid: link.firebaseUid,
+    telegram_chat_id: link.telegramChatId,
+    telegram_user_id: link.telegramUserId,
+    telegram_username: link.telegramUsername || null,
+    status: link.status || 'active',
+    request_notifications: link.requestNotifications !== false,
+    report_notifications: link.reportNotifications !== false,
+    linked_at: link.linkedAt || new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+}
 
-    const tokensCol = db.collection('telegram_linking_tokens');
-    await tokensCol.createIndex({ token: 1 }, { unique: true, background: true });
-    await tokensCol.createIndex({ expiresAt: 1 }, { background: true });
-    await tokensCol.createIndex({ firebaseUid: 1 }, { background: true });
-
-    const deliveriesCol = db.collection('notification_deliveries');
-    await deliveriesCol.createIndex({ notificationId: 1, channel: 1 }, { background: true });
-    await deliveriesCol.createIndex({ userId: 1, sentAt: -1 }, { background: true });
-
-    telegramIndexesCreated = true;
-  } catch (err: any) {
-    console.warn('Telegram indexes check warning:', err.message);
-  }
+function mapSupabaseRowToTelegramLink(row: any): TelegramLink {
+  return {
+    firebaseUid: row.firebase_uid,
+    telegramChatId: Number(row.telegram_chat_id),
+    telegramUserId: Number(row.telegram_user_id),
+    telegramUsername: row.telegram_username || undefined,
+    status: row.status || 'active',
+    requestNotifications: row.request_notifications !== false,
+    reportNotifications: row.report_notifications !== false,
+    linkedAt: row.linked_at,
+    updatedAt: row.updated_at,
+  };
 }
 
 /**
@@ -66,19 +71,12 @@ export async function ensureTelegramIndexes(dbName?: string): Promise<void> {
  */
 export async function generateTelegramLinkingToken(
   firebaseUid: string,
-  dbName?: string
+  _dbName?: string
 ): Promise<{ token: string; expiresAt: string; botUsername: string; telegramUrl: string }> {
   const uid = (firebaseUid || '').trim();
   if (!uid || uid === 'guest-user-default') {
     throw new Error('Valid authenticated user identity required to generate Telegram linking token');
   }
-
-  const db = await getDatabase(dbName);
-  if (!db) {
-    throw new Error('Database connection unavailable for linking token generation');
-  }
-
-  await ensureTelegramIndexes(dbName);
 
   // Generate cryptographically random token (32 hex characters)
   const randomBytes = new Uint8Array(16);
@@ -97,7 +95,21 @@ export async function generateTelegramLinkingToken(
     usedAt: null,
   };
 
-  await db.collection('telegram_linking_tokens').insertOne({ ...tokenRecord });
+  try {
+    const supabase = getSupabaseAdminClient();
+    if (supabase) {
+      await supabase.from('telegram_linking_tokens').insert({
+        token,
+        firebase_uid: uid,
+        created_at: now.toISOString(),
+        expires_at: expiresAt,
+        used: false,
+        used_at: null,
+      });
+    }
+  } catch (err: any) {
+    console.warn('Supabase linking token insert warning:', err.message);
+  }
 
   const botUsername = getBotUsername();
   const telegramUrl = `https://t.me/${botUsername}?start=${token}`;
@@ -115,7 +127,7 @@ export async function generateTelegramLinkingToken(
  */
 export async function verifyAndConsumeTelegramLinkingToken(
   token: string,
-  dbName?: string
+  _dbName?: string
 ): Promise<{ valid: boolean; firebaseUid?: string; error?: string }> {
   const cleanToken = (token || '').trim();
   if (!cleanToken) {
@@ -123,38 +135,31 @@ export async function verifyAndConsumeTelegramLinkingToken(
   }
 
   try {
-    const db = await getDatabase(dbName);
-    if (!db) {
+    const supabase = getSupabaseAdminClient();
+    if (!supabase) {
       return { valid: false, error: 'Database unavailable' };
     }
 
-    await ensureTelegramIndexes(dbName);
-
     const nowIso = new Date().toISOString();
 
-    // Atomically find and mark token as used
-    const result = await db.collection('telegram_linking_tokens').findOneAndUpdate(
-      {
-        token: cleanToken,
-        used: false,
-        expiresAt: { $gt: nowIso },
-      },
-      {
-        $set: {
-          used: true,
-          usedAt: nowIso,
-        },
-      },
-      { returnDocument: 'after' }
-    );
+    const { data, error } = await supabase
+      .from('telegram_linking_tokens')
+      .select('*')
+      .eq('token', cleanToken)
+      .eq('used', false)
+      .gt('expires_at', nowIso)
+      .maybeSingle();
 
-    const doc = result && ('value' in result ? (result as any).value : result);
-
-    if (!doc || !doc.firebaseUid) {
+    if (error || !data || !data.firebase_uid) {
       return { valid: false, error: 'Token is invalid, expired, or already used' };
     }
 
-    return { valid: true, firebaseUid: doc.firebaseUid };
+    await supabase
+      .from('telegram_linking_tokens')
+      .update({ used: true, used_at: nowIso })
+      .eq('token', cleanToken);
+
+    return { valid: true, firebaseUid: data.firebase_uid };
   } catch (err: any) {
     console.error('Error verifying Telegram linking token:', err.message);
     return { valid: false, error: err.message };
@@ -171,17 +176,13 @@ export async function linkTelegramAccount(
     userId: number;
     username?: string;
   },
-  dbName?: string
+  _dbName?: string
 ): Promise<{ success: boolean; link?: TelegramLink }> {
   const uid = (firebaseUid || '').trim();
   if (!uid) return { success: false };
 
   try {
-    const db = await getDatabase(dbName);
-    if (!db) return { success: false };
-
-    await ensureTelegramIndexes(dbName);
-
+    const supabase = getSupabaseAdminClient();
     const nowIso = new Date().toISOString();
     const linkDoc: TelegramLink = {
       firebaseUid: uid,
@@ -195,24 +196,13 @@ export async function linkTelegramAccount(
       updatedAt: nowIso,
     };
 
-    await db.collection('telegram_links').updateOne(
-      { firebaseUid: uid },
-      {
-        $set: {
-          telegramChatId: telegramInfo.chatId,
-          telegramUserId: telegramInfo.userId,
-          telegramUsername: telegramInfo.username || undefined,
-          status: 'active',
-          updatedAt: nowIso,
-        },
-        $setOnInsert: {
-          requestNotifications: true,
-          reportNotifications: true,
-          linkedAt: nowIso,
-        },
-      },
-      { upsert: true }
-    );
+    if (supabase) {
+      const row = mapTelegramLinkToSupabaseRow(linkDoc);
+      const { error } = await supabase.from('telegram_links').upsert(row, { onConflict: 'firebase_uid' });
+      if (error) {
+        console.error('Supabase linkTelegramAccount error:', error.message);
+      }
+    }
 
     return { success: true, link: linkDoc };
   } catch (err: any) {
@@ -226,24 +216,28 @@ export async function linkTelegramAccount(
  */
 export async function getTelegramLinkForUser(
   firebaseUid: string,
-  dbName?: string
+  _dbName?: string
 ): Promise<TelegramLink | null> {
   const uid = (firebaseUid || '').trim();
   if (!uid) return null;
 
   try {
-    const db = await getDatabase(dbName);
-    if (!db) return null;
+    const supabase = getSupabaseAdminClient();
+    if (supabase) {
+      const { data, error } = await supabase
+        .from('telegram_links')
+        .select('*')
+        .eq('firebase_uid', uid)
+        .maybeSingle();
 
-    const doc = await db.collection('telegram_links').findOne({ firebaseUid: uid });
-    if (!doc) return null;
-
-    const { _id, ...rest } = doc;
-    return rest as TelegramLink;
+      if (!error && data) {
+        return mapSupabaseRowToTelegramLink(data);
+      }
+    }
   } catch (err: any) {
     console.error('Failed to get Telegram link for user:', err.message);
-    return null;
   }
+  return null;
 }
 
 /**
@@ -255,33 +249,33 @@ export async function updateTelegramPreferences(
     requestNotifications?: boolean;
     reportNotifications?: boolean;
   },
-  dbName?: string
+  _dbName?: string
 ): Promise<{ success: boolean }> {
   const uid = (firebaseUid || '').trim();
   if (!uid) return { success: false };
 
   try {
-    const db = await getDatabase(dbName);
-    if (!db) return { success: false };
+    const supabase = getSupabaseAdminClient();
+    if (supabase) {
+      const updateFields: any = { updated_at: new Date().toISOString() };
+      if (typeof prefs.requestNotifications === 'boolean') {
+        updateFields.request_notifications = prefs.requestNotifications;
+      }
+      if (typeof prefs.reportNotifications === 'boolean') {
+        updateFields.report_notifications = prefs.reportNotifications;
+      }
 
-    const updateFields: any = { updatedAt: new Date().toISOString() };
-    if (typeof prefs.requestNotifications === 'boolean') {
-      updateFields.requestNotifications = prefs.requestNotifications;
+      const { error } = await supabase
+        .from('telegram_links')
+        .update(updateFields)
+        .eq('firebase_uid', uid);
+
+      return { success: !error };
     }
-    if (typeof prefs.reportNotifications === 'boolean') {
-      updateFields.reportNotifications = prefs.reportNotifications;
-    }
-
-    const res = await db.collection('telegram_links').updateOne(
-      { firebaseUid: uid },
-      { $set: updateFields }
-    );
-
-    return { success: res.matchedCount > 0 };
   } catch (err: any) {
     console.error('Failed to update Telegram preferences:', err.message);
-    return { success: false };
   }
+  return { success: false };
 }
 
 /**
@@ -289,30 +283,28 @@ export async function updateTelegramPreferences(
  */
 export async function disconnectTelegramAccount(
   firebaseUid: string,
-  dbName?: string
+  _dbName?: string
 ): Promise<{ success: boolean }> {
   const uid = (firebaseUid || '').trim();
   if (!uid) return { success: false };
 
   try {
-    const db = await getDatabase(dbName);
-    if (!db) return { success: false };
-
-    const res = await db.collection('telegram_links').updateOne(
-      { firebaseUid: uid },
-      {
-        $set: {
+    const supabase = getSupabaseAdminClient();
+    if (supabase) {
+      const { error } = await supabase
+        .from('telegram_links')
+        .update({
           status: 'disconnected',
-          updatedAt: new Date().toISOString(),
-        },
-      }
-    );
+          updated_at: new Date().toISOString(),
+        })
+        .eq('firebase_uid', uid);
 
-    return { success: res.matchedCount > 0 };
+      return { success: !error };
+    }
   } catch (err: any) {
     console.error('Failed to disconnect Telegram account:', err.message);
-    return { success: false };
   }
+  return { success: false };
 }
 
 /**
@@ -425,11 +417,22 @@ ${quality ? `💎 <b>Quality:</b> <code>${quality}</code>\n` : ''}${audio ? `�
       error: sendRes.ok ? undefined : sendRes.description,
     };
 
-    // Record delivery status
+    // Record delivery status in Supabase
     try {
-      const db = await getDatabase(dbName);
-      if (db) {
-        await db.collection('notification_deliveries').insertOne({ ...delivery });
+      const supabase = getSupabaseAdminClient();
+      if (supabase) {
+        await supabase.from('notification_deliveries').insert({
+          id: delivery.id,
+          notification_id: delivery.notificationId,
+          user_id: delivery.userId,
+          channel: delivery.channel,
+          telegram_chat_id: delivery.telegramChatId,
+          type: delivery.type,
+          status: delivery.status,
+          telegram_message_id: delivery.telegramMessageId,
+          sent_at: delivery.sentAt,
+          error: delivery.error || null,
+        });
       }
     } catch (logErr) {
       console.warn('Failed to record notification delivery:', logErr);
@@ -466,49 +469,29 @@ export async function dispatchTelegramNotificationForReport(
     const mediaType = report.mediaType === 'tv' ? 'tv' : 'movie';
     const destinationUrl = notification.linkUrl?.startsWith('http')
       ? notification.linkUrl
-      : `${siteUrl}${notification.linkUrl || (report.movieId ? `/${mediaType}/${report.movieId}` : '/')}`;
+      : `${siteUrl}${notification.linkUrl || (report.movieId ? `/${mediaType}/${report.movieId}` : '/profile#my-reports')}`;
 
     const mediaTitle = escapeHtml((report.mediaTitle || 'Reported Title').trim());
     const isFixed = status === 'fixed';
 
-    let messageHtml = '';
-    if (isFixed) {
-      messageHtml =
-`🔧 <b>CineFuel Link Report Resolved</b>
+    const messageHtml = isFixed
+      ? `✅ <b>Broken Link Report Resolved</b>\n\nThe link you reported for <b>${mediaTitle}</b> has been repaired and verified active!\n\n🚀 <i>Thank you for helping keep the CineFuel library clean and reliable.</i>`
+      : `ℹ️ <b>Broken Link Report Update</b>\n\nOur curators reviewed your report for <b>${mediaTitle}</b>. The link is operational and active.`;
 
-Good news!
-
-The link you reported for:
-<b>${mediaTitle}</b>
-
-has been reviewed and resolved by our curators.
-${report.adminNote ? `\n💬 <i>Admin Note: ${escapeHtml(report.adminNote)}</i>\n` : ''}
-🚀 <i>Working download and stream mirrors are now live on CineFuel.</i>`;
-    } else {
-      messageHtml =
-`ℹ️ <b>CineFuel Link Report Update</b>
-
-The link report for:
-<b>${mediaTitle}</b>
-
-has been reviewed by our curation team.
-${report.adminNote ? `\n💬 <i>Admin Note: ${escapeHtml(report.adminNote)}</i>\n` : '\n<i>Our team verified that the active title mirrors are online and working properly.</i>\n'}`;
-    }
-
-    const replyMarkup = {
-      inline_keyboard: [
-        [
-          {
-            text: '🎬 Open Title',
-            url: destinationUrl,
-          },
-        ],
-      ],
-    };
+    const replyMarkup = isFixed
+      ? {
+          inline_keyboard: [
+            [
+              {
+                text: '🎬 Watch Now',
+                url: destinationUrl,
+              },
+            ],
+          ],
+        }
+      : undefined;
 
     const sendRes = await sendTelegramMessage(tgLink.telegramChatId, messageHtml, replyMarkup);
-
-    const notifType = isFixed ? 'DEFECTIVE_LINK_RESOLVED' : 'DEFECTIVE_LINK_DISMISSED';
 
     const delivery: NotificationDelivery = {
       id: `deliv-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -516,18 +499,29 @@ ${report.adminNote ? `\n💬 <i>Admin Note: ${escapeHtml(report.adminNote)}</i>\
       userId: uid,
       channel: 'telegram',
       telegramChatId: tgLink.telegramChatId,
-      type: notifType,
+      type: isFixed ? 'DEFECTIVE_LINK_RESOLVED' : 'DEFECTIVE_LINK_DISMISSED',
       status: sendRes.ok ? 'sent' : 'failed',
       telegramMessageId: sendRes.messageId || null,
       sentAt: new Date().toISOString(),
       error: sendRes.ok ? undefined : sendRes.description,
     };
 
-    // Record delivery status
+    // Record delivery status in Supabase
     try {
-      const db = await getDatabase(dbName);
-      if (db) {
-        await db.collection('notification_deliveries').insertOne({ ...delivery });
+      const supabase = getSupabaseAdminClient();
+      if (supabase) {
+        await supabase.from('notification_deliveries').insert({
+          id: delivery.id,
+          notification_id: delivery.notificationId,
+          user_id: delivery.userId,
+          channel: delivery.channel,
+          telegram_chat_id: delivery.telegramChatId,
+          type: delivery.type,
+          status: delivery.status,
+          telegram_message_id: delivery.telegramMessageId,
+          sent_at: delivery.sentAt,
+          error: delivery.error || null,
+        });
       }
     } catch (logErr) {
       console.warn('Failed to record notification delivery:', logErr);

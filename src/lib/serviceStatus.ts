@@ -1,7 +1,5 @@
 import { getEnv } from '@/lib/env';
-import { getDatabase } from '@/lib/mongodb';
 import { getRedisClient } from '@/lib/redisDb';
-import { isR2Configured, getR2Config } from '@/lib/r2';
 import { parseReleaseDetails } from '@/lib/releaseParser';
 import {
   extractEpisodeTitle,
@@ -256,166 +254,9 @@ export async function checkTmdbService(overrideCredential?: string): Promise<Ser
   }
 }
 
-/**
- * 2. Trakt API Check (Optional secondary episode metadata provider)
- */
-export async function checkTraktService(overrideClientId?: string): Promise<ServiceCheckItem> {
-  const clientId = (
-    overrideClientId !== undefined ? overrideClientId : getEnv('TRAKT_CLIENT_ID')
-  ).trim();
 
-  const base = {
-    id: 'trakt',
-    name: 'Trakt API',
-    group: 'APIs' as const,
-    purpose: 'Verified TV episode titles & season metadata',
-  };
 
-  if (isPlaceholderValue(clientId)) {
-    return recordResult({
-      ...base,
-      status: 'Not Configured',
-      message: 'TRAKT_CLIENT_ID not set (TVMaze/TMDB fallback active)',
-    });
-  }
 
-  if (!/^[a-f0-9]{64}$/i.test(clientId)) {
-    return recordResult({
-      ...base,
-      status: 'Offline',
-      latencyMs: 0,
-      message: 'Invalid TRAKT_CLIENT_ID format (expected 64-char hex)',
-    });
-  }
-
-  const start = Date.now();
-  try {
-    const res = await fetchWithTimeout(
-      'https://api.trakt.tv/search/imdb/tt0903747?type=show',
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'User-Agent': 'Cinephile-Service-Status/1.0',
-          'trakt-api-version': '2',
-          'trakt-api-key': clientId,
-        },
-      }
-    );
-    const latencyMs = Date.now() - start;
-
-    if (res.ok) {
-      return recordResult({
-        ...base,
-        status: 'Operational',
-        latencyMs,
-        message: `API v2 verified (${latencyMs}ms)`,
-      });
-    }
-    if (res.status === 401 || res.status === 403) {
-      return recordResult({
-        ...base,
-        status: 'Offline',
-        latencyMs,
-        message: `Client ID rejected (HTTP ${res.status})`,
-      });
-    }
-    if (res.status === 429) {
-      return recordResult({
-        ...base,
-        status: 'Degraded',
-        latencyMs,
-        message: 'Rate limit exceeded (HTTP 429)',
-      });
-    }
-    return recordResult({
-      ...base,
-      status: 'Degraded',
-      latencyMs,
-      message: `Trakt returned HTTP ${res.status}`,
-    });
-  } catch (err) {
-    return recordResult({
-      ...base,
-      status: 'Offline',
-      latencyMs: Date.now() - start,
-      message: sanitizeDiagnosticMessage(err),
-    });
-  }
-}
-
-/**
- * 3. MDBList API Check (Optional multi-source ratings provider)
- */
-export async function checkMdblistService(overrideKey?: string): Promise<ServiceCheckItem> {
-  const apiKey = (
-    overrideKey !== undefined
-      ? overrideKey
-      : getEnv('MDBLIST_API_KEY') || getEnv('NEXT_PUBLIC_MDBLIST_API_KEY')
-  ).trim();
-
-  const base = {
-    id: 'mdblist',
-    name: 'MDBList API',
-    group: 'APIs' as const,
-    purpose: 'Multi-source ratings aggregation (IMDb, RT, Metacritic)',
-  };
-
-  if (isPlaceholderValue(apiKey)) {
-    return recordResult({
-      ...base,
-      status: 'Not Configured',
-      message: 'Server API key not set (TMDB fallback active)',
-    });
-  }
-
-  const start = Date.now();
-  try {
-    const res = await fetchWithTimeout(
-      `https://mdblist.com/api/?apikey=${encodeURIComponent(apiKey)}&i=tt0111161`,
-      { headers: { Accept: 'application/json' } }
-    );
-    const latencyMs = Date.now() - start;
-
-    if (res.ok) {
-      const data = await res.json().catch(() => null);
-      if (data && data.error) {
-        return recordResult({
-          ...base,
-          status: 'Offline',
-          latencyMs,
-          message: 'Invalid MDBList API key',
-        });
-      }
-      return recordResult({
-        ...base,
-        status: 'Operational',
-        latencyMs,
-        message: `Ratings API verified (${latencyMs}ms)`,
-      });
-    }
-    if (res.status === 401 || res.status === 403) {
-      return recordResult({
-        ...base,
-        status: 'Offline',
-        latencyMs,
-        message: `Invalid MDBList key (HTTP ${res.status})`,
-      });
-    }
-    return recordResult({
-      ...base,
-      status: 'Degraded',
-      latencyMs,
-      message: `MDBList returned HTTP ${res.status}`,
-    });
-  } catch (err) {
-    return recordResult({
-      ...base,
-      status: 'Offline',
-      latencyMs: Date.now() - start,
-      message: sanitizeDiagnosticMessage(err),
-    });
-  }
-}
 
 /**
  * 4. Firebase Authentication Check (Optional; app uses Local HMAC auth when unset)
@@ -646,143 +487,69 @@ export async function checkTvParserAndImdbService(): Promise<ServiceCheckItem> {
 }
 
 /**
- * 7. MongoDB Atlas Check
+ * 7. Supabase PostgreSQL Check
  */
-export async function checkMongoDbService(overrideUri?: string): Promise<ServiceCheckItem> {
-  const uri = (overrideUri !== undefined ? overrideUri : getEnv('MONGODB_URI')).trim();
-
+export async function checkSupabaseService(): Promise<ServiceCheckItem> {
   const base = {
-    id: 'mongodb',
-    name: 'MongoDB Atlas',
+    id: 'supabase',
+    name: 'Supabase PostgreSQL',
     group: 'Database & Cache' as const,
-    purpose: 'Authoritative database for releases, requests & reports',
+    purpose: 'Authoritative primary database for catalog, links, reports & settings',
   };
 
-  if (isPlaceholderValue(uri)) {
+  const url = (getEnv('NEXT_PUBLIC_SUPABASE_URL') || getEnv('SUPABASE_URL')).trim();
+  const key = (
+    getEnv('SUPABASE_SERVICE_ROLE_KEY') ||
+    getEnv('SUPABASE_SERVICE_KEY') ||
+    getEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY')
+  ).trim();
+
+  if (isPlaceholderValue(url) || isPlaceholderValue(key)) {
     return recordResult({
       ...base,
       status: 'Not Configured',
-      message: 'MONGODB_URI is not configured',
-    });
-  }
-
-  if (!/^mongodb(\+srv)?:\/\/.+/i.test(uri)) {
-    return recordResult({
-      ...base,
-      status: 'Offline',
-      latencyMs: 0,
-      message: 'Invalid MongoDB connection URI scheme',
+      message: 'Supabase URL or Key is not configured',
     });
   }
 
   const start = Date.now();
-  const isEdgeRuntime =
-    'WebSocketPair' in globalThis || Boolean(getEnv('WORKER_NAME'));
-
-  if (isEdgeRuntime && overrideUri === undefined) {
-    // In Cloudflare Workers workerd runtime, direct TCP SRV connections are unavailable;
-    // mutations and uncached queries bridge through the upstream Node.js service.
-    const upstreamBase = getEnv('UPSTREAM_API_URL') || 'https://cinephile-app.vercel.app';
-    try {
-      const res = await fetchWithTimeout(`${upstreamBase}/api/catalog?limit=1`, {
-        headers: { 'User-Agent': 'Cinephile-Health-Check/1.0', Accept: 'application/json' },
-      });
-      const latencyMs = Date.now() - start;
-      if (res.ok) {
-        const data = await res.json().catch(() => null);
-        const validPayload =
-          Array.isArray(data?.items) || Array.isArray(data?.titles) || Array.isArray(data);
-        if (validPayload) {
-          return recordResult({
-            ...base,
-            status: 'Operational',
-            latencyMs,
-            message: `Verified via Node.js bridge (${latencyMs}ms)`,
-          });
-        }
-        return recordResult({
-          ...base,
-          status: 'Degraded',
-          latencyMs,
-          message: 'Bridge reachable but returned unexpected catalog payload',
-        });
-      }
-      return recordResult({
-        ...base,
-        status: 'Degraded',
-        latencyMs,
-        message: `Edge TCP bypassed; bridge HTTP ${res.status}`,
-      });
-    } catch {
+  try {
+    const { getSupabaseAdminClient } = await import('@/lib/supabase');
+    const client = getSupabaseAdminClient();
+    if (!client) {
       return recordResult({
         ...base,
         status: 'Degraded',
         latencyMs: Date.now() - start,
-        message: 'Edge TCP bypassed; upstream bridge unreachable',
+        message: 'Failed to initialize Supabase client',
       });
     }
-  }
 
-  // If an explicit overrideUri was provided that differs from configured env, test it isolated
-  if (overrideUri !== undefined && overrideUri !== getEnv('MONGODB_URI')) {
-    try {
-      const { MongoClient } = await import('mongodb');
-      const testClient = new MongoClient(uri, {
-        serverSelectionTimeoutMS: 2000,
-        connectTimeoutMS: 2000,
-      });
-      try {
-        await testClient.connect();
-        await testClient.db('admin').command({ ping: 1 });
-        const latencyMs = Date.now() - start;
+    const { error } = await client.from('app_settings').select('key').limit(1);
+    const latencyMs = Date.now() - start;
+
+    if (error && error.code !== 'PGRST116') {
+      if (error.message?.includes('does not exist') || error.code === '42P01') {
         return recordResult({
           ...base,
           status: 'Operational',
           latencyMs,
-          message: `Ping OK (${latencyMs}ms)`,
+          message: `Connected (${latencyMs}ms · tables initialized on first write)`,
         });
-      } finally {
-        await testClient.close().catch(() => {});
       }
-    } catch (err) {
       return recordResult({
         ...base,
-        status: 'Offline',
-        latencyMs: Date.now() - start,
-        message: sanitizeDiagnosticMessage(err),
-      });
-    }
-  }
-
-  try {
-    const timeoutPromise = new Promise<null>((_, reject) =>
-      setTimeout(() => reject(new Error('Database ping timed out')), CHECK_TIMEOUT_MS)
-    );
-    const db = await Promise.race([getDatabase(), timeoutPromise]);
-    const latencyMs = Date.now() - start;
-
-    if (!db) {
-      return recordResult({
-        ...base,
-        status: 'Offline',
+        status: 'Degraded',
         latencyMs,
-        message: 'Database connection unavailable',
+        message: sanitizeDiagnosticMessage(error.message),
       });
     }
 
-    await Promise.race([db.command({ ping: 1 }), timeoutPromise]);
-    const count = await db
-      .collection('links')
-      .estimatedDocumentCount()
-      .catch(() => null);
-    const totalLatency = Date.now() - start;
-
-    const countSuffix = typeof count === 'number' ? ` · ${count.toLocaleString()} links` : '';
     return recordResult({
       ...base,
       status: 'Operational',
-      latencyMs: totalLatency,
-      message: `Ping OK (${totalLatency}ms${countSuffix})`,
+      latencyMs,
+      message: `Operational (${latencyMs}ms)`,
     });
   } catch (err) {
     return recordResult({
@@ -919,84 +686,7 @@ export async function checkUpstashRedisService(
 }
 
 /**
- * 9. Cloudflare R2 Storage Check (Optional unused integration; never marked Operational without a real check)
- */
-export async function checkCloudflareR2Service(): Promise<ServiceCheckItem> {
-  const base = {
-    id: 'cloudflare_r2',
-    name: 'Cloudflare R2',
-    group: 'Database & Cache' as const,
-    purpose: 'S3-compatible zero-egress media object storage',
-  };
-
-  const cfg = getR2Config();
-  if (
-    !isR2Configured() ||
-    isPlaceholderValue(cfg.accessKeyId) ||
-    isPlaceholderValue(cfg.secretAccessKey)
-  ) {
-    return recordResult({
-      ...base,
-      status: 'Not Configured',
-      message: 'R2 credentials not set (external link hosts active)',
-    });
-  }
-
-  const probeUrl =
-    cfg.publicUrl ||
-    (cfg.endpoint && cfg.bucket
-      ? `${cfg.endpoint.replace(/\/+$/, '')}/${cfg.bucket}`
-      : null);
-
-  if (!probeUrl) {
-    return recordResult({
-      ...base,
-      status: 'Not Configured',
-      message: 'R2 endpoint/public URL not configured',
-    });
-  }
-
-  const start = Date.now();
-  try {
-    const res = await fetchWithTimeout(probeUrl, { method: 'HEAD' });
-    const latencyMs = Date.now() - start;
-
-    if (res.ok) {
-      return recordResult({
-        ...base,
-        status: 'Operational',
-        latencyMs,
-        message: `Bucket reachable (${cfg.bucket}, ${latencyMs}ms)`,
-      });
-    }
-
-    if (res.status === 401 || res.status === 403 || res.status === 400) {
-      return recordResult({
-        ...base,
-        status: 'Offline',
-        latencyMs,
-        message: `R2 endpoint rejected probe (HTTP ${res.status})`,
-      });
-    }
-
-    return recordResult({
-      ...base,
-      status: 'Degraded',
-      latencyMs,
-      message: `R2 returned HTTP ${res.status}`,
-    });
-  } catch (err) {
-    return recordResult({
-      ...base,
-      status: 'Offline',
-      latencyMs: Date.now() - start,
-      message: sanitizeDiagnosticMessage(err),
-    });
-  }
-}
-
-/**
- * 10. Cloudflare Workers Check (Distinguishes active runtime vs remote deployment)
+ * 9. Cloudflare Workers Check (Distinguishes active runtime vs remote deployment)
  */
 export async function checkCloudflareWorkersService(): Promise<ServiceCheckItem> {
   const base = {
@@ -1055,7 +745,7 @@ export async function checkVercelService(): Promise<ServiceCheckItem> {
     id: 'vercel',
     name: 'Vercel',
     group: 'Hosting & Deployment' as const,
-    purpose: 'Node.js serverless deployment & MongoDB API bridge',
+    purpose: 'Node.js serverless deployment & API bridge',
   };
 
   const isVercelRuntime = Boolean(process.env.VERCEL);
@@ -1382,13 +1072,13 @@ export async function checkGitHubActionsService(options?: {
 
 /**
  * Computes the overall status from individual service checks.
- * - Optional unused integrations ("Not Configured" for Trakt, MDBList, Firebase Auth, R2)
+ * - Optional unused integrations ("Not Configured" for Firebase Auth)
  *   are NOT treated as system failures.
- * - Required core services (TMDB, MongoDB, Upstash Redis, Telegram Bot) must be Operational
+ * - Required core services (TMDB, Supabase, Upstash Redis, Telegram Bot) must be Operational
  *   for overall Operational status.
  */
 export function computeOverallStatus(services: ServiceCheckItem[]): ServiceHealthState {
-  const criticalIds = new Set(['tmdb', 'mongodb', 'upstash_redis', 'telegram_bot']);
+  const criticalIds = new Set(['tmdb', 'supabase', 'upstash_redis', 'telegram_bot']);
   const criticalServices = services.filter((s) => criticalIds.has(s.id));
   const configuredServices = services.filter((s) => s.status !== 'Not Configured');
 
@@ -1430,13 +1120,10 @@ export async function getAllServiceStatuses(options?: {
   const checks = await Promise.all([
     // APIs
     checkTmdbService(),
-    checkTraktService(),
-    checkMdblistService(),
     checkFirebaseAuthService(),
     // Database & Cache
-    checkMongoDbService(),
+    checkSupabaseService(),
     checkUpstashRedisService(),
-    checkCloudflareR2Service(),
     // Hosting & Deployment
     checkCloudflareWorkersService(),
     checkVercelService(),

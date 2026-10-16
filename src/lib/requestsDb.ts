@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { getDatabase } from '@/lib/mongodb';
+import { getSupabaseAdminClient } from '@/lib/supabase';
 import { getRedisClient } from '@/lib/redisDb';
 import { UserRequest } from '@/types';
 
@@ -61,7 +61,7 @@ export function saveLocalFallbackRequests(data: UserRequest[]): boolean {
 }
 
 /**
- * Fetches all user requests from MongoDB Atlas, Redis, or local JSON file
+ * Fetches all user requests from Supabase, Redis, or local JSON file
  */
 export async function getAllRequests(
   filterStatus?: string,
@@ -74,65 +74,73 @@ export async function getAllRequests(
   page?: number;
   totalPages?: number;
   limit?: number;
-  source: 'mongodb_atlas' | 'upstash_redis' | 'local_json';
+  source: 'supabase' | 'upstash_redis' | 'local_json';
 }> {
   const hasPagination = typeof options?.page === 'number' || typeof options?.limit === 'number';
   const page = Math.max(1, options?.page || 1);
   const limit = Math.max(1, Math.min(100, options?.limit || 50));
   const userFilter = options?.userId ? options.userId.trim() : null;
 
-  // 1. Try MongoDB Atlas first
+  // 1. Try Supabase first
   try {
-    const db = await getDatabase(dbName);
-    if (db) {
-      const collection = db.collection('requests');
-      const query: any = {};
+    const supabase = getSupabaseAdminClient();
+    if (supabase) {
+      let query = supabase.from('user_requests').select('*', { count: 'exact' });
       if (filterStatus && typeof filterStatus === 'string' && filterStatus !== 'all') {
         const cleanStatus = filterStatus.trim();
         if (!cleanStatus.startsWith('$')) {
-          query.status = cleanStatus;
+          query = query.eq('status', cleanStatus);
         }
       }
       if (userFilter && typeof userFilter === 'string') {
         const cleanUser = userFilter.trim();
         if (cleanUser && !cleanUser.startsWith('$')) {
-          query.$or = [{ userId: cleanUser }, { userEmail: cleanUser }];
+          query = query.or(`user_id.eq.${cleanUser},user_email.eq.${cleanUser}`);
         }
       }
-
-      const total = await collection.countDocuments(query).catch(() => 0);
-      const pendingQuery: any = { status: 'pending' };
-      if (userFilter && typeof userFilter === 'string') {
-        const cleanUser = userFilter.trim();
-        if (cleanUser && !cleanUser.startsWith('$')) {
-          pendingQuery.$or = [{ userId: cleanUser }, { userEmail: cleanUser }];
-        }
-      }
-      const pendingCount = await collection.countDocuments(pendingQuery).catch(() => 0);
-
-      let cursor = collection.find(query).sort({ createdAt: -1 });
+      query = query.order('created_at', { ascending: false });
       if (hasPagination) {
-        cursor = cursor.skip((page - 1) * limit).limit(limit);
+        query = query.range((page - 1) * limit, page * limit - 1);
       }
-      const docs = await cursor.toArray();
-
-      const requests: UserRequest[] = docs.map((d: any) => {
-        const { _id, ...rest } = d;
-        return rest as UserRequest;
-      });
-
-      return {
-        requests,
-        total,
-        pendingCount,
-        page: hasPagination ? page : 1,
-        totalPages: hasPagination ? Math.max(1, Math.ceil(total / limit)) : 1,
-        limit: hasPagination ? limit : total,
-        source: 'mongodb_atlas',
-      };
+      const { data, count, error } = await query;
+      if (!error && Array.isArray(data)) {
+        const requests: UserRequest[] = data.map((d: any) => ({
+          id: d.id,
+          title: d.title,
+          mediaType: d.media_type || 'movie',
+          releaseYear: d.release_year || d.year || '',
+          quality: d.quality || 'Any',
+          audioLanguage: d.audio_language || 'Any',
+          tmdbId: d.tmdb_id,
+          posterPath: d.poster_path || null,
+          seasonNumber: d.season_number,
+          episodeNumber: d.episode_number,
+          status: d.status || 'pending',
+          notes: d.notes,
+          userId: d.user_id,
+          userName: d.user_name,
+          userEmail: d.user_email,
+          userContact: d.user_contact,
+          createdAt: d.created_at,
+          fulfilledAt: d.fulfilled_at,
+          fulfilledLinkId: d.fulfilled_link_id,
+          fulfilledLinkUrl: d.fulfilled_link_url,
+          adminNote: d.admin_note,
+        }));
+        const total = count || requests.length;
+        return {
+          requests,
+          total,
+          pendingCount: requests.filter((r) => r.status === 'pending').length,
+          page: hasPagination ? page : 1,
+          totalPages: hasPagination ? Math.max(1, Math.ceil(total / limit)) : 1,
+          limit: hasPagination ? limit : total,
+          source: 'supabase',
+        };
+      }
     }
-  } catch (mongoErr: any) {
-    console.warn('MongoDB Atlas requests read fallback:', mongoErr.message);
+  } catch (supabaseErr: any) {
+    console.warn('Supabase requests read fallback:', supabaseErr.message);
   }
 
   // 2. Try Upstash Redis
@@ -211,19 +219,35 @@ export async function getAllRequests(
 export async function saveNewRequest(request: UserRequest): Promise<boolean> {
   let persisted = false;
 
-  // 1. MongoDB Atlas
+  // 1. Supabase
   try {
-    const db = await getDatabase();
-    if (db) {
-      await db.collection('requests').updateOne(
-        { id: request.id },
-        { $set: { ...request, updatedAt: new Date() } },
-        { upsert: true }
-      );
-      persisted = true;
+    const supabase = getSupabaseAdminClient();
+    if (supabase) {
+      const { error } = await supabase.from('user_requests').upsert({
+        id: request.id,
+        title: request.title,
+        year: request.releaseYear,
+        release_year: request.releaseYear,
+        media_type: request.mediaType,
+        tmdb_id: request.tmdbId,
+        poster_path: request.posterPath || null,
+        season_number: request.seasonNumber,
+        episode_number: request.episodeNumber,
+        quality: request.quality || 'Any',
+        audio_language: request.audioLanguage || 'Any',
+        status: request.status || 'pending',
+        notes: request.notes,
+        user_id: request.userId,
+        user_name: request.userName,
+        user_email: request.userEmail,
+        user_contact: request.userContact,
+        created_at: request.createdAt || new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'id' });
+      if (!error) persisted = true;
     }
   } catch (err: any) {
-    console.warn('MongoDB Atlas request save warning:', err.message);
+    console.warn('Supabase request save warning:', err.message);
   }
 
   // 2. Upstash Redis
@@ -254,7 +278,7 @@ export async function saveNewRequest(request: UserRequest): Promise<boolean> {
   }
 
   if (!persisted) {
-    throw new Error('Database persistence unavailable: neither MongoDB nor Redis could persist the request.');
+    throw new Error('Database persistence unavailable: could not persist the request.');
   }
 
   return true;
@@ -289,19 +313,20 @@ export async function updateRequestStatus(
     ...(meta?.adminNote ? { adminNote: meta.adminNote } : (replyObj ? { adminNote: replyObj.message } : {})),
   };
 
-  // 1. MongoDB Atlas
+  // 1. Supabase
   try {
-    const db = await getDatabase();
-    if (db) {
-      const mongoUpdate: any = { $set: { ...updates, updatedAt: new Date() } };
-      if (replyObj) {
-        mongoUpdate.$push = { adminReplies: replyObj };
-      }
-      await db.collection('requests').updateOne({ id: cleanId }, mongoUpdate);
-      persisted = true;
+    const supabase = getSupabaseAdminClient();
+    if (supabase) {
+      const updateData: any = { status, updated_at: new Date().toISOString() };
+      if (status === 'fulfilled') updateData.fulfilled_at = new Date().toISOString();
+      if (meta?.fulfilledLinkId) updateData.fulfilled_link_id = meta.fulfilledLinkId;
+      if (meta?.fulfilledLinkUrl) updateData.fulfilled_link_url = meta.fulfilledLinkUrl;
+      if (meta?.adminNote || replyObj?.message) updateData.admin_note = meta?.adminNote || replyObj?.message;
+      const { error } = await supabase.from('user_requests').update(updateData).eq('id', cleanId);
+      if (!error) persisted = true;
     }
   } catch (err: any) {
-    console.warn('MongoDB Atlas request update warning:', err.message);
+    console.warn('Supabase request update warning:', err.message);
   }
 
   // 2. Upstash Redis
@@ -365,12 +390,12 @@ export async function deleteRequest(id: string): Promise<boolean> {
 
   let persisted = false;
 
-  // 1. MongoDB
+  // 1. Supabase
   try {
-    const db = await getDatabase();
-    if (db) {
-      await db.collection('requests').deleteOne({ id: cleanId });
-      persisted = true;
+    const supabase = getSupabaseAdminClient();
+    if (supabase) {
+      const { error } = await supabase.from('user_requests').delete().eq('id', cleanId);
+      if (!error) persisted = true;
     }
   } catch {}
 
@@ -409,18 +434,39 @@ export async function getRequestById(id: string, dbName?: string): Promise<UserR
   const reqId = (id || '').trim();
   if (!reqId) return null;
 
-  // 1. MongoDB
+  // 1. Supabase
   try {
-    const db = await getDatabase(dbName);
-    if (db) {
-      const doc = await db.collection('requests').findOne({ id: reqId });
-      if (doc) {
-        const { _id, ...rest } = doc;
-        return rest as UserRequest;
+    const supabase = getSupabaseAdminClient();
+    if (supabase) {
+      const { data, error } = await supabase.from('user_requests').select('*').eq('id', reqId).maybeSingle();
+      if (!error && data) {
+        return {
+          id: data.id,
+          title: data.title,
+          mediaType: data.media_type || 'movie',
+          releaseYear: data.release_year || data.year || '',
+          quality: data.quality || 'Any',
+          audioLanguage: data.audio_language || 'Any',
+          tmdbId: data.tmdb_id,
+          posterPath: data.poster_path || null,
+          seasonNumber: data.season_number,
+          episodeNumber: data.episode_number,
+          status: data.status || 'pending',
+          notes: data.notes,
+          userId: data.user_id,
+          userName: data.user_name,
+          userEmail: data.user_email,
+          userContact: data.user_contact,
+          createdAt: data.created_at,
+          fulfilledAt: data.fulfilled_at,
+          fulfilledLinkId: data.fulfilled_link_id,
+          fulfilledLinkUrl: data.fulfilled_link_url,
+          adminNote: data.admin_note,
+        };
       }
     }
   } catch (err: any) {
-    console.warn('MongoDB Atlas getRequestById fallback:', err.message);
+    console.warn('Supabase getRequestById fallback:', err.message);
   }
 
   // 2. Redis

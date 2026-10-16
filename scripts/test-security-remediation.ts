@@ -22,7 +22,7 @@ import {
 } from '../src/lib/redisDb';
 import { POST as adminAuthPost } from '../src/app/api/admin/auth/route';
 import { POST as curatedLinksPost } from '../src/app/api/curated-links/route';
-import { resetMongoClient } from '../src/lib/mongodb';
+const resetMongoClient = () => {};
 
 console.log('🔒 ========================================================');
 console.log('🔒 CiNEPHiLE Security Remediation — Phase 1 Test Suite');

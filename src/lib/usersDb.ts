@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import { getDatabase } from '@/lib/mongodb';
+import { getSupabaseAdminClient } from '@/lib/supabase';
 import { getRedisClient } from '@/lib/redisDb';
 import { getAllRequests } from '@/lib/requestsDb';
 import { getAllReports } from '@/lib/reportsDb';
@@ -63,9 +63,59 @@ export function saveLocalFallbackUsers(data: RegisteredUser[]): boolean {
 }
 
 /**
- * Formats and sanitizes a raw user document from database/redis
- * Ensures firebaseUid, name, and status are always populated
- * STRICT RULE: Strips passwordHash and passwordSalt
+ * Maps Supabase snake_case row to Cinephile RegisteredUser
+ */
+function mapSupabaseRowToUser(row: any): RegisteredUser {
+  const uid = row.firebase_uid || row.uid || `usr_${Date.now()}`;
+  const cleanEmail = (row.email || '').toLowerCase().trim();
+  const name = row.name || row.display_name || (cleanEmail ? cleanEmail.split('@')[0] : 'Cinephile User');
+
+  return {
+    firebaseUid: uid,
+    uid,
+    name,
+    displayName: row.display_name || name,
+    email: cleanEmail,
+    photoURL: row.photo_url || null,
+    bio: row.bio || '',
+    favoriteGenres: Array.isArray(row.favorite_genres) ? row.favorite_genres : [],
+    provider: row.provider || 'firebase',
+    status: row.status || 'active',
+    createdAt: row.created_at || new Date().toISOString(),
+    lastLoginAt: row.last_login_at || row.created_at || new Date().toISOString(),
+    updatedAt: row.updated_at || new Date().toISOString(),
+    notificationPreferences: row.notification_preferences || undefined,
+  } as RegisteredUser;
+}
+
+/**
+ * Maps RegisteredUser to Supabase row
+ */
+function mapUserToSupabaseRow(user: RegisteredUser): Record<string, any> {
+  const uid = user.firebaseUid || user.uid;
+  const cleanEmail = (user.email || '').toLowerCase().trim();
+  const name = user.name || user.displayName || (cleanEmail ? cleanEmail.split('@')[0] : 'Cinephile User');
+
+  return {
+    uid,
+    firebase_uid: uid,
+    name,
+    display_name: user.displayName || name,
+    email: cleanEmail,
+    photo_url: user.photoURL || null,
+    bio: user.bio || '',
+    favorite_genres: user.favoriteGenres || [],
+    provider: user.provider || 'firebase',
+    status: user.status || 'active',
+    created_at: user.createdAt || new Date().toISOString(),
+    last_login_at: user.lastLoginAt || new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    notification_preferences: user.notificationPreferences || null,
+  };
+}
+
+/**
+ * Formats and sanitizes a raw user document from redis/local fallback
  */
 function sanitizeUserDocument(raw: any): RegisteredUser {
   const { _id, passwordHash, passwordSalt, ...rest } = raw;
@@ -97,36 +147,36 @@ export async function getAllUsers(options?: { page?: number; limit?: number }): 
   page?: number;
   totalPages?: number;
   limit?: number;
-  source: 'mongodb_atlas' | 'upstash_redis' | 'local_json';
+  source: 'supabase' | 'upstash_redis' | 'local_json';
 }> {
   let userList: RegisteredUser[] = [];
   let total = 0;
-  let source: 'mongodb_atlas' | 'upstash_redis' | 'local_json' = 'local_json';
+  let source: 'supabase' | 'upstash_redis' | 'local_json' = 'local_json';
   const hasPagination = typeof options?.page === 'number' || typeof options?.limit === 'number';
   const page = Math.max(1, options?.page || 1);
   const limit = Math.max(1, Math.min(100, options?.limit || 50));
 
-  // 1. Try MongoDB
+  // 1. Try Supabase
   try {
-    const db = await getDatabase();
-    if (db) {
-      const collection = db.collection('users');
-      total = await collection.countDocuments().catch(() => 0);
-      let query = collection.find({}).sort({ createdAt: -1 });
+    const supabase = getSupabaseAdminClient();
+    if (supabase) {
+      let query = supabase.from('users').select('*', { count: 'exact' });
+      query = query.order('created_at', { ascending: false });
       if (hasPagination) {
-        query = query.skip((page - 1) * limit).limit(limit);
+        query = query.range((page - 1) * limit, page * limit - 1);
       }
-      const docs = await query.toArray();
-      if (docs && docs.length > 0) {
-        userList = docs.map((d: any) => sanitizeUserDocument(d));
-        source = 'mongodb_atlas';
+      const { data, count, error } = await query;
+      if (!error && data && data.length > 0) {
+        userList = data.map(mapSupabaseRowToUser);
+        total = count ?? data.length;
+        source = 'supabase';
       }
     }
-  } catch (mongoErr: any) {
-    console.warn('MongoDB Atlas users read fallback:', mongoErr.message);
+  } catch (supabaseErr: any) {
+    console.warn('Supabase users read fallback:', supabaseErr.message);
   }
 
-  // 2. Try Redis if Mongo was empty
+  // 2. Try Redis if Supabase was empty
   const redisClient = getRedisClient();
   if (userList.length === 0 && redisClient) {
     try {
@@ -134,6 +184,7 @@ export async function getAllUsers(options?: { page?: number; limit?: number }): 
       const parsedList = parseRedisList<RegisteredUser>(redisData);
       if (parsedList.length > 0) {
         userList = parsedList.map((u: any) => sanitizeUserDocument(u));
+        total = userList.length;
         source = 'upstash_redis';
       }
     } catch (redisErr: any) {
@@ -144,6 +195,7 @@ export async function getAllUsers(options?: { page?: number; limit?: number }): 
   // 3. Fallback to local
   if (userList.length === 0) {
     userList = getLocalFallbackUsers().map((u: any) => sanitizeUserDocument(u));
+    total = userList.length;
     source = 'local_json';
   }
 
@@ -261,19 +313,23 @@ export async function getUserByFirebaseUid(firebaseUid: string): Promise<Registe
   const cleanUid = (firebaseUid || '').trim();
   if (!cleanUid) return null;
 
-  // 1. Try MongoDB
+  // 1. Try Supabase
   try {
-    const db = await getDatabase();
-    if (db) {
-      const doc = await db.collection('users').findOne({
-        $or: [{ firebaseUid: cleanUid }, { uid: cleanUid }],
-      });
-      if (doc) {
-        return sanitizeUserDocument(doc);
+    const supabase = getSupabaseAdminClient();
+    if (supabase) {
+      const { data, error } = await supabase
+        .from('users')
+        .select('*')
+        .or(`firebase_uid.eq.${cleanUid},uid.eq.${cleanUid}`)
+        .limit(1)
+        .maybeSingle();
+
+      if (!error && data) {
+        return mapSupabaseRowToUser(data);
       }
     }
   } catch (err: any) {
-    console.warn('MongoDB getUserByFirebaseUid warning:', err.message);
+    console.warn('Supabase getUserByFirebaseUid warning:', err.message);
   }
 
   // 2. Try Redis
@@ -298,23 +354,29 @@ export async function getUserByFirebaseUid(firebaseUid: string): Promise<Registe
 }
 
 /**
- * Finds a user by email across MongoDB, Redis, and local JSON
+ * Finds a user by email across Supabase, Redis, and local JSON
  */
 export async function getUserByEmail(email: string): Promise<RegisteredUser | null> {
   const cleanEmail = email.toLowerCase().trim();
   if (!cleanEmail) return null;
 
-  // 1. Try MongoDB
+  // 1. Try Supabase
   try {
-    const db = await getDatabase();
-    if (db) {
-      const doc = await db.collection('users').findOne({ email: cleanEmail });
-      if (doc) {
-        return sanitizeUserDocument(doc);
+    const supabase = getSupabaseAdminClient();
+    if (supabase) {
+      const { data, error } = await supabase
+        .from('users')
+        .select('*')
+        .eq('email', cleanEmail)
+        .limit(1)
+        .maybeSingle();
+
+      if (!error && data) {
+        return mapSupabaseRowToUser(data);
       }
     }
   } catch (err: any) {
-    console.warn('MongoDB getUserByEmail warning:', err.message);
+    console.warn('Supabase getUserByEmail warning:', err.message);
   }
 
   // 2. Try Redis
@@ -340,12 +402,6 @@ export async function getUserByEmail(email: string): Promise<RegisteredUser | nu
 
 /**
  * Saves or updates a Firebase authenticated user profile across persistence layers.
- * STRICT SECURITY RULES:
- * 1. UID comes strictly from verified Firebase identity (firebaseUid).
- * 2. Email comes strictly from verified Firebase identity.
- * 3. Name comes strictly from verified Firebase display name (with graceful fallback).
- * 4. NEVER stores passwordHash or passwordSalt.
- * 5. Guarantees unique firebaseUid indexing in MongoDB.
  */
 export async function saveFirebaseUserToDatabase(profile: {
   firebaseUid: string;
@@ -387,29 +443,20 @@ export async function saveFirebaseUserToDatabase(profile: {
 
   let persisted = false;
 
-  // 1. MongoDB Atlas
+  // 1. Supabase
   try {
-    const db = await getDatabase();
-    if (db) {
-      try {
-        await db.collection('users').createIndex(
-          { firebaseUid: 1 },
-          { unique: true, sparse: true, background: true }
-        );
-      } catch {}
-
-      await db.collection('users').updateOne(
-        { $or: [{ firebaseUid: cleanUid }, { uid: cleanUid }, ...(cleanEmail ? [{ email: cleanEmail }] : [])] },
-        {
-          $set: finalUser,
-          $unset: { passwordHash: '', passwordSalt: '' },
-        },
-        { upsert: true }
-      );
-      persisted = true;
+    const supabase = getSupabaseAdminClient();
+    if (supabase) {
+      const row = mapUserToSupabaseRow(finalUser);
+      const { error } = await supabase.from('users').upsert(row, { onConflict: 'uid' });
+      if (!error) {
+        persisted = true;
+      } else {
+        console.warn('Supabase Firebase user save warning:', error.message);
+      }
     }
   } catch (err: any) {
-    console.warn('MongoDB Atlas Firebase user save warning:', err.message);
+    console.warn('Supabase Firebase user save warning:', err.message);
   }
 
   // 2. Upstash Redis
@@ -483,19 +530,20 @@ export async function saveUserToDatabase(user: Partial<RegisteredUser> & { uid?:
 
   let persisted = false;
 
-  // 1. MongoDB Atlas
+  // 1. Supabase
   try {
-    const db = await getDatabase();
-    if (db) {
-      await db.collection('users').updateOne(
-        { $or: [{ email: cleanEmail }, { firebaseUid: finalUser.uid }, { uid: finalUser.uid }] },
-        { $set: { ...finalUser, updatedAt: new Date() } },
-        { upsert: true }
-      );
-      persisted = true;
+    const supabase = getSupabaseAdminClient();
+    if (supabase) {
+      const row = mapUserToSupabaseRow(finalUser);
+      const { error } = await supabase.from('users').upsert(row, { onConflict: 'uid' });
+      if (!error) {
+        persisted = true;
+      } else {
+        console.warn('Supabase user save warning:', error.message);
+      }
     }
   } catch (err: any) {
-    console.warn('MongoDB Atlas user save warning:', err.message);
+    console.warn('Supabase user save warning:', err.message);
   }
 
   // 2. Upstash Redis
@@ -540,14 +588,17 @@ export async function deleteUserFromDatabase(uid: string): Promise<boolean> {
   if (!cleanUid) return false;
   let persisted = false;
 
-  // 1. Mongo
+  // 1. Supabase
   try {
-    const db = await getDatabase();
-    if (db) {
-      await db.collection('users').deleteOne({
-        $or: [{ firebaseUid: cleanUid }, { uid: cleanUid }],
-      });
-      persisted = true;
+    const supabase = getSupabaseAdminClient();
+    if (supabase) {
+      const { error } = await supabase
+        .from('users')
+        .delete()
+        .or(`firebase_uid.eq.${cleanUid},uid.eq.${cleanUid}`);
+      if (!error) {
+        persisted = true;
+      }
     }
   } catch (e) {}
 
@@ -583,7 +634,7 @@ export async function deleteUserFromDatabase(uid: string): Promise<boolean> {
 }
 
 /**
- * Updates user notification preferences in MongoDB Atlas and Redis
+ * Updates user notification preferences in Supabase and Redis
  */
 export async function updateUserPreferences(
   firebaseUid: string,
@@ -598,31 +649,28 @@ export async function updateUserPreferences(
   if (!cleanUid) return { success: false, preferences: null };
 
   try {
-    const db = await getDatabase();
-    if (db) {
-      const updateFields: any = { updatedAt: new Date().toISOString() };
-      if (typeof preferences.inAppRequests === 'boolean') {
-        updateFields['notificationPreferences.inAppRequests'] = preferences.inAppRequests;
-      }
-      if (typeof preferences.inAppReports === 'boolean') {
-        updateFields['notificationPreferences.inAppReports'] = preferences.inAppReports;
-      }
-      if (typeof preferences.telegramRequests === 'boolean') {
-        updateFields['notificationPreferences.telegramRequests'] = preferences.telegramRequests;
-      }
-      if (typeof preferences.telegramReports === 'boolean') {
-        updateFields['notificationPreferences.telegramReports'] = preferences.telegramReports;
-      }
+    const supabase = getSupabaseAdminClient();
+    if (supabase) {
+      const { data: existingUser } = await supabase
+        .from('users')
+        .select('notification_preferences')
+        .or(`firebase_uid.eq.${cleanUid},uid.eq.${cleanUid}`)
+        .maybeSingle();
 
-      await db.collection('users').updateOne(
-        { $or: [{ firebaseUid: cleanUid }, { uid: cleanUid }] },
-        { $set: updateFields }
-      );
+      const currentPrefs = existingUser?.notification_preferences || {};
+      const updatedPrefs = { ...currentPrefs, ...preferences };
+
+      await supabase
+        .from('users')
+        .update({
+          notification_preferences: updatedPrefs,
+          updated_at: new Date().toISOString(),
+        })
+        .or(`firebase_uid.eq.${cleanUid},uid.eq.${cleanUid}`);
     }
     return { success: true, preferences };
   } catch (err: any) {
-    console.warn('Failed to update user preferences:', err.message);
+    console.warn('Failed to update user preferences in Supabase:', err.message);
     return { success: false, preferences: null };
   }
 }
-

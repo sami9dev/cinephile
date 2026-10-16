@@ -201,8 +201,6 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
     watchlist,
     addCustomLink,
     removeCustomLink,
-    mdblistConfig,
-    updateMdblistConfig,
     stats,
     isMounted,
   } = useWatchlist();
@@ -301,7 +299,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
   const [managingTitle, setManagingTitle] = useState<LinkedCatalogTitle | null>(null);
   const [managingTitleLinks, setManagingTitleLinks] = useState<CustomLink[]>([]);
   const [isLoadingManagingLinks, setIsLoadingManagingLinks] = useState(false);
-  const [titleManagerTab, setTitleManagerTab] = useState<'view' | 'replace' | 'domain' | 'add' | 'edit_title' | 'trakt_episodes'>('view');
+  const [titleManagerTab, setTitleManagerTab] = useState<'view' | 'replace' | 'domain' | 'add' | 'edit_title' | 'official_episodes'>('view');
   const [titleLinksSearch, setTitleLinksSearch] = useState('');
 
   // Title Metadata Direct Editing State (without TMDB search)
@@ -335,23 +333,8 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
   const [titleToDelete, setTitleToDelete] = useState<LinkedCatalogTitle | null>(null);
   const [deleteTitleConfirmChecked, setDeleteTitleConfirmChecked] = useState(false);
 
-  // Trakt TV Episode Titles State
-  const [traktSeason, setTraktSeason] = useState(1);
-  const [traktEpisode, setTraktEpisode] = useState(1);
-  const [traktShowId, setTraktShowId] = useState('');
-  const [traktFetchedTitle, setTraktFetchedTitle] = useState('');
-  const [traktOverview, setTraktOverview] = useState('');
-  const [traktShowTitle, setTraktShowTitle] = useState('');
-  const [isTraktLoading, setIsTraktLoading] = useState(false);
-  const [isTraktSaving, setIsTraktSaving] = useState(false);
-  const [traktMsg, setTraktMsg] = useState('');
-  const [traktError, setTraktError] = useState('');
-  const [traktSeasonEpisodes, setTraktSeasonEpisodes] = useState<
-    Array<{ episodeNumber: number; title: string; overview?: string; traktId?: number }>
-  >([]);
-
-  // Batch Official Titles Sync & Verification State
-  const [traktViewMode, setTraktViewMode] = useState<'single' | 'batch'>('single');
+  // Official TV Episode Titles Sync & Verification State (IMDb / TVMaze / TMDB)
+  const [officialShowId, setOfficialShowId] = useState('');
   const [batchEpisodeDiff, setBatchEpisodeDiff] = useState<
     Array<{
       seasonNumber: number;
@@ -362,7 +345,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
       urlsIntact: boolean;
       proposedOfficialTitle: string;
       proposedHeading: string;
-      source: 'imdb' | 'tvmaze' | 'tmdb' | 'trakt' | 'manual' | 'stored' | 'fallback';
+      source: 'imdb' | 'tvmaze' | 'tmdb' | 'manual' | 'stored' | 'fallback';
       isVerified: boolean;
       manualTitleVerified?: boolean;
       status: 'clean' | 'needs_update' | 'unverified';
@@ -563,7 +546,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
   const [systemLogs, setSystemLogs] = useState<Array<{ timestamp: string; level: 'info' | 'success' | 'warn'; message: string }>>([
     { timestamp: 'Just now', level: 'success', message: 'Admin session initialized for Shyam.' },
     { timestamp: '1m ago', level: 'info', message: 'Bulk Multi-Link Auto-Detector Engine ready for batch episodes & zip packs.' },
-    { timestamp: '2m ago', level: 'info', message: 'TMDB & MDBList engines operational.' },
+    { timestamp: '2m ago', level: 'info', message: 'TMDB engine operational.' },
   ]);
 
   // Validate Saved Admin Session Token with server on mount & purge legacy stored credentials
@@ -736,7 +719,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
         window.removeEventListener('cinefuel_report_submitted', handleReportsUpdated);
       };
     }
-  }, [mdblistConfig]);
+  }, []);
 
   // Pre-seed known titles cache with pinned titles and mock titles
   useEffect(() => {
@@ -1188,7 +1171,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
   }, []);
 
   // Open the dedicated Title Manager Modal for a specific title
-  const openTitleManager = (title: LinkedCatalogTitle, defaultTab: 'view' | 'replace' | 'edit_title' | 'trakt_episodes' = 'view') => {
+  const openTitleManager = (title: LinkedCatalogTitle, defaultTab: 'view' | 'replace' | 'edit_title' | 'official_episodes' = 'view') => {
     setManagingTitle(title);
     setTitleManagerTab(defaultTab);
     setTitleManagerModalOpen(true);
@@ -1218,16 +1201,9 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
     setTitleMetaMsg('');
     setTitleMetaError('');
 
-    // Initialize Trakt episode states
-    setTraktSeason(1);
-    setTraktEpisode(1);
-    setTraktShowId(String(title.id));
-    setTraktFetchedTitle('');
-    setTraktOverview('');
-    setTraktShowTitle(title.title || '');
-    setTraktMsg('');
-    setTraktError('');
-    setTraktSeasonEpisodes([]);
+    // Initialize Official episode states
+    setOfficialShowId(String(title.id));
+    setBatchEpisodeDiff([]);
 
     setSelectedTargetTitle({
       id: Number(title.id),
@@ -1419,6 +1395,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
         headers: getAdminAuthHeaders(),
         body: JSON.stringify({
           action: 'update_title_metadata',
+          movieId: String(managingTitle.id),
           currentMovieId: String(managingTitle.id),
           updates: {
             movieTitle: editTitleName.trim(),
@@ -1631,143 +1608,6 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
     }
   };
 
-  // Trakt Episode Titles: Fetch single episode from Trakt API
-  const handleFetchTraktEpisode = async (seasonNum?: number, episodeNum?: number) => {
-    if (!managingTitle) return;
-    const s = seasonNum !== undefined ? seasonNum : traktSeason;
-    const e = episodeNum !== undefined ? episodeNum : traktEpisode;
-    setIsTraktLoading(true);
-    setTraktError('');
-    setTraktMsg('');
-
-    try {
-      const showId = traktShowId.trim() || String(managingTitle.id);
-      const params = new URLSearchParams({
-        tmdbId: showId,
-        query: managingTitle.title,
-        season: String(s),
-        episode: String(e),
-      });
-
-      const res = await fetch(`/api/admin/trakt-episode?${params.toString()}`, {
-        headers: getAdminAuthHeaders(),
-      });
-
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        setTraktError(data.error || 'Failed to fetch episode title from Trakt.');
-      } else {
-        setTraktFetchedTitle(data.title || '');
-        setTraktOverview(data.overview || '');
-        setTraktShowTitle(data.showTitle || managingTitle.title);
-        setTraktMsg(`Retrieved title from Trakt: "${data.title}" (Season ${s}, Episode ${e})`);
-      }
-    } catch (err: any) {
-      setTraktError(`Network error fetching from Trakt: ${err?.message || err}`);
-    } finally {
-      setIsTraktLoading(false);
-    }
-  };
-
-  // Trakt Episode Titles: Fetch entire season list from Trakt API
-  const handleFetchTraktSeason = async (seasonNum?: number) => {
-    if (!managingTitle) return;
-    const s = seasonNum !== undefined ? seasonNum : traktSeason;
-    setIsTraktLoading(true);
-    setTraktError('');
-    setTraktMsg('');
-    setTraktSeasonEpisodes([]);
-
-    try {
-      const showId = traktShowId.trim() || String(managingTitle.id);
-      const params = new URLSearchParams({
-        tmdbId: showId,
-        query: managingTitle.title,
-        season: String(s),
-        seasonOnly: 'true',
-      });
-
-      const res = await fetch(`/api/admin/trakt-episode?${params.toString()}`, {
-        headers: getAdminAuthHeaders(),
-      });
-
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        setTraktError(data.error || 'Failed to fetch season episodes from Trakt.');
-      } else {
-        setTraktSeasonEpisodes(data.episodes || []);
-        setTraktShowTitle(data.showTitle || managingTitle.title);
-        setTraktMsg(`Retrieved ${data.episodes?.length || 0} episodes for Season ${s} from Trakt.`);
-      }
-    } catch (err: any) {
-      setTraktError(`Network error fetching season from Trakt: ${err?.message || err}`);
-    } finally {
-      setIsTraktLoading(false);
-    }
-  };
-
-  // Trakt Episode Titles: Save episode title to database
-  const handleSaveTraktEpisodeTitle = async (
-    customTitle?: string,
-    seasonNum?: number,
-    episodeNum?: number,
-    linkId?: string
-  ) => {
-    if (!managingTitle) return;
-    const s = seasonNum !== undefined ? seasonNum : traktSeason;
-    const e = episodeNum !== undefined ? episodeNum : traktEpisode;
-    const titleToSave = (customTitle !== undefined ? customTitle : traktFetchedTitle).trim();
-
-    if (!titleToSave) {
-      setTraktError('Episode title cannot be empty. Please enter or fetch a title before saving.');
-      return;
-    }
-
-    try {
-      setIsTraktSaving(true);
-      setTraktError('');
-      setTraktMsg('');
-
-      const res = await fetch('/api/curated-links', {
-        method: 'POST',
-        headers: getAdminAuthHeaders(),
-        body: JSON.stringify({
-          movieId: String(managingTitle.id),
-          action: 'update_episode_title',
-          seasonNumber: s,
-          episodeNumber: e,
-          episodeTitle: titleToSave,
-          linkId,
-        }),
-      });
-
-      const data = await res.json();
-      if (res.ok && data.success) {
-        setTraktMsg(`✅ Saved episode title "${titleToSave}" for S${s}E${e}! Destination links (URLs) remain 100% untouched.`);
-        addLog(`Admin updated episode title for "${managingTitle.title}" S${s}E${e} to "${titleToSave}"`, 'success');
-
-        // Update local state in managingTitleLinks
-        setManagingTitleLinks((prev) =>
-          prev.map((l) => {
-            const matches = linkId
-              ? l.id === linkId
-              : Number(l.seasonNumber) === s && Number(l.episodeNumber) === e;
-            if (matches) {
-              return { ...l, episodeTitle: titleToSave };
-            }
-            return l;
-          })
-        );
-      } else {
-        setTraktError(`❌ ${data.error || 'Failed to save episode title.'}`);
-      }
-    } catch (err: any) {
-      setTraktError(`❌ Error saving episode title: ${err?.message || err}`);
-    } finally {
-      setIsTraktSaving(false);
-    }
-  };
-
   // Batch Official Episode Titles: Fetch audit diff
   const handleFetchBatchEpisodeDiff = async (targetSeason?: number | 'all', overrideForce?: boolean) => {
     if (!managingTitle) return;
@@ -1778,7 +1618,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
     setBatchApplySuccessMsg('');
 
     try {
-      const showId = traktShowId.trim() || String(managingTitle.id);
+      const showId = officialShowId.trim() || String(managingTitle.id);
       const queryParams = new URLSearchParams({
         movieId: showId,
         showTitle: managingTitle.title,
@@ -1824,7 +1664,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
     setBatchApplySuccessMsg('');
 
     try {
-      const showId = traktShowId.trim() || String(managingTitle.id);
+      const showId = officialShowId.trim() || String(managingTitle.id);
       const updates = items.map((i) => ({
         seasonNumber: i.seasonNumber,
         episodeNumber: i.episodeNumber,
@@ -3823,7 +3663,6 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
       customLists,
       customLinks: customLinksMap,
       knownTitles: knownTitlesCache,
-      mdblistConfig,
       adminNotes: 'CiNEPHiLE Master Database Export',
     };
 
@@ -3851,7 +3690,6 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
         if (parsed.customLists) safeSetLocalStorage('cinefuel_custom_lists', JSON.stringify(parsed.customLists));
         if (parsed.customLinks) safeSetLocalStorage('cinefuel_custom_links', JSON.stringify(parsed.customLinks));
         if (parsed.knownTitles) safeSetLocalStorage('cinefuel_known_titles_cache', JSON.stringify(parsed.knownTitles));
-        if (parsed.mdblistConfig) safeSetLocalStorage('cinefuel_mdblist_config', JSON.stringify(parsed.mdblistConfig));
 
         addLog('Database backup restored successfully! Reloading...', 'success');
         setTimeout(() => window.location.reload(), 1200);
@@ -4703,7 +4541,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                 </p>
               </div>
               <span className="text-[11px] text-slate-400 font-medium">
-                {effectiveTotalLinks > 0 ? `${effectiveTotalLinks.toLocaleString()} in MongoDB Atlas` : 'Synced in cloud database'}
+                {effectiveTotalLinks > 0 ? `${effectiveTotalLinks.toLocaleString()} in Supabase Database` : 'Synced in cloud database'}
               </span>
               {/* Bottom-right purple wave */}
               <svg className="absolute -bottom-1 -right-1 w-24 h-12 pointer-events-none opacity-40" viewBox="0 0 100 50" fill="none">
@@ -9699,15 +9537,15 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
               {managingTitle.media_type === 'tv' && (
                 <button
                   type="button"
-                  onClick={() => setTitleManagerTab('trakt_episodes')}
+                  onClick={() => setTitleManagerTab('official_episodes')}
                   className={`flex items-center gap-1.5 px-4 py-2.5 rounded-t-xl text-xs font-bold transition-all border-b-2 cursor-pointer ${
-                    titleManagerTab === 'trakt_episodes'
+                    titleManagerTab === 'official_episodes'
                       ? 'border-indigo-400 text-indigo-300 bg-zinc-900/80 shadow-[0_0_15px_rgba(99,102,241,0.2)]'
                       : 'border-transparent text-zinc-400 hover:text-zinc-200'
                   }`}
                 >
                   <Tv className="w-3.5 h-3.5 text-indigo-400" />
-                  <span>📺 Trakt Episode Titles</span>
+                  <span>📺 Official Episode Titles</span>
                 </button>
               )}
             </div>
@@ -9837,16 +9675,13 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                                 <button
                                   type="button"
                                   onClick={() => {
-                                    setTraktSeason(link.seasonNumber || 1);
-                                    setTraktEpisode(link.episodeNumber || 1);
-                                    setTitleManagerTab('trakt_episodes');
-                                    handleFetchTraktEpisode(link.seasonNumber || 1, link.episodeNumber || 1);
+                                    setTitleManagerTab('official_episodes');
                                   }}
                                   className="px-2 py-1 rounded-lg bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-300 border border-indigo-500/30 text-[10px] font-bold flex items-center gap-1 transition-colors cursor-pointer"
-                                  title="Fetch or Edit episode title with Trakt"
+                                  title="View or audit official episode titles"
                                 >
                                   <Tv className="w-3 h-3" />
-                                  <span>Trakt</span>
+                                  <span>Titles</span>
                                 </button>
                               )}
 
@@ -10093,7 +9928,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                     {isReplacingLinks ? (
                       <>
                         <RefreshCw className="w-4 h-4 animate-spin" />
-                        <span>Updating Links in MongoDB & Cloud Database...</span>
+                        <span>Updating Links in Supabase & Cloud Database...</span>
                       </>
                     ) : (
                       <>
@@ -10647,8 +10482,8 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
               </div>
             )}
 
-              {/* TAB 6: TRAKT TV EPISODE TITLES */}
-              {titleManagerTab === 'trakt_episodes' && managingTitle && (
+              {/* TAB 6: OFFICIAL TV EPISODE TITLES */}
+              {titleManagerTab === 'official_episodes' && managingTitle && (
                 <div className="space-y-6 animate-fade-in">
                   {/* Info Card */}
                   <div className="p-4 rounded-2xl bg-indigo-500/10 border border-indigo-500/25 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
@@ -10657,10 +10492,10 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                         <span className="p-1.5 rounded-lg bg-indigo-500/20 text-indigo-300">
                           <Tv className="w-4 h-4" />
                         </span>
-                        <h4 className="text-sm font-bold text-white">Trakt TV Episode Title Lookup & Review</h4>
+                        <h4 className="text-sm font-bold text-white">Official TV Episode Title Audit & Auto-Sync</h4>
                       </div>
                       <p className="text-xs text-zinc-300">
-                        Retrieve official episode titles via Trakt API v2 and store them cleanly. Existing destination links (URLs) remain strictly intact and protected.
+                        Audit and sync verified official episode titles via IMDb, TVMaze, and TMDB. Existing destination links (URLs) remain strictly intact and protected.
                       </p>
                     </div>
                     <div className="px-3 py-1.5 rounded-xl bg-zinc-900/90 border border-emerald-500/30 text-emerald-300 text-[11px] font-mono font-bold flex items-center gap-1.5 shrink-0">
@@ -10669,304 +10504,8 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                     </div>
                   </div>
 
-                  {/* Mode Selector */}
-                  <div className="flex items-center gap-2 p-1 bg-zinc-950 rounded-xl border border-zinc-800 w-fit">
-                    <button
-                      type="button"
-                      onClick={() => setTraktViewMode('single')}
-                      className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                        traktViewMode === 'single'
-                          ? 'bg-indigo-600 text-white shadow-md'
-                          : 'text-zinc-400 hover:text-zinc-200'
-                      }`}
-                    >
-                      <Tv className="w-3.5 h-3.5" />
-                      <span>Single Episode Lookup</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setTraktViewMode('batch');
-                        if (batchEpisodeDiff.length === 0) {
-                          handleFetchBatchEpisodeDiff(batchTargetSeason);
-                        }
-                      }}
-                      className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                        traktViewMode === 'batch'
-                          ? 'bg-indigo-600 text-white shadow-md'
-                          : 'text-zinc-400 hover:text-zinc-200'
-                      }`}
-                    >
-                      <Layers className="w-3.5 h-3.5" />
-                      <span>Batch Audit & Auto-Sync (All Episodes)</span>
-                    </button>
-                  </div>
-
-                  {traktViewMode === 'single' && (
-                    <div className="space-y-6">
-                  <div className="p-5 rounded-2xl bg-zinc-950/70 border border-zinc-800 space-y-4">
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                      {/* TMDB / Trakt Show ID */}
-                      <div>
-                        <label className="block text-[11px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5">
-                          Series TMDB / Show ID
-                        </label>
-                        <input
-                          type="text"
-                          value={traktShowId}
-                          onChange={(e) => setTraktShowId(e.target.value)}
-                          placeholder="e.g. 63351 or tt0903747"
-                          className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3.5 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500 font-mono"
-                        />
-                      </div>
-
-                      {/* Season Number */}
-                      <div>
-                        <label className="block text-[11px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5">
-                          Season Number
-                        </label>
-                        <input
-                          type="number"
-                          min="0"
-                          value={traktSeason}
-                          onChange={(e) => setTraktSeason(Math.max(0, parseInt(e.target.value, 10) || 0))}
-                          className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-indigo-500 font-mono"
-                        />
-                      </div>
-
-                      {/* Episode Number */}
-                      <div>
-                        <label className="block text-[11px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5">
-                          Episode Number
-                        </label>
-                        <input
-                          type="number"
-                          min="1"
-                          value={traktEpisode}
-                          onChange={(e) => setTraktEpisode(Math.max(1, parseInt(e.target.value, 10) || 1))}
-                          className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-indigo-500 font-mono"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-3 pt-2 flex-wrap">
-                      <button
-                        type="button"
-                        onClick={() => handleFetchTraktEpisode()}
-                        disabled={isTraktLoading}
-                        className="px-4 py-2 rounded-xl bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white font-bold text-xs shadow-md shadow-indigo-500/20 transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
-                      >
-                        {isTraktLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Tv className="w-3.5 h-3.5" />}
-                        <span>Fetch Episode Title</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => handleFetchTraktSeason()}
-                        disabled={isTraktLoading}
-                        className="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold text-xs border border-zinc-700 transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
-                      >
-                        <Layers className="w-3.5 h-3.5 text-indigo-400" />
-                        <span>Fetch All Season {traktSeason} Titles</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Messages & Alerts */}
-                  {traktMsg && (
-                    <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/25 text-emerald-300 text-xs font-semibold flex items-center gap-2">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                      <span>{traktMsg}</span>
-                    </div>
-                  )}
-
-                  {traktError && (
-                    <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/25 text-rose-300 text-xs font-semibold flex items-center gap-2">
-                      <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
-                      <span>{traktError}</span>
-                    </div>
-                  )}
-
-                  {/* Review & Manual Correction Workspace */}
-                  <div className="p-5 rounded-2xl bg-zinc-900/90 border border-indigo-500/30 space-y-4 shadow-xl">
-                    <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-                      <div className="flex items-center gap-2">
-                        <span className="px-2.5 py-1 rounded-lg bg-indigo-500/20 text-indigo-300 font-mono font-bold text-xs border border-indigo-500/30">
-                          S{String(traktSeason).padStart(2, '0')}E{String(traktEpisode).padStart(2, '0')}
-                        </span>
-                        <h4 className="text-sm font-bold text-white">
-                          Episode Title Review & Correction
-                        </h4>
-                      </div>
-                      {traktShowTitle && (
-                        <span className="text-xs text-zinc-400 font-medium">
-                          Show: {traktShowTitle}
-                        </span>
-                      )}
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-bold text-zinc-300 mb-1.5 flex items-center justify-between">
-                        <span>Verified Episode Title (Editable before saving)</span>
-                        <span className="text-[11px] text-zinc-500 font-normal">
-                          Manual corrections allowed if lookup fails
-                        </span>
-                      </label>
-                      <input
-                        type="text"
-                        value={traktFetchedTitle}
-                        onChange={(e) => setTraktFetchedTitle(e.target.value)}
-                        placeholder="e.g. Pilot, La Gran Mentira, etc."
-                        className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-4 py-2.5 text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500 font-medium shadow-inner"
-                      />
-                    </div>
-
-                    {traktOverview && (
-                      <div className="p-3 rounded-xl bg-zinc-950/60 border border-zinc-800 text-xs text-zinc-400 space-y-1">
-                        <span className="font-bold text-zinc-300 block text-[11px]">Episode Overview:</span>
-                        <p className="line-clamp-3 leading-relaxed">{traktOverview}</p>
-                      </div>
-                    )}
-
-                    {/* Target Episode Links Preview */}
-                    <div className="space-y-2 pt-2">
-                      <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider block">
-                        Existing Links for S{traktSeason}E{traktEpisode} ({
-                          managingTitleLinks.filter(
-                            (l) => Number(l.seasonNumber) === traktSeason && Number(l.episodeNumber) === traktEpisode
-                          ).length
-                        } found)
-                      </span>
-
-                      {managingTitleLinks.filter(
-                        (l) => Number(l.seasonNumber) === traktSeason && Number(l.episodeNumber) === traktEpisode
-                      ).length === 0 ? (
-                        <p className="text-xs text-zinc-500 italic py-1">
-                          No existing links found for Season {traktSeason} Episode {traktEpisode} yet. Saving this title will still record it for future episode additions.
-                        </p>
-                      ) : (
-                        <div className="space-y-1.5">
-                          {managingTitleLinks
-                            .filter(
-                              (l) => Number(l.seasonNumber) === traktSeason && Number(l.episodeNumber) === traktEpisode
-                            )
-                            .map((link) => (
-                              <div
-                                key={link.id}
-                                className="p-2.5 rounded-xl bg-zinc-950/80 border border-zinc-800 flex items-center justify-between gap-3 text-xs"
-                              >
-                                <div className="min-w-0 space-y-0.5 flex-1">
-                                  <div className="flex items-center gap-2">
-                                    <span className="font-semibold text-zinc-200 truncate">
-                                      {link.title}
-                                    </span>
-                                    {link.episodeTitle && (
-                                      <span className="px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300 text-[10px] font-semibold border border-indigo-500/30">
-                                        ✨ {link.episodeTitle}
-                                      </span>
-                                    )}
-                                  </div>
-                                  <span className="font-mono text-[10px] text-zinc-500 truncate block">
-                                    {link.url}
-                                  </span>
-                                </div>
-                                <div className="flex items-center gap-2 shrink-0">
-                                  <span className="px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 font-mono text-[10px]">
-                                    {link.quality || '1080p'}
-                                  </span>
-                                  <span className="px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 text-[10px] font-semibold flex items-center gap-1 border border-emerald-500/20">
-                                    <Lock className="w-2.5 h-2.5" /> URL Protected
-                                  </span>
-                                </div>
-                              </div>
-                            ))}
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="flex items-center justify-end gap-3 pt-3 border-t border-zinc-800">
-                      <button
-                        type="button"
-                        onClick={() => handleSaveTraktEpisodeTitle()}
-                        disabled={isTraktSaving || !traktFetchedTitle.trim()}
-                        className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-bold text-xs shadow-lg shadow-emerald-500/20 transition-all flex items-center gap-2 disabled:opacity-50 cursor-pointer"
-                      >
-                        {isTraktSaving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
-                        <span>Save Episode Title to Database</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Season-wide episode grid (if retrieved) */}
-                  {traktSeasonEpisodes.length > 0 && (
-                    <div className="p-5 rounded-2xl bg-zinc-950/70 border border-zinc-800 space-y-3">
-                      <div className="flex items-center justify-between">
-                        <h4 className="text-sm font-bold text-white flex items-center gap-2">
-                          <Layers className="w-4 h-4 text-indigo-400" />
-                          <span>Season {traktSeason} Episodes ({traktSeasonEpisodes.length})</span>
-                        </h4>
-                        <span className="text-xs text-zinc-400">Click any episode to inspect or save</span>
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-72 overflow-y-auto pr-1">
-                        {traktSeasonEpisodes.map((ep) => (
-                          <div
-                            key={ep.episodeNumber}
-                            className={`p-3 rounded-xl border transition-all text-xs flex flex-col justify-between gap-2 ${
-                              traktEpisode === ep.episodeNumber
-                                ? 'bg-indigo-500/15 border-indigo-500/40'
-                                : 'bg-zinc-900/70 border-zinc-800 hover:border-zinc-700'
-                            }`}
-                          >
-                            <div className="flex items-start justify-between gap-2">
-                              <span className="px-2 py-0.5 rounded bg-zinc-800 text-indigo-300 font-mono font-bold text-[10px] shrink-0">
-                                E{ep.episodeNumber}
-                              </span>
-                              <span className="font-bold text-white truncate flex-1 text-left">
-                                {ep.title}
-                              </span>
-                            </div>
-                            {ep.overview && (
-                              <p className="text-[11px] text-zinc-400 line-clamp-2 leading-relaxed">
-                                {ep.overview}
-                              </p>
-                            )}
-                            <div className="flex items-center justify-end gap-2 pt-1 border-t border-zinc-800/60">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setTraktEpisode(ep.episodeNumber);
-                                  setTraktFetchedTitle(ep.title);
-                                  setTraktOverview(ep.overview || '');
-                                }}
-                                className="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-[11px] font-semibold transition-colors cursor-pointer"
-                              >
-                                Review
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setTraktEpisode(ep.episodeNumber);
-                                  setTraktFetchedTitle(ep.title);
-                                  setTraktOverview(ep.overview || '');
-                                  handleSaveTraktEpisodeTitle(ep.title, traktSeason, ep.episodeNumber);
-                                }}
-                                className="px-2.5 py-1 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 border border-indigo-500/30 text-[11px] font-bold transition-colors cursor-pointer"
-                              >
-                                Quick Save
-                              </button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
                   {/* BATCH AUDIT & CLEANUP VIEW */}
-                  {traktViewMode === 'batch' && (
-                    <div className="space-y-5 animate-fade-in">
+                  <div className="space-y-5 animate-fade-in">
                       {/* Control Bar: Target Season & Run Audit Button */}
                       <div className="p-4 rounded-2xl bg-zinc-950/70 border border-zinc-800 flex flex-col md:flex-row md:items-center justify-between gap-4">
                         <div className="flex flex-wrap items-center gap-3 flex-1">
@@ -10998,8 +10537,8 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                             </label>
                             <input
                               type="text"
-                              value={traktShowId}
-                              onChange={(e) => setTraktShowId(e.target.value)}
+                              value={officialShowId}
+                              onChange={(e) => setOfficialShowId(e.target.value)}
                               placeholder={`Default: ${managingTitle.id}`}
                               className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-1.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500 font-mono"
                             />
@@ -11233,8 +10772,6 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                                                 ? 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/30'
                                                 : item.source === 'tmdb'
                                                 ? 'bg-blue-500/15 text-blue-300 border border-blue-500/30'
-                                                : item.source === 'trakt'
-                                                ? 'bg-purple-500/15 text-purple-300 border border-purple-500/30'
                                                 : item.source === 'manual'
                                                 ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
                                                 : item.source === 'stored'
@@ -11275,7 +10812,6 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                         </div>
                       )}
                     </div>
-                  )}
                 </div>
               )}
             </div>

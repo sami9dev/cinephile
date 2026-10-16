@@ -1,16 +1,13 @@
 'use client';
 
 import React, { createContext, useContext, useEffect, useState, useMemo, useRef } from 'react';
-import { WatchlistItem, CustomLink, MdblistConfig, AppSettings, TitleDetails } from '@/types';
-import { DEFAULT_MDBLIST_CONFIG, testMdblistApiKey } from '@/lib/mdblist';
+import { WatchlistItem, CustomLink, AppSettings, TitleDetails } from '@/types';
 
 const DEFAULT_SETTINGS: AppSettings = {
   tmdbApiKey: '',
   omdbApiKey: '',
-  mdblistApiKey: '',
   defaultRegion: 'IN',
   theme: 'dark',
-  autoSyncMdblist: true,
 };
 
 const INITIAL_WATCHLIST: WatchlistItem[] = [
@@ -121,7 +118,6 @@ interface WatchlistContextType {
   watchlist: WatchlistItem[];
   stats: WatchlistStats;
   settings: AppSettings;
-  mdblistConfig: MdblistConfig;
   isMounted: boolean;
   addToWatchlist: (item: TitleDetails, initialStatus?: 'watchlist' | 'watched') => void;
   removeFromWatchlist: (id: number) => void;
@@ -132,9 +128,7 @@ interface WatchlistContextType {
   isItemInWatchlist: (id: number) => boolean;
   addCustomLink: (titleId: number, link: Omit<CustomLink, 'id' | 'createdAt'>) => void;
   removeCustomLink: (titleId: number, linkId: string) => void;
-  updateMdblistConfig: (config: Partial<MdblistConfig>) => void;
   updateSettings: (settings: Partial<AppSettings>) => void;
-  syncWithMdblist: () => Promise<{ success: boolean; message: string }>;
 }
 
 const WatchlistContext = createContext<WatchlistContextType | undefined>(undefined);
@@ -142,7 +136,6 @@ const WatchlistContext = createContext<WatchlistContextType | undefined>(undefin
 export const WatchlistProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [watchlist, setWatchlist] = useState<WatchlistItem[]>(INITIAL_WATCHLIST);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
-  const [mdblistConfig, setMdblistConfig] = useState<MdblistConfig>(DEFAULT_MDBLIST_CONFIG);
   const [isMounted, setIsMounted] = useState(false);
 
   // Load from localStorage on mount (read-only, zero redundant disk writes)
@@ -156,11 +149,6 @@ export const WatchlistProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const storedSettings = localStorage.getItem('cinefuel_settings');
       if (storedSettings) {
         setSettings((prev) => ({ ...prev, ...JSON.parse(storedSettings) }));
-      }
-
-      const storedMdblist = localStorage.getItem('cinefuel_mdblist_config');
-      if (storedMdblist) {
-        setMdblistConfig((prev) => ({ ...prev, ...JSON.parse(storedMdblist) }));
       }
     } catch (error) {
       console.error('Failed to load storage in CineFuel:', error);
@@ -197,20 +185,6 @@ export const WatchlistProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       console.error('Failed to save settings to localStorage:', e);
     }
   }, [settings, isMounted]);
-
-  const isFirstMdblistSave = useRef(true);
-  useEffect(() => {
-    if (!isMounted) return;
-    if (isFirstMdblistSave.current) {
-      isFirstMdblistSave.current = false;
-      return;
-    }
-    try {
-      localStorage.setItem('cinefuel_mdblist_config', JSON.stringify(mdblistConfig));
-    } catch (e) {
-      console.error('Failed to save MDBList config to localStorage:', e);
-    }
-  }, [mdblistConfig, isMounted]);
 
   // Watchlist Actions
   const addToWatchlist = (item: TitleDetails, initialStatus: 'watchlist' | 'watched' = 'watchlist') => {
@@ -341,33 +315,8 @@ export const WatchlistProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     );
   };
 
-  const updateMdblistConfig = (config: Partial<MdblistConfig>) => {
-    setMdblistConfig((prev) => ({ ...prev, ...config }));
-  };
-
   const updateSettings = (newSettings: Partial<AppSettings>) => {
     setSettings((prev) => ({ ...prev, ...newSettings }));
-  };
-
-  const syncWithMdblist = async () => {
-    if (!mdblistConfig.isConnected || !mdblistConfig.apiKey) {
-      return { success: false, message: 'MDBList API Key is not connected. Please connect first.' };
-    }
-
-    try {
-      const res = await testMdblistApiKey(mdblistConfig.apiKey);
-      if (res.success) {
-        const timestamp = new Date().toISOString();
-        updateMdblistConfig({ lastSyncedAt: timestamp, username: res.user?.name || 'MDBList User' });
-        return {
-          success: true,
-          message: 'MDBList multi-source rating aggregation & lists connected and verified!',
-        };
-      }
-      return { success: false, message: res.error || 'Failed to connect MDBList' };
-    } catch (err: any) {
-      return { success: false, message: `MDBList error: ${err.message}` };
-    }
   };
 
   // Derived statistics
@@ -402,7 +351,6 @@ export const WatchlistProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         watchlist,
         stats,
         settings,
-        mdblistConfig,
         isMounted,
         addToWatchlist,
         removeFromWatchlist,
@@ -413,9 +361,7 @@ export const WatchlistProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         isItemInWatchlist,
         addCustomLink,
         removeCustomLink,
-        updateMdblistConfig,
         updateSettings,
-        syncWithMdblist,
       }}
     >
       {children}

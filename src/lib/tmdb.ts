@@ -237,7 +237,6 @@ export async function getTitleDetails(mediaType: 'movie' | 'tv', id: number | st
       runtime: 55,
       status: 'Returning Series',
       imdb_rating: 7.8,
-      mdblist_score: 82,
       genres: [
         { id: 18, name: 'Drama' },
         { id: 27, name: 'Horror' },
@@ -286,7 +285,6 @@ export async function getTitleDetails(mediaType: 'movie' | 'tv', id: number | st
       media_type: mediaType,
       title: data.title || data.name || 'Untitled',
       imdb_rating: data.vote_average ? Number((data.vote_average + 0.3).toFixed(1)) : 8.4,
-      mdblist_score: data.vote_average ? Math.round(data.vote_average * 10 + 2) : 86,
     };
   }
 
@@ -314,7 +312,6 @@ export async function getTitleDetails(mediaType: 'movie' | 'tv', id: number | st
               media_type: targetType,
               title: fullMatch.title || fullMatch.name || 'Untitled',
               imdb_rating: fullMatch.vote_average ? Number((fullMatch.vote_average + 0.3).toFixed(1)) : 8.4,
-              mdblist_score: fullMatch.vote_average ? Math.round(fullMatch.vote_average * 10 + 2) : 86,
               external_ids: {
                 imdb_id: imdbId,
                 tmdb_id: match.id,
@@ -412,7 +409,7 @@ export async function getTitleDetails(mediaType: 'movie' | 'tv', id: number | st
     };
   }
 
-  // 4. Check if metadata exists in Upstash Redis, MongoDB, or local serverLinks for this movieId
+  // 4. Check if metadata exists in Upstash Redis, Supabase, or local serverLinks for this movieId
   let storedDoc: any = null;
 
   if (typeof window === 'undefined') {
@@ -435,24 +432,29 @@ export async function getTitleDetails(mediaType: 'movie' | 'tv', id: number | st
       }
     } catch {}
 
-    // 4b. Check MongoDB (if Node runtime)
+    // 4b. Check Supabase (primary database)
     if (!storedDoc) {
       try {
-        const { getDatabase } = await import('@/lib/mongodb');
-        const db = await getDatabase();
-        if (db) {
-          const doc = await db.collection('links').findOne(
-            {
-              movieId: strId,
-              $or: [
-                { posterPath: { $exists: true, $nin: [null, ''] } },
-                { backdropPath: { $exists: true, $nin: [null, ''] } },
-                { movieTitle: { $exists: true, $nin: [null, ''] } },
-              ],
-            },
-            { sort: { createdAt: -1 } }
-          );
-          if (doc) storedDoc = doc;
+        const { getSupabaseAdminClient } = await import('@/lib/supabase');
+        const supabase = getSupabaseAdminClient();
+        if (supabase) {
+          const { data } = await supabase
+            .from('curated_links')
+            .select('*')
+            .eq('movie_id', strId)
+            .limit(1)
+            .maybeSingle();
+          if (data) {
+            storedDoc = {
+              movieId: data.movie_id,
+              movieTitle: data.movie_title,
+              title: data.title,
+              posterPath: data.poster_path,
+              backdropPath: data.backdrop_path,
+              mediaType: data.media_type,
+              releaseDate: data.release_date,
+            };
+          }
         }
       } catch {}
     }
@@ -550,7 +552,6 @@ export async function getTitleDetails(mediaType: 'movie' | 'tv', id: number | st
     status: 'Released',
     imdb_rating: 8.0,
     imdb_votes: '340,000',
-    mdblist_score: 87,
     genres: [
       { id: 28, name: 'Action' },
       { id: 18, name: 'Drama' },

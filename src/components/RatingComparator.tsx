@@ -21,7 +21,6 @@ export const RatingComparator: React.FC<RatingComparatorProps> = ({ titleDetails
 
   const tmdbScore = titleDetails.vote_average ? titleDetails.vote_average.toFixed(1) : 'N/A';
   const imdbScore = titleDetails.imdb_rating ? titleDetails.imdb_rating.toFixed(1) : (titleDetails.vote_average ? (titleDetails.vote_average + 0.3).toFixed(1) : '8.4');
-  const mdblistScore = titleDetails.mdblist_score || (titleDetails.vote_average ? Math.round(titleDetails.vote_average * 10 + 2) : 86);
 
   const currentPersonalRating = isMounted ? (existing?.personalRating || 0) : 0;
 

@@ -20,7 +20,7 @@ export interface EpisodeTitleDiffItem {
   urlsIntact: boolean;
   proposedOfficialTitle: string;
   proposedHeading: string;
-  source: 'imdb' | 'tvmaze' | 'tmdb' | 'trakt' | 'manual' | 'stored' | 'unverified';
+  source: 'imdb' | 'tvmaze' | 'tmdb' | 'manual' | 'stored' | 'unverified';
   isVerified: boolean;
   manualTitleVerified?: boolean;
   status: 'clean' | 'needs_update' | 'unverified';
@@ -92,7 +92,7 @@ async function buildEpisodeDiff(
   // Map of S{season}E{episode} -> { title, overview, source }
   const officialTitlesMap = new Map<
     string,
-    { title: string; overview?: string; source: 'imdb' | 'tvmaze' | 'tmdb' | 'trakt' }
+    { title: string; overview?: string; source: 'imdb' | 'tvmaze' | 'tmdb' }
   >();
 
   for (const sNum of seasons) {
@@ -158,7 +158,7 @@ async function buildEpisodeDiff(
       isVerified = true;
       overview = official?.overview;
     } else if (official && isVerifiedEpisodeTitleString(official.title)) {
-      // 2. Authoritative official title from IMDb / TVMaze / TMDB / Trakt
+      // 2. Authoritative official title from IMDb / TVMaze / TMDB
       proposedOfficialTitle = official.title;
       source = official.source;
       isVerified = true;

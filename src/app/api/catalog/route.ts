@@ -1,30 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getPaginatedUploadedTitles } from '@/lib/redisDb';
-import { getEnv } from '@/lib/env';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-
-    // Optional Rust / Axum high-performance acceleration layer
-    const rustApiUrl = getEnv('RUST_API_URL');
-    if (rustApiUrl) {
-      try {
-        const rustRes = await fetch(`${rustApiUrl}/api/catalog?${searchParams.toString()}`, {
-          signal: AbortSignal.timeout(2000),
-        });
-        if (rustRes.ok) {
-          const rustData = await rustRes.json();
-          const response = NextResponse.json(rustData);
-          response.headers.set('X-Backend-Engine', 'rust-axum');
-          return response;
-        }
-      } catch {
-        // Fallback transparently to direct MongoDB Atlas engine
-      }
-    }
 
     const type = (searchParams.get('type') as any) || 'all';
     const quality = searchParams.get('quality') || undefined;

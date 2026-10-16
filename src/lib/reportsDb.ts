@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { getDatabase } from '@/lib/mongodb';
+import { getSupabaseAdminClient } from '@/lib/supabase';
 import { getRedisClient } from '@/lib/redisDb';
 import { DefectiveLinkReport } from '@/types';
 
@@ -61,7 +61,7 @@ export function saveLocalFallbackReports(data: DefectiveLinkReport[]): boolean {
 }
 
 /**
- * Fetches all defective link reports from MongoDB Atlas, Redis, or local JSON file
+ * Fetches all defective link reports from Supabase, Redis, or local JSON file
  */
 export async function getAllReports(
   filterStatus?: string,
@@ -73,60 +73,72 @@ export async function getAllReports(
   page?: number;
   totalPages?: number;
   limit?: number;
-  source: 'mongodb_atlas' | 'upstash_redis' | 'local_json';
+  source: 'supabase' | 'upstash_redis' | 'local_json';
 }> {
   const hasPagination = typeof options?.page === 'number' || typeof options?.limit === 'number';
   const page = Math.max(1, options?.page || 1);
   const limit = Math.max(1, Math.min(100, options?.limit || 50));
   const userId = options?.userId;
 
-  // 1. Try MongoDB Atlas first
+  // 1. Try Supabase first
   try {
-    const db = await getDatabase();
-    if (db) {
-      const collection = db.collection('defective_reports');
-      const query: any = {};
+    const supabase = getSupabaseAdminClient();
+    if (supabase) {
+      let query = supabase.from('defective_reports').select('*', { count: 'exact' });
       if (filterStatus && typeof filterStatus === 'string' && filterStatus !== 'all') {
         const cleanStatus = filterStatus.trim();
         if (!cleanStatus.startsWith('$')) {
-          query.status = cleanStatus;
+          query = query.eq('status', cleanStatus);
         }
       }
       if (userId && typeof userId === 'string') {
         const cleanUserId = userId.trim();
         if (cleanUserId && !cleanUserId.startsWith('$')) {
-          query.userId = cleanUserId;
+          query = query.eq('user_id', cleanUserId);
         }
       }
-      const total = await collection.countDocuments(query).catch(() => 0);
-      const pendingCount = await collection.countDocuments({
-        status: 'pending',
-        ...(userId && typeof userId === 'string' && !userId.startsWith('$') ? { userId: userId.trim() } : {}),
-      }).catch(() => 0);
-      
-      let cursor = collection.find(query).sort({ createdAt: -1 });
+      query = query.order('created_at', { ascending: false });
       if (hasPagination) {
-        cursor = cursor.skip((page - 1) * limit).limit(limit);
+        query = query.range((page - 1) * limit, page * limit - 1);
       }
-      const docs = await cursor.toArray();
-
-      const reports: DefectiveLinkReport[] = docs.map((d: any) => {
-        const { _id, ...rest } = d;
-        return rest as DefectiveLinkReport;
-      });
-
-      return {
-        reports,
-        total,
-        pendingCount,
-        page: hasPagination ? page : 1,
-        totalPages: hasPagination ? Math.max(1, Math.ceil(total / limit)) : 1,
-        limit: hasPagination ? limit : total,
-        source: 'mongodb_atlas',
-      };
+      const { data, count, error } = await query;
+      if (!error && Array.isArray(data)) {
+        const reports: DefectiveLinkReport[] = data.map((d: any) => ({
+          id: d.id,
+          linkId: d.link_id,
+          movieId: Number(d.movie_id) || 0,
+          mediaTitle: d.media_title || d.movie_title || 'Unknown Title',
+          mediaType: d.media_type || 'movie',
+          posterPath: d.poster_path || null,
+          linkTitle: d.link_title || d.movie_title || 'Link',
+          reportedUrl: d.reported_url || d.url || '',
+          issueType: d.issue_type || 'other',
+          issueLabel: d.issue_label || d.issue_type || 'Defective Link',
+          quality: d.quality,
+          server: d.server,
+          additionalNotes: d.additional_notes || d.description,
+          status: d.status || 'pending',
+          userId: d.user_id,
+          userEmail: d.user_email || d.reporter_email,
+          createdAt: d.created_at,
+          resolvedAt: d.resolved_at,
+          replacementUrl: d.replacement_url,
+          adminNote: d.admin_note,
+        }));
+        const total = count || reports.length;
+        return {
+          reports,
+          total,
+          pendingCount: reports.filter((r) => r.status === 'pending').length,
+          page: hasPagination ? page : 1,
+          totalPages: hasPagination ? Math.max(1, Math.ceil(total / limit)) : 1,
+          limit: hasPagination ? limit : total,
+          source: 'supabase',
+        };
+      }
     }
-  } catch (mongoErr: any) {
-    console.warn('MongoDB Atlas defective reports read fallback:', mongoErr.message);
+  } catch (supabaseErr: any) {
+    console.warn('Supabase defective reports read fallback:', supabaseErr.message);
   }
 
   // 2. Try Upstash Redis
@@ -179,19 +191,39 @@ export async function getAllReports(
 export async function saveNewReport(report: DefectiveLinkReport): Promise<boolean> {
   let persisted = false;
 
-  // 1. MongoDB Atlas
+  // 1. Supabase
   try {
-    const db = await getDatabase();
-    if (db) {
-      await db.collection('defective_reports').updateOne(
-        { id: report.id },
-        { $set: { ...report, updatedAt: new Date() } },
-        { upsert: true }
-      );
-      persisted = true;
+    const supabase = getSupabaseAdminClient();
+    if (supabase) {
+      const { error } = await supabase.from('defective_reports').upsert({
+        id: report.id,
+        link_id: report.linkId,
+        movie_id: report.movieId,
+        movie_title: report.mediaTitle,
+        media_title: report.mediaTitle,
+        media_type: report.mediaType || 'movie',
+        poster_path: report.posterPath || null,
+        link_title: report.linkTitle,
+        reported_url: report.reportedUrl,
+        url: report.reportedUrl,
+        issue_type: report.issueType,
+        issue_label: report.issueLabel,
+        description: report.additionalNotes || report.issueLabel,
+        additional_notes: report.additionalNotes,
+        quality: report.quality,
+        server: report.server,
+        status: report.status || 'pending',
+        user_id: report.userId || null,
+        user_name: report.userName || null,
+        reporter_email: report.userEmail || null,
+        user_email: report.userEmail || null,
+        created_at: report.createdAt || new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'id' });
+      if (!error) persisted = true;
     }
   } catch (err: any) {
-    console.warn('MongoDB Atlas defective report save warning:', err.message);
+    console.warn('Supabase defective report save warning:', err.message);
   }
 
   // 2. Upstash Redis
@@ -222,7 +254,7 @@ export async function saveNewReport(report: DefectiveLinkReport): Promise<boolea
   }
 
   if (!persisted) {
-    throw new Error('Database persistence unavailable: neither MongoDB nor Redis could persist the report.');
+    throw new Error('Database persistence unavailable: could not persist the report.');
   }
 
   return true;
@@ -255,19 +287,19 @@ export async function updateReportStatus(
     ...(meta?.adminNote ? { adminNote: meta.adminNote } : (replyObj ? { adminNote: replyObj.message } : {})),
   };
 
-  // 1. MongoDB Atlas
+  // 1. Supabase
   try {
-    const db = await getDatabase();
-    if (db) {
-      const mongoUpdate: any = { $set: { ...updates, updatedAt: new Date() } };
-      if (replyObj) {
-        mongoUpdate.$push = { adminReplies: replyObj };
-      }
-      await db.collection('defective_reports').updateOne({ id: cleanId }, mongoUpdate);
-      persisted = true;
+    const supabase = getSupabaseAdminClient();
+    if (supabase) {
+      const updateData: any = { status, updated_at: new Date().toISOString() };
+      if (status === 'fixed' || status === 'dismissed') updateData.resolved_at = new Date().toISOString();
+      if (meta?.replacementUrl) updateData.replacement_url = meta.replacementUrl;
+      if (meta?.adminNote || replyObj?.message) updateData.admin_note = meta?.adminNote || replyObj?.message;
+      const { error } = await supabase.from('defective_reports').update(updateData).eq('id', cleanId);
+      if (!error) persisted = true;
     }
   } catch (err: any) {
-    console.warn('MongoDB Atlas defective report update warning:', err.message);
+    console.warn('Supabase defective report update warning:', err.message);
   }
 
   // 2. Upstash Redis
@@ -329,12 +361,12 @@ export async function deleteReport(id: string): Promise<boolean> {
 
   let persisted = false;
 
-  // 1. MongoDB
+  // 1. Supabase
   try {
-    const db = await getDatabase();
-    if (db) {
-      await db.collection('defective_reports').deleteOne({ id: cleanId });
-      persisted = true;
+    const supabase = getSupabaseAdminClient();
+    if (supabase) {
+      const { error } = await supabase.from('defective_reports').delete().eq('id', cleanId);
+      if (!error) persisted = true;
     }
   } catch {}
 
@@ -374,16 +406,36 @@ export async function getReportById(id: string, dbName?: string): Promise<Defect
   if (!cleanId) return null;
 
   try {
-    const db = await getDatabase(dbName);
-    if (db) {
-      const doc = await db.collection('defective_reports').findOne({ id: cleanId });
-      if (doc) {
-        const { _id, ...rest } = doc;
-        return rest as DefectiveLinkReport;
+    const supabase = getSupabaseAdminClient();
+    if (supabase) {
+      const { data, error } = await supabase.from('defective_reports').select('*').eq('id', cleanId).maybeSingle();
+      if (!error && data) {
+        return {
+          id: data.id,
+          linkId: data.link_id,
+          movieId: Number(data.movie_id) || 0,
+          mediaTitle: data.media_title || data.movie_title || 'Unknown Title',
+          mediaType: data.media_type || 'movie',
+          posterPath: data.poster_path || null,
+          linkTitle: data.link_title || data.movie_title || 'Link',
+          reportedUrl: data.reported_url || data.url || '',
+          issueType: data.issue_type || 'other',
+          issueLabel: data.issue_label || data.issue_type || 'Defective Link',
+          quality: data.quality,
+          server: data.server,
+          additionalNotes: data.additional_notes || data.description,
+          status: data.status || 'pending',
+          userId: data.user_id,
+          userEmail: data.user_email || data.reporter_email,
+          createdAt: data.created_at,
+          resolvedAt: data.resolved_at,
+          replacementUrl: data.replacement_url,
+          adminNote: data.admin_note,
+        };
       }
     }
   } catch (err: any) {
-    console.warn('MongoDB Atlas getReportById fallback:', err.message);
+    console.warn('Supabase getReportById fallback:', err.message);
   }
 
   const redisClient = getRedisClient();

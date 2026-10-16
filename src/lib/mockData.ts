@@ -35,7 +35,6 @@ export const MOCK_TITLES: Record<string, TitleDetails> = {
     status: 'Released',
     imdb_rating: 8.9,
     imdb_votes: '780,000',
-    mdblist_score: 89,
     genres: [{ id: 18, name: 'Drama' }, { id: 36, name: 'History' }, { id: 53, name: 'Thriller' }],
     external_ids: { imdb_id: 'tt15398776', tmdb_id: 872585 },
     credits: {
@@ -82,7 +81,6 @@ export const MOCK_TITLES: Record<string, TitleDetails> = {
     status: 'Released',
     imdb_rating: 8.6,
     imdb_votes: '520,000',
-    mdblist_score: 88,
     genres: [{ id: 878, name: 'Sci-Fi' }, { id: 12, name: 'Adventure' }, { id: 18, name: 'Drama' }],
     external_ids: { imdb_id: 'tt15239678', tmdb_id: 693134 },
     credits: {
@@ -128,7 +126,6 @@ export const MOCK_TITLES: Record<string, TitleDetails> = {
     status: 'Released',
     imdb_rating: 8.7,
     imdb_votes: '2,100,000',
-    mdblist_score: 90,
     genres: [{ id: 12, name: 'Adventure' }, { id: 18, name: 'Drama' }, { id: 878, name: 'Sci-Fi' }],
     external_ids: { imdb_id: 'tt0816692', tmdb_id: 157336 },
     credits: {
@@ -175,7 +172,6 @@ export const MOCK_TITLES: Record<string, TitleDetails> = {
     status: 'Released',
     imdb_rating: 7.8,
     imdb_votes: '180,000',
-    mdblist_score: 83,
     genres: [{ id: 28, name: 'Action' }, { id: 18, name: 'Drama' }],
     external_ids: { imdb_id: 'tt8178634', tmdb_id: 579974 },
     credits: {
@@ -222,7 +218,6 @@ export const MOCK_TITLES: Record<string, TitleDetails> = {
     status: 'Ended',
     imdb_rating: 9.5,
     imdb_votes: '2,200,000',
-    mdblist_score: 95,
     genres: [{ id: 18, name: 'Drama' }, { id: 80, name: 'Crime' }],
     external_ids: { imdb_id: 'tt0903747', tmdb_id: 1396 },
     credits: {
@@ -266,7 +261,6 @@ export const MOCK_TITLES: Record<string, TitleDetails> = {
     status: 'Released',
     imdb_rating: 9.0,
     imdb_votes: '2,900,000',
-    mdblist_score: 93,
     genres: [{ id: 18, name: 'Drama' }, { id: 28, name: 'Action' }, { id: 80, name: 'Crime' }, { id: 53, name: 'Thriller' }],
     external_ids: { imdb_id: 'tt0468569', tmdb_id: 155 },
     credits: {
@@ -311,7 +305,6 @@ export const MOCK_TITLES: Record<string, TitleDetails> = {
     status: 'Released',
     imdb_rating: 8.8,
     imdb_votes: '2,500,000',
-    mdblist_score: 91,
     genres: [{ id: 28, name: 'Action' }, { id: 878, name: 'Sci-Fi' }, { id: 12, name: 'Adventure' }],
     external_ids: { imdb_id: 'tt1375666', tmdb_id: 27205 },
     credits: {

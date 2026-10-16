@@ -194,8 +194,8 @@ export const ServiceStatusPanel: React.FC<ServiceStatusPanelProps> = ({
     };
   }, [getAuthHeaders]);
 
-  // Exclude unconfigured optional services (Trakt, MDBList, Firebase Auth) from cluttering UI
-  const UNCONFIGURED_OPTIONAL_SERVICE_IDS = React.useMemo(() => new Set(['trakt', 'mdblist', 'firebase_auth']), []);
+  // Exclude unconfigured optional services (Firebase Auth) from cluttering UI
+  const UNCONFIGURED_OPTIONAL_SERVICE_IDS = React.useMemo(() => new Set(['firebase_auth']), []);
 
   const visibleServices = React.useMemo(() => {
     if (!report?.services) return [];

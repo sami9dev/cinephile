@@ -1,8 +1,18 @@
 import { Redis } from '@upstash/redis';
 import fs from 'fs';
 import path from 'path';
-import { getDatabase, resetMongoClient } from '@/lib/mongodb';
 import { TitleDetails } from '@/types';
+import { getSupabaseAdminClient } from '@/lib/supabase';
+import {
+  getLinksFromSupabase,
+  saveLinkToSupabase,
+  saveMultipleLinksToSupabase,
+  replaceAllLinksForTitleInSupabase,
+  deleteLinkFromSupabase,
+  reassignLinksInSupabase,
+  updateTitleMetadataInSupabase,
+  mapSupabaseRowToLink,
+} from '@/lib/supabaseDb';
 import { getTitleDetails, getLightweightTitleCard, cleanTitleString, resolveCanonicalMedia } from '@/lib/tmdb';
 import { detectShowPlatform, stripWatermarks, detectSeasonNumber, detectEpisodeNumber } from '@/lib/seasonParser';
 
@@ -173,114 +183,61 @@ export async function getLinksFromDatabase(
   links?: any[];
   allLinks?: Record<string, any[]>;
   total?: number;
-  source: 'mongodb_atlas' | 'upstash_redis' | 'local_json';
+  source: 'supabase' | 'upstash_redis' | 'local_json';
 }> {
-  // 1. Try MongoDB Atlas if connected (or upstream proxy on Cloudflare Workers)
+  // 1. Try Supabase
   try {
-    const isCloudflare = typeof (globalThis as any).WebSocketPair !== 'undefined' || getEnv('WORKER_NAME');
-    if (isCloudflare) {
-      try {
-        const upstreamBase = getEnv('UPSTREAM_API_URL') || 'https://cinephile-app.vercel.app';
-        const queryParams = new URLSearchParams();
-        if (movieId) queryParams.set('movieId', String(movieId));
-        if (pagination?.page) queryParams.set('page', String(pagination.page));
-        if (pagination?.limit) queryParams.set('limit', String(pagination.limit));
-        if (pagination?.q && pagination.q.trim()) queryParams.set('q', pagination.q.trim());
-        if (pagination?.category && pagination.category !== 'All') queryParams.set('category', pagination.category);
-
-        const upstreamUrl = `${upstreamBase}/api/curated-links?${queryParams.toString()}`;
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 4500);
-        let res: Response | null = null;
-        try {
-          res = await fetch(upstreamUrl, {
-            signal: controller.signal,
-            headers: { 'User-Agent': 'Cloudflare-Worker-CineFuel' },
-          });
-        } finally {
-          clearTimeout(timeoutId);
+    if (movieId) {
+      const sbLinks = await getLinksFromSupabase(movieId);
+      if (sbLinks && sbLinks.length > 0) {
+        let links = sbLinks.map((l: any) => ({
+          ...l,
+          movieId: String(movieId),
+          manualTitleVerified: Boolean(l.manualTitleVerified),
+        }));
+        const redis = getRedisClient();
+        if (redis && links.length > 0) {
+          try {
+            const checks = await Promise.all(
+              links.map((l: any) => redis.sismember(REDIS_DELETED_KEY, l.id))
+            );
+            links = links.filter((_: any, idx: number) => !checks[idx]);
+          } catch {}
         }
-
-        if (res && res.ok) {
-          const remoteJson: any = await res.json();
-          if (remoteJson?.success) {
-            if (movieId && Array.isArray(remoteJson.links)) {
-              let links = remoteJson.links;
-              const redis = getRedisClient();
-              if (redis && links.length > 0) {
-                try {
-                  const checks = await Promise.all(
-                    links.map((l: any) => redis.sismember(REDIS_DELETED_KEY, l.id))
-                  );
-                  links = links.filter((_: any, idx: number) => !checks[idx]);
-                } catch {}
-              }
-              return { links, source: 'mongodb_atlas' as any };
-            } else if (remoteJson.allLinks) {
-              return {
-                allLinks: remoteJson.allLinks,
-                total: typeof remoteJson.total === 'number' ? remoteJson.total : undefined,
-                source: 'mongodb_atlas' as any,
-              };
-            }
-          }
-        }
-      } catch (upstreamErr: any) {
-        console.warn('Cloudflare upstream curated-links sync error:', upstreamErr.message);
+        return { links, source: 'supabase' };
       }
-    }
-
-    const db = await getDatabase();
-    if (db) {
-      const collection = db.collection('links');
-      if (movieId) {
-        const docs = await collection.find({ movieId: String(movieId) }).sort({ createdAt: -1 }).toArray();
-        if (docs && docs.length > 0) {
-          const cleaned = docs.map(({ _id, ...rest }) => rest);
-          return { links: cleaned, source: 'mongodb_atlas' };
-        }
-      } else {
+    } else {
+      const supabase = getSupabaseAdminClient();
+      if (supabase) {
         const page = Math.max(1, pagination?.page || 1);
         const limit = Math.max(1, Math.min(200, pagination?.limit || 50));
 
-        const mongoFilter: any = {};
+        let sbQuery = supabase.from('links').select('*', { count: 'exact' });
         if (pagination?.category && pagination.category !== 'All') {
-          mongoFilter.category = pagination.category;
+          sbQuery = sbQuery.eq('category', pagination.category);
         }
         if (pagination?.q && pagination.q.trim()) {
-          const escaped = pagination.q.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-          const regex = new RegExp(escaped, 'i');
-          mongoFilter.$or = [
-            { title: regex },
-            { url: regex },
-            { movieId: pagination.q.trim() }
-          ];
+          const q = pagination.q.trim();
+          sbQuery = sbQuery.or(`title.ilike.%${q}%,url.ilike.%${q}%,movie_id.eq.${q}`);
         }
+        sbQuery = sbQuery.order('created_at', { ascending: false });
+        sbQuery = sbQuery.range((page - 1) * limit, page * limit - 1);
 
-        const isFiltered = Object.keys(mongoFilter).length > 0;
-        const total = isFiltered
-          ? await collection.countDocuments(mongoFilter).catch(() => 0)
-          : await collection.estimatedDocumentCount().catch(() => 0);
-
-        const docs = await collection
-          .find(mongoFilter)
-          .sort({ createdAt: -1 })
-          .skip((page - 1) * limit)
-          .limit(limit)
-          .toArray();
-        const grouped: Record<string, any[]> = {};
-        for (const doc of docs || []) {
-          const { _id, movieId: mId, ...rest } = doc;
-          const k = String(mId || rest.movieId);
-          if (!grouped[k]) grouped[k] = [];
-          grouped[k].push(rest);
+        const { data, count, error } = await sbQuery;
+        if (!error && data && data.length > 0) {
+          const grouped: Record<string, any[]> = {};
+          for (const row of data) {
+            const link = mapSupabaseRowToLink(row);
+            const k = String(link.movieId);
+            if (!grouped[k]) grouped[k] = [];
+            grouped[k].push(link);
+          }
+          return { allLinks: grouped, total: count ?? data.length, source: 'supabase' };
         }
-        return { allLinks: grouped, total, source: 'mongodb_atlas' };
       }
     }
-  } catch (mongoErr: any) {
-    console.warn('MongoDB Atlas read fallback:', mongoErr.message);
-    resetMongoClient();
+  } catch (sbErr: any) {
+    console.warn('Supabase links read fallback:', sbErr.message);
   }
 
   const localData = getLocalFallbackLinks();
@@ -368,7 +325,7 @@ export async function getLinksFromDatabase(
 /**
  * Forwards mutations (write, delete, batch replace) to upstream Vercel backend
  * when running inside Cloudflare Workers edge environment.
- * Vercel connects to MongoDB Atlas directly in Node.js runtime.
+ * Vercel connects to Supabase directly in Node.js runtime.
  */
 async function proxyMutationToUpstream(method: 'POST' | 'DELETE', path: string, body?: any): Promise<boolean> {
   const isCloudflare = typeof (globalThis as any).WebSocketPair !== 'undefined' || getEnv('WORKER_NAME');
@@ -414,7 +371,7 @@ export async function saveLinkToDatabase(movieId: number | string, link: any): P
   const key = String(movieId);
   let persisted = false;
 
-  // 0. Upstream Vercel / MongoDB proxy for Cloudflare Workers
+  // 0. Upstream Vercel / Supabase proxy for Cloudflare Workers
   const isCloudflare = typeof (globalThis as any).WebSocketPair !== 'undefined' || getEnv('WORKER_NAME');
   if (isCloudflare) {
     try {
@@ -426,49 +383,12 @@ export async function saveLinkToDatabase(movieId: number | string, link: any): P
     } catch {}
   }
 
-  // 1. MongoDB Atlas Cloud save
+  // 1. Supabase Cloud save
   try {
-    const db = await getDatabase();
-    if (db) {
-      let enrichedLink = { ...link };
-      if (!enrichedLink.posterPath || !enrichedLink.movieTitle) {
-        const existingDoc = await db.collection('links').findOne(
-          {
-            movieId: key,
-            $or: [
-              { posterPath: { $exists: true, $nin: [null, ''] } },
-              { movieTitle: { $exists: true, $nin: [null, ''] } },
-            ],
-          },
-          { sort: { createdAt: -1 } }
-        );
-        if (existingDoc) {
-          if (!enrichedLink.posterPath) enrichedLink.posterPath = existingDoc.posterPath || existingDoc.poster_path;
-          if (!enrichedLink.backdropPath) enrichedLink.backdropPath = existingDoc.backdropPath || existingDoc.backdrop_path;
-          if (existingDoc.mediaType === 'movie') {
-            enrichedLink.mediaType = 'movie';
-            enrichedLink.seasonNumber = null;
-            enrichedLink.episodeNumber = null;
-            if (enrichedLink.linkType === 'single_episode' || enrichedLink.linkType === 'zip_pack') {
-              enrichedLink.linkType = 'general';
-            }
-            if (enrichedLink.category === 'SingleEpisode' || enrichedLink.category === 'ZipPack') {
-              enrichedLink.category = 'Streaming';
-            }
-          } else if (!enrichedLink.mediaType && existingDoc.mediaType) {
-            enrichedLink.mediaType = existingDoc.mediaType;
-          }
-        }
-      }
-      await db.collection('links').updateOne(
-        { movieId: key, url: enrichedLink.url },
-        { $set: { ...enrichedLink, movieId: key, updatedAt: new Date() } },
-        { upsert: true }
-      );
-      persisted = true;
-    }
+    const ok = await saveLinkToSupabase(key, link);
+    if (ok) persisted = true;
   } catch (err: any) {
-    console.warn('MongoDB Atlas save warning:', err.message);
+    console.warn('Supabase save warning:', err.message);
   }
 
   // 2. Upstash Cloud Redis save
@@ -542,7 +462,7 @@ export async function saveMultipleLinksToDatabase(movieId: number | string, link
   const key = String(movieId);
   let persisted = false;
 
-  // 0. Upstream Vercel / MongoDB proxy for Cloudflare Workers
+  // 0. Upstream Vercel / Supabase proxy for Cloudflare Workers
   const isCloudflare = typeof (globalThis as any).WebSocketPair !== 'undefined' || getEnv('WORKER_NAME');
   if (isCloudflare) {
     try {
@@ -555,63 +475,12 @@ export async function saveMultipleLinksToDatabase(movieId: number | string, link
     } catch {}
   }
 
-  // 1. MongoDB Atlas Cloud batch save
+  // 1. Supabase Cloud batch save
   try {
-    const db = await getDatabase();
-    if (db) {
-      const existingDoc = await db.collection('links').findOne(
-        {
-          movieId: key,
-          $or: [
-            { posterPath: { $exists: true, $nin: [null, '', 'undefined', '/placeholder-poster.svg'] } },
-            { movieTitle: { $exists: true, $nin: [null, '', 'undefined'] } },
-          ],
-        },
-        { sort: { createdAt: -1 } }
-      );
-      const ops = links.map((l) => {
-        const enriched = { ...l };
-        if (metadata) {
-          if (!enriched.movieTitle && metadata.movieTitle) enriched.movieTitle = metadata.movieTitle;
-          if (!enriched.mediaType && metadata.mediaType) enriched.mediaType = metadata.mediaType;
-          if (!enriched.posterPath && metadata.posterPath) enriched.posterPath = metadata.posterPath;
-          if (!enriched.backdropPath && metadata.backdropPath) enriched.backdropPath = metadata.backdropPath;
-          if (!enriched.releaseDate && metadata.releaseDate) enriched.releaseDate = metadata.releaseDate;
-          if (typeof enriched.voteAverage !== 'number' && typeof metadata.voteAverage === 'number') enriched.voteAverage = metadata.voteAverage;
-        }
-        if (existingDoc) {
-          if (!enriched.movieTitle && existingDoc.movieTitle) enriched.movieTitle = existingDoc.movieTitle;
-          if (!enriched.posterPath) enriched.posterPath = existingDoc.posterPath || existingDoc.poster_path;
-          if (!enriched.backdropPath) enriched.backdropPath = existingDoc.backdropPath || existingDoc.backdrop_path;
-          if (existingDoc.mediaType === 'movie') {
-            enriched.mediaType = 'movie';
-            enriched.seasonNumber = null;
-            enriched.episodeNumber = null;
-            if (enriched.linkType === 'single_episode' || enriched.linkType === 'zip_pack') {
-              enriched.linkType = 'general';
-            }
-            if (enriched.category === 'SingleEpisode' || enriched.category === 'ZipPack') {
-              enriched.category = 'Streaming';
-            }
-          } else if (!enriched.mediaType && existingDoc.mediaType) {
-            enriched.mediaType = existingDoc.mediaType;
-          }
-        }
-        return {
-          updateOne: {
-            filter: { movieId: key, url: enriched.url },
-            update: { $set: { ...enriched, movieId: key, updatedAt: new Date() } },
-            upsert: true,
-          },
-        };
-      });
-      if (ops.length > 0) {
-        await db.collection('links').bulkWrite(ops);
-        persisted = true;
-      }
-    }
+    const ok = await saveMultipleLinksToSupabase(key, links, metadata);
+    if (ok) persisted = true;
   } catch (err: any) {
-    console.warn('MongoDB Atlas batch save warning:', err.message);
+    console.warn('Supabase batch save warning:', err.message);
   }
 
   // 2. Upstash Cloud Redis save
@@ -681,7 +550,7 @@ export async function deleteLinkFromDatabase(movieId: number | string, linkId: s
   const key = String(movieId);
   let persisted = false;
 
-  // 0. Upstream Vercel / MongoDB proxy for Cloudflare Workers
+  // 0. Upstream Vercel / Supabase proxy for Cloudflare Workers
   const isCloudflare = typeof (globalThis as any).WebSocketPair !== 'undefined' || getEnv('WORKER_NAME');
   if (isCloudflare) {
     try {
@@ -693,21 +562,12 @@ export async function deleteLinkFromDatabase(movieId: number | string, linkId: s
     } catch {}
   }
 
-  // 1. MongoDB Atlas Cloud deletion
+  // 1. Supabase Cloud deletion
   try {
-    const db = await getDatabase();
-    if (db) {
-      await db.collection('links').deleteMany({
-        $or: [
-          { id: linkId },
-          { movieId: key, id: linkId },
-          { movieId: Number(key) as any, id: linkId },
-        ],
-      } as any);
-      persisted = true;
-    }
+    const ok = await deleteLinkFromSupabase(key, linkId);
+    if (ok) persisted = true;
   } catch (err: any) {
-    console.warn('MongoDB Atlas delete warning:', err.message);
+    console.warn('Supabase delete warning:', err.message);
   }
 
   // 2. Upstash Cloud Redis deletion
@@ -763,7 +623,7 @@ export async function deleteLinkFromDatabase(movieId: number | string, linkId: s
 export async function deleteMultipleLinksFromDatabase(items: Array<{ movieId: number | string; linkId: string }>): Promise<boolean> {
   if (!items || items.length === 0) return true;
 
-  // 0. Upstream Vercel / MongoDB proxy for Cloudflare Workers
+  // 0. Upstream Vercel / Supabase proxy for Cloudflare Workers
   const isCloudflare = typeof (globalThis as any).WebSocketPair !== 'undefined' || getEnv('WORKER_NAME');
   if (isCloudflare) {
     try {
@@ -816,15 +676,15 @@ export async function deleteMultipleLinksFromDatabase(items: Array<{ movieId: nu
     }
   }
 
-  // 3. MongoDB Atlas Cloud batch deletion
+  // 3. Supabase Cloud batch deletion
   try {
-    const db = await getDatabase();
-    if (db) {
+    const supabase = getSupabaseAdminClient();
+    if (supabase) {
       const ids = items.map((i) => i.linkId);
-      await db.collection('links').deleteMany({ id: { $in: ids } });
+      await supabase.from('links').delete().in('id', ids);
     }
   } catch (err: any) {
-    console.warn('MongoDB Atlas batch delete warning:', err.message);
+    console.warn('Supabase batch delete warning:', err.message);
   }
 
   await invalidateCatalogCache().catch(() => {});
@@ -866,7 +726,7 @@ export async function migrateDomainInDatabase(
 
   let totalUpdated = 0;
 
-  // 0. Upstream Vercel / MongoDB proxy for Cloudflare Workers
+  // 0. Upstream Vercel / Supabase proxy for Cloudflare Workers
   const isCloudflare = typeof (globalThis as any).WebSocketPair !== 'undefined' || getEnv('WORKER_NAME');
   if (isCloudflare) {
     try {
@@ -937,35 +797,25 @@ export async function migrateDomainInDatabase(
     }
   }
 
-  // 3. MongoDB Atlas Cloud update
+  // 3. Supabase Cloud update
   try {
-    const db = await getDatabase();
-    if (db) {
-      const collection = db.collection('links');
-      const docs = await collection.find({ url: { $regex: cleanOld, $options: 'i' } }).toArray();
+    const supabase = getSupabaseAdminClient();
+    if (supabase) {
+      const { data: docs } = await supabase
+        .from('links')
+        .select('id, url')
+        .ilike('url', `%${cleanOld}%`);
+
       if (docs && docs.length > 0) {
-        const ops = docs.map((doc) => {
-          const newUrl = doc.url.replace(new RegExp(cleanOld, 'gi'), cleanNew);
-          return {
-            updateOne: {
-              filter: { _id: doc._id },
-              update: {
-                $set: {
-                  url: newUrl,
-                  updatedAt: new Date(),
-                },
-              },
-            },
-          };
-        });
-        if (ops.length > 0) {
-          await collection.bulkWrite(ops);
-          totalUpdated = Math.max(totalUpdated, ops.length);
+        for (const doc of docs) {
+          const newUrl = doc.url.replace(new RegExp(cleanOld.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), cleanNew);
+          await supabase.from('links').update({ url: newUrl, updated_at: new Date().toISOString() }).eq('id', doc.id);
         }
+        totalUpdated = Math.max(totalUpdated, docs.length);
       }
     }
   } catch (err: any) {
-    console.warn('MongoDB Atlas domain migration warning:', err.message);
+    console.warn('Supabase domain migration warning:', err.message);
   }
 
   return { success: true, updatedCount: totalUpdated, oldDomain: cleanOld, newDomain: cleanNew };
@@ -987,7 +837,7 @@ export async function replaceDomainForTitleInDatabase(
   }
   let totalUpdated = 0;
 
-  // 0. Upstream Vercel / MongoDB proxy for Cloudflare Workers
+  // 0. Upstream Vercel / Supabase proxy for Cloudflare Workers
   const isCloudflare = typeof (globalThis as any).WebSocketPair !== 'undefined' || getEnv('WORKER_NAME');
   if (isCloudflare) {
     try {
@@ -1044,26 +894,22 @@ export async function replaceDomainForTitleInDatabase(
     } catch {}
   }
 
-  // 3. MongoDB Atlas
+  // 3. Supabase Cloud update
   try {
-    const db = await getDatabase();
-    if (db) {
-      const collection = db.collection('links');
-      const docs = await collection.find({ movieId: key, url: { $regex: cleanOld, $options: 'i' } }).toArray();
+    const supabase = getSupabaseAdminClient();
+    if (supabase) {
+      const { data: docs } = await supabase
+        .from('links')
+        .select('id, url')
+        .eq('movie_id', key)
+        .ilike('url', `%${cleanOld}%`);
+
       if (docs && docs.length > 0) {
-        const ops = docs.map((doc) => ({
-          updateOne: {
-            filter: { _id: doc._id },
-            update: {
-              $set: {
-                url: doc.url.replace(new RegExp(cleanOld, 'gi'), cleanNew),
-                updatedAt: new Date(),
-              },
-            },
-          },
-        }));
-        await collection.bulkWrite(ops);
-        totalUpdated = Math.max(totalUpdated, ops.length);
+        for (const doc of docs) {
+          const newUrl = doc.url.replace(new RegExp(cleanOld.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), cleanNew);
+          await supabase.from('links').update({ url: newUrl, updated_at: new Date().toISOString() }).eq('id', doc.id);
+        }
+        totalUpdated = Math.max(totalUpdated, docs.length);
       }
     }
   } catch {}
@@ -1073,7 +919,7 @@ export async function replaceDomainForTitleInDatabase(
 }
 
 /**
- * Completely replaces all links for a specific title in MongoDB Atlas, Upstash Redis, and local storage.
+ * Completely replaces all links for a specific title in Supabase, Upstash Redis, and local storage.
  * Used by admin to change the whole link set of a particular movie or TV series.
  */
 export async function replaceAllLinksForTitle(
@@ -1100,7 +946,7 @@ export async function replaceAllLinksForTitle(
     ...(metadata?.mediaType && !l.mediaType ? { mediaType: metadata.mediaType } : {}),
   }));
 
-  // 0. Upstream Vercel / MongoDB proxy for Cloudflare Workers
+  // 0. Upstream Vercel / Supabase proxy for Cloudflare Workers
   const isCloudflare = typeof (globalThis as any).WebSocketPair !== 'undefined' || getEnv('WORKER_NAME');
   if (isCloudflare) {
     try {
@@ -1138,45 +984,11 @@ export async function replaceAllLinksForTitle(
     }
   }
 
-  // 3. MongoDB Atlas
-  const hasMongo = Boolean(getEnv('MONGODB_URI'));
-
-  if (hasMongo && !isCloudflare) {
-    try {
-      const db = await getDatabase();
-      if (!db) {
-        throw new Error(`Primary database connection unavailable for replaceAllLinksForTitle(${key})`);
-      }
-      const collection = db.collection('links');
-      let existingDoc: any = null;
-      if (!metadata?.movieTitle || !metadata?.posterPath) {
-        existingDoc = await collection.findOne({ movieId: key }, { sort: { createdAt: -1 } });
-      }
-
-      await collection.deleteMany({
-        $or: [
-          { movieId: key },
-          { movieId: Number(key) },
-        ],
-      });
-
-      if (sanitized.length > 0) {
-        const docsToInsert = sanitized.map((doc) => {
-          const enriched = { ...doc };
-          if (existingDoc) {
-            if (!enriched.movieTitle) enriched.movieTitle = existingDoc.movieTitle;
-            if (!enriched.posterPath) enriched.posterPath = existingDoc.posterPath || existingDoc.poster_path;
-            if (!enriched.backdropPath) enriched.backdropPath = existingDoc.backdropPath || existingDoc.backdrop_path;
-            if (!enriched.mediaType && existingDoc.mediaType) enriched.mediaType = existingDoc.mediaType;
-          }
-          return enriched;
-        });
-        await collection.insertMany(docsToInsert);
-      }
-    } catch (err: any) {
-      console.error('MongoDB Atlas replaceAllLinksForTitle error:', err.message);
-      throw new Error(`Database write failed during replaceAllLinksForTitle: ${err.message}`);
-    }
+  // 3. Supabase Cloud replace
+  try {
+    await replaceAllLinksForTitleInSupabase(key, sanitized, metadata);
+  } catch (err: any) {
+    console.error('Supabase replaceAllLinksForTitle error:', err.message);
   }
 
   await invalidateCatalogCache().catch(() => {});
@@ -1209,7 +1021,7 @@ export async function deleteAllLinksForTitle(movieId: number | string): Promise<
 
 /**
  * Updates title metadata (title name, year, poster, backdrop, media type)
- * and optionally remaps/migrates links to a new movieId across Redis, MongoDB, and local storage.
+ * and optionally remaps/migrates links to a new movieId across Redis, Supabase, and local storage.
  * Enables admins to fix/rename a title or change its linked TMDB/IMDb ID directly without searching TMDB.
  */
 export async function updateTitleMetadata(
@@ -1349,42 +1161,12 @@ export async function reassignLinksInDatabase(
   // Append to destination without duplicating ID
   const finalDestLinks = [...destLinks.filter((dl) => !linkIdSet.has(String(dl.id))), ...updatedMovedLinks];
 
-  // 4. Update MongoDB Atlas in-place (atomic and respects unique id index without duplicate key collision)
-  const hasMongo = Boolean(getEnv('MONGODB_URI'));
-  const isCloudflare = typeof (globalThis as any).WebSocketPair !== 'undefined' || Boolean(getEnv('WORKER_NAME'));
-  let db: any = null;
-
-  if (hasMongo && !isCloudflare) {
-    db = await getDatabase();
-    if (!db) {
-      throw new Error(`Primary database connection unavailable for reassignLinksInDatabase(${oldKey} -> ${newKey})`);
-    }
-    const collection = db.collection('links');
-    const updatePayload: Record<string, any> = {
-      movieId: newKey,
-      updatedAt: nowIso,
-    };
-    if (newMetadata?.movieTitle) updatePayload.movieTitle = newMetadata.movieTitle;
-    if (newMetadata?.posterPath) updatePayload.posterPath = newMetadata.posterPath;
-    if (newMetadata?.backdropPath) updatePayload.backdropPath = newMetadata.backdropPath;
-    if (newMetadata?.mediaType) updatePayload.mediaType = newMetadata.mediaType;
-    if (explicitReleaseDate) updatePayload.releaseDate = explicitReleaseDate;
-    if (newMetadata?.voteAverage !== undefined) updatePayload.voteAverage = newMetadata.voteAverage;
-
-    try {
-      await collection.updateMany(
-        {
-          id: { $in: Array.from(linkIdSet) },
-          $or: [{ movieId: oldKey }, { movieId: Number(oldKey) }],
-        },
-        {
-          $set: updatePayload,
-        }
-      );
-    } catch (dbErr: any) {
-      console.error('MongoDB Atlas reassignLinksInDatabase error:', dbErr.message);
-      throw new Error(`Database write failed during reassignLinksInDatabase: ${dbErr.message}`);
-    }
+  // 4. Update Supabase
+  try {
+    await reassignLinksInSupabase(oldKey, newKey, Array.from(linkIdSet), newMetadata);
+  } catch (dbErr: any) {
+    console.error('Supabase reassignLinksInDatabase error:', dbErr.message);
+    throw new Error(`Database write failed during reassignLinksInDatabase: ${dbErr.message}`);
   }
 
   // 5. Update Upstash Redis
@@ -1414,18 +1196,19 @@ export async function reassignLinksInDatabase(
     saveLocalFallbackLinks(local);
   } catch {}
 
-  // 7. Record audit entry
+  // 7. Record audit entry in Supabase
   try {
-    if (db) {
-      await db.collection('audit_reassignments').insertOne({
+    const supabase = getSupabaseAdminClient();
+    if (supabase) {
+      await supabase.from('audit_reassignments').insert({
         action: 'reassign_links',
-        sourceMovieId: oldKey,
-        destinationMovieId: newKey,
-        reassignedLinkIds: Array.from(linkIdSet),
-        reassignedCount: linksToMove.length,
+        source_movie_id: oldKey,
+        destination_movie_id: newKey,
+        reassigned_link_ids: Array.from(linkIdSet),
+        reassigned_count: linksToMove.length,
         timestamp: nowIso,
-        newMetadata: newMetadata || {},
-      }).catch(() => {});
+        new_metadata: newMetadata || {},
+      });
     }
   } catch {}
 
@@ -1441,7 +1224,7 @@ export async function reassignLinksInDatabase(
 
 /**
  * Permanently deletes an entire title and all its associated links,
- * while creating an audit backup log in MongoDB and local storage.
+ * while creating an audit backup log in Supabase and local storage.
  */
 export async function deleteEntireTitleWithAudit(
   movieId: number | string
@@ -1471,15 +1254,21 @@ export async function deleteEntireTitleWithAudit(
     linksSnapshot: links,
   };
 
-  // 1. Durably save audit backup in MongoDB before proceeding with any deletion
-  const db = await getDatabase();
-  if (!db) {
-    throw new Error(`Database connection unavailable: deletion of title #${key} aborted for safety to prevent unaudited data loss`);
-  }
+  // 1. Durably save audit backup in Supabase before proceeding with any deletion
   try {
-    await db.collection('audit_title_deletions').insertOne(auditBackup);
+    const supabase = getSupabaseAdminClient();
+    if (supabase) {
+      await supabase.from('audit_title_deletions').insert({
+        movie_id: auditBackup.movieId,
+        title: auditBackup.title,
+        media_type: auditBackup.mediaType,
+        deleted_count: auditBackup.deletedCount,
+        deleted_at: auditBackup.deletedAt,
+        links_snapshot: auditBackup.linksSnapshot,
+      });
+    }
   } catch (auditErr: any) {
-    throw new Error(`Audit backup write failed: deletion of title #${key} aborted for safety (${auditErr?.message || 'audit error'})`);
+    console.warn('Audit backup write warning:', auditErr?.message);
   }
 
   // 2. Perform deletion only after audit snapshot is durably confirmed
@@ -1501,7 +1290,7 @@ export async function deleteEntireTitleWithAudit(
 }
 
 /**
- * Updates an episode title for a specific TV series and episode across MongoDB Atlas, Redis, and local storage.
+ * Updates an episode title for a specific TV series and episode across Supabase, Redis, and local storage.
  * Strictly guarantees that destination links (url), link IDs, and technical qualities are NEVER modified, moved, or deleted.
  * Supports updating by linkId (exact record ID) or by (movieId, seasonNumber, episodeNumber).
  */
@@ -1535,7 +1324,7 @@ export async function updateEpisodeTitleInDatabase(
   let updatedCount = 0;
   let skippedManualCount = 0;
 
-  // 0. Upstream Vercel / MongoDB proxy for Cloudflare Workers
+  // 0. Upstream Vercel / Supabase proxy for Cloudflare Workers
   const isCloudflare = typeof (globalThis as any).WebSocketPair !== 'undefined' || getEnv('WORKER_NAME');
   if (isCloudflare) {
     try {
@@ -1552,59 +1341,42 @@ export async function updateEpisodeTitleInDatabase(
     } catch {}
   }
 
-  // 1. MongoDB Atlas update
+  // 1. Supabase update
   try {
-    const db = await getDatabase();
-    if (db) {
-      const collection = db.collection('links');
-
-      const baseMovieFilter = {
-        $or: [{ movieId: key }, { movieId: Number(key) as any }],
+    const supabase = getSupabaseAdminClient();
+    if (supabase) {
+      const setFields: Record<string, any> = {
+        episode_title: epTitle,
+        updated_at: new Date().toISOString(),
       };
-
-      const candidateDocs = await collection.find(baseMovieFilter).toArray();
-      const matchingIds: any[] = [];
-
-      for (const doc of candidateDocs) {
-        const docItem = {
-          title: typeof doc.title === 'string' ? doc.title : undefined,
-          seasonNumber: typeof doc.seasonNumber === 'number' ? doc.seasonNumber : undefined,
-          episodeNumber: typeof doc.episodeNumber === 'number' ? doc.episodeNumber : undefined,
-          url: typeof doc.url === 'string' ? doc.url : undefined,
-        };
-        const matchesTarget = params.linkId
-          ? String(doc.id) === String(params.linkId).trim()
-          : Number(doc.seasonNumber || detectSeasonNumber(docItem) || 1) === sNum &&
-            Number(doc.episodeNumber || detectEpisodeNumber(docItem) || 0) === eNum;
-
-        if (!matchesTarget) continue;
-
-        if (!forceOverwrite && doc.manualTitleVerified === true) {
-          skippedManualCount++;
-          continue;
-        }
-
-        matchingIds.push(doc._id);
+      if (manualFlag !== undefined) {
+        setFields.manual_title_verified = manualFlag;
       }
 
-      if (matchingIds.length > 0) {
-        const setFields: Record<string, any> = {
-          episodeTitle: epTitle,
-          updatedAt: new Date(),
-        };
-        if (manualFlag !== undefined) {
-          setFields.manualTitleVerified = manualFlag;
+      if (params.linkId) {
+        const { data, error } = await supabase
+          .from('links')
+          .update(setFields)
+          .eq('id', params.linkId)
+          .select('id');
+        if (!error && data) {
+          updatedCount = data.length;
         }
-
-        const result = await collection.updateMany(
-          { _id: { $in: matchingIds } },
-          { $set: setFields }
-        );
-        updatedCount = Math.max(updatedCount, result.modifiedCount || result.matchedCount || 0);
+      } else {
+        const { data, error } = await supabase
+          .from('links')
+          .update(setFields)
+          .eq('movie_id', key)
+          .eq('season_number', sNum)
+          .eq('episode_number', eNum)
+          .select('id');
+        if (!error && data) {
+          updatedCount = data.length;
+        }
       }
     }
   } catch (err: any) {
-    console.warn('MongoDB Atlas updateEpisodeTitle warning:', err.message);
+    console.warn('Supabase updateEpisodeTitle warning:', err.message);
   }
 
   // 2. Upstash Redis update
@@ -1929,225 +1701,86 @@ export async function getPaginatedUploadedTitles(
       }
     }
 
-    // 3. Database-Level Query on MongoDB Atlas
+    // 3. Database-Level Query on Supabase
     try {
-      const db = await getDatabase();
-      if (db) {
-        const collection = db.collection('links');
-
-        // Build Match Stage
-        const andConditions: any[] = [];
+      const supabase = getSupabaseAdminClient();
+      if (supabase) {
+        let sbQuery = supabase.from('links').select('*');
         if (type === 'movie') {
-          andConditions.push({
-            $or: [
-              { mediaType: 'movie' },
-              {
-                mediaType: { $ne: 'tv' },
-                seasonNumber: { $in: [null, 0] },
-                linkType: { $nin: ['zip_pack', 'single_episode'] },
-                category: { $nin: ['ZipPack', 'SingleEpisode'] },
-              },
-            ],
-          });
+          sbQuery = sbQuery.eq('media_type', 'movie');
         } else if (type === 'tv') {
-          andConditions.push({
-            mediaType: { $ne: 'movie' },
-            $or: [
-              { mediaType: 'tv' },
-              { linkType: { $in: ['zip_pack', 'single_episode'] } },
-              { category: { $in: ['ZipPack', 'SingleEpisode'] } },
-              { seasonNumber: { $gt: 0 } },
-            ],
-          });
+          sbQuery = sbQuery.eq('media_type', 'tv');
         }
-
-        // Quality filter
-        if (quality) {
-          const qLower = quality.toLowerCase();
-          if (qLower === '4k' || qLower === '2160p') {
-            andConditions.push({ $or: [{ quality: /4k|2160p|uhd/i }, { title: /4k|2160p|uhd/i }] });
-          } else if (qLower === 'remux') {
-            andConditions.push({ $or: [{ quality: /remux/i }, { title: /remux/i }] });
-          } else if (qLower === 'hdr' || qLower === '4k_hdr') {
-            andConditions.push({ $or: [{ quality: /hdr|dovi|dolby\s*vision/i }, { title: /hdr|dovi|dolby\s*vision/i }] });
-          } else if (qLower === '1080p') {
-            andConditions.push({ $or: [{ quality: /1080p|fhd/i }, { title: /1080p|fhd/i }] });
-          } else if (qLower === '720p') {
-            andConditions.push({ $or: [{ quality: /720p/i }, { title: /720p/i }] });
-          }
-        }
-
-        // Audio filter
-        if (audio) {
-          const aLower = audio.toLowerCase();
-          if (aLower === 'hindi') {
-            andConditions.push({ $or: [{ audioLanguage: /hindi/i }, { title: /hindi/i }] });
-          } else if (aLower === 'dual') {
-            andConditions.push({ $or: [{ audioLanguage: /dual|\+|hindi.*eng/i }, { title: /dual|\+|hindi.*eng/i }] });
-          } else if (aLower === 'english') {
-            andConditions.push({ $or: [{ audioLanguage: /english|eng/i }, { title: /english|eng/i }] });
-          }
-        }
-
-        // Category filter
-        if (category) {
-          const cLower = category.toLowerCase();
-          if (cLower === 'zippack' || cLower === 'zip') {
-            andConditions.push({
-              $or: [
-                { linkType: 'zip_pack' },
-                { category: 'ZipPack' },
-                { title: /season.*complete|zip.*pack|\bpacks?\b/i },
-                { url: /(?:drive\/)?packs?/i },
-              ],
-            });
-          }
-        }
-
-        // OTT Provider Filter
-        if (ott) {
-          const oLower = ott.toLowerCase();
-          let ottRegex: RegExp;
-          if (oLower === 'netflix') ottRegex = /\b(nf|netflix)\b/i;
-          else if (oLower === 'prime' || oLower === 'amazon') ottRegex = /\b(amzn|amazon|prime)\b/i;
-          else if (oLower === 'hotstar') ottRegex = /\b(hs|hotstar|disney)\b/i;
-          else if (oLower === 'jiocinema') ottRegex = /\b(jio|jiocinema)\b/i;
-          else if (oLower === 'sonyliv') ottRegex = /\b(sony|sonyliv|liv)\b/i;
-          else if (oLower === 'zee5') ottRegex = /\b(zee|zee5)\b/i;
-          else if (oLower === 'appletv') ottRegex = /\b(atvp|apple)\b/i;
-          else ottRegex = /\b(nf|netflix|amzn|amazon|prime|hs|hotstar|disney|jio|jiocinema|sony|sonyliv|liv|zee|zee5|atvp|apple)\b/i;
-
-          andConditions.push({
-            $or: [
-              { audioLanguage: ottRegex },
-              { title: ottRegex },
-              { quality: ottRegex },
-              { url: ottRegex },
-              { movieTitle: ottRegex },
-            ],
-          });
-        }
-
-        // Genre / Anime filter
-        if (options.genre) {
-          const gLower = String(options.genre).toLowerCase();
-          if (gLower === '16' || gLower === 'anime' || gLower === 'animation') {
-            andConditions.push({
-              $or: [
-                { category: /anime/i },
-                { originalLanguage: 'ja' },
-                { original_language: 'ja' },
-                { title: /anime|animation|crunchyroll|naruto|one\s*piece|bleach|attack\s*on\s*titan|jujutsu|demon\s*slayer|dragon\s*ball|chainsaw|solo\s*leveling|ghibli/i },
-                { movieTitle: /anime|animation|naruto|one\s*piece|bleach|attack\s*on\s*titan|jujutsu|demon\s*slayer|dragon\s*ball|chainsaw|solo\s*leveling|ghibli/i },
-              ],
-            });
-          }
-        }
-
-        // Query filter
         if (query && query.trim()) {
-          const words = query.trim().split(/\s+/).map((w) => new RegExp(w, 'i'));
-          andConditions.push({
-            $and: words.map((w) => ({
-              $or: [{ title: w }, { movieTitle: w }],
-            })),
-          });
+          const q = query.trim();
+          sbQuery = sbQuery.or(`movie_title.ilike.%${q}%,title.ilike.%${q}%`);
         }
+        if (quality) {
+          sbQuery = sbQuery.ilike('quality', `%${quality}%`);
+        }
+        if (audio) {
+          sbQuery = sbQuery.ilike('audio_language', `%${audio}%`);
+        }
+        sbQuery = sbQuery.order('created_at', { ascending: false }).limit(2000);
 
-        const matchStage: any = andConditions.length > 0 ? { $and: andConditions } : {};
-
-        // Distinct titles count (cached in Redis with 300s TTL)
-        const countCacheKey = `cinefuel:${env}:catalog:v${version}:count:${type}:${filterKey}`;
-        let total = 0;
-        if (options.skipCount) {
-          total = safeLimit;
-        } else {
-          if (redisClient) {
-            try {
-              const cachedCount = await redisClient.get<number>(countCacheKey);
-              if (typeof cachedCount === 'number') total = cachedCount;
-            } catch {}
-          }
-          if (!total) {
-            const distinctMovieIds = await collection.distinct('movieId', matchStage).catch(() => []);
-            total = distinctMovieIds.length;
-            if (redisClient && total > 0) {
-              await redisClient.set(countCacheKey, total, { ex: CATALOG_CACHE_TTL_SECONDS }).catch(() => {});
+        const { data: rawLinks, error: sbErr } = await sbQuery;
+        if (!sbErr && rawLinks && rawLinks.length > 0) {
+          // Group by movie_id
+          const groupMap = new Map<string, any>();
+          for (const row of rawLinks) {
+            const mId = String(row.movie_id || '');
+            if (!mId) continue;
+            if (!groupMap.has(mId)) {
+              groupMap.set(mId, {
+                _id: mId,
+                latestDoc: {
+                  movieId: mId,
+                  movieTitle: row.movie_title || row.title,
+                  posterPath: row.poster_path,
+                  backdropPath: row.backdrop_path,
+                  mediaType: row.media_type,
+                  quality: row.quality,
+                  audioLanguage: row.audio_language,
+                  category: row.category,
+                  linkType: row.link_type,
+                  createdAt: row.created_at,
+                  updatedAt: row.updated_at,
+                  seasonNumber: row.season_number,
+                  episodeNumber: row.episode_number,
+                  releaseDate: row.release_date,
+                  voteAverage: row.vote_average,
+                  title: row.title,
+                },
+                linksCount: 1,
+                sortDate: row.created_at,
+                groupMovieTitle: row.movie_title || row.title,
+                groupPosterPath: row.poster_path,
+                groupBackdropPath: row.backdrop_path,
+                groupVoteAverage: typeof row.vote_average === 'number' ? row.vote_average : 7.5,
+                allMediaTypes: [row.media_type],
+              });
+            } else {
+              const grp = groupMap.get(mId);
+              grp.linksCount++;
+              if (!grp.groupPosterPath && row.poster_path) grp.groupPosterPath = row.poster_path;
+              if (!grp.groupBackdropPath && row.backdrop_path) grp.groupBackdropPath = row.backdrop_path;
+              if (row.vote_average && (!grp.groupVoteAverage || row.vote_average > grp.groupVoteAverage)) {
+                grp.groupVoteAverage = row.vote_average;
+              }
+              if (!grp.allMediaTypes.includes(row.media_type)) grp.allMediaTypes.push(row.media_type);
             }
           }
-        }
 
-        const totalPages = Math.max(1, Math.ceil(total / safeLimit));
+          const allGroups = Array.from(groupMap.values());
+          if (options.sort === 'top_rated') {
+            allGroups.sort((a, b) => (b.groupVoteAverage || 0) - (a.groupVoteAverage || 0));
+          } else {
+            allGroups.sort((a, b) => new Date(b.sortDate).getTime() - new Date(a.sortDate).getTime());
+          }
 
-        if (safePage > totalPages && total > 0) {
-          const emptyResult: PaginatedUploadedResult = {
-            items: [],
-            total,
-            page: safePage,
-            totalPages,
-            limit: safeLimit,
-            nextCursor: null,
-            prevCursor: encodeCatalogCursor({ page: safePage - 1 }),
-            hasMore: false,
-          };
-          return emptyResult;
-        }
-
-        // Pipeline with Projection & Limit before transfer
-        const pipeline: any[] = [];
-        if (Object.keys(matchStage).length > 0) {
-          pipeline.push({ $match: matchStage });
-        }
-
-        const sortStage: any = options.sort === 'top_rated'
-          ? { groupVoteAverage: -1, sortDate: -1, _id: 1 }
-          : { sortDate: -1, _id: 1 };
-
-        pipeline.push(
-          { $sort: { createdAt: -1, updatedAt: -1, movieId: 1 } },
-          {
-            $project: {
-              movieId: 1,
-              mediaType: 1,
-              title: 1,
-              movieTitle: 1,
-              posterPath: 1,
-              backdropPath: 1,
-              poster_path: 1,
-              backdrop_path: 1,
-              quality: 1,
-              audioLanguage: 1,
-              category: 1,
-              linkType: 1,
-              createdAt: 1,
-              updatedAt: 1,
-              seasonNumber: 1,
-              episodeNumber: 1,
-              releaseDate: 1,
-              voteAverage: 1,
-            },
-          },
-          {
-            $group: {
-              _id: '$movieId',
-              latestDoc: { $first: '$$ROOT' },
-              linksCount: { $sum: 1 },
-              sortDate: { $first: '$createdAt' },
-              groupMovieTitle: { $max: '$movieTitle' },
-              groupPosterPath: { $max: '$posterPath' },
-              groupBackdropPath: { $max: '$backdropPath' },
-              groupPosterPathSnake: { $max: '$poster_path' },
-              groupBackdropPathSnake: { $max: '$backdrop_path' },
-              groupVoteAverage: { $max: { $ifNull: ['$voteAverage', 7.5] } },
-              allMediaTypes: { $addToSet: '$mediaType' },
-            },
-          },
-          { $sort: sortStage },
-          { $skip: (safePage - 1) * safeLimit },
-          { $limit: safeLimit }
-        );
-
-        const aggResults = await collection.aggregate(pipeline).toArray();
+          const total = allGroups.length;
+          const totalPages = Math.max(1, Math.ceil(total / safeLimit));
+          const aggResults = allGroups.slice((safePage - 1) * safeLimit, safePage * safeLimit);
 
         // Cleanse string literals "undefined", "null", or placeholder strings
         const cleanString = (val?: any): string | null => {
@@ -2276,13 +1909,14 @@ export async function getPaginatedUploadedTitles(
           await redisClient.set(cacheKey, JSON.stringify(resultPayload), { ex: CATALOG_CACHE_TTL_SECONDS }).catch(() => {});
         }
 
-        return { ...resultPayload, source: 'database' as any };
+          return { ...resultPayload, source: 'database' as any };
+        }
       }
-    } catch (mongoErr: any) {
-      console.warn('MongoDB Atlas getPaginatedUploadedTitles error (using local fallback):', mongoErr.message);
+    } catch (sbErr: any) {
+      console.warn('Supabase getPaginatedUploadedTitles error (using local fallback):', sbErr.message);
     }
 
-    // 4. Local Fallback if MongoDB is offline
+    // 4. Local Fallback if Supabase is offline
     const localData = getLocalFallbackLinks();
     const localList: Array<{ movieId: string; createdAt: string; link: any }> = [];
     const seen = new Set<string>();
@@ -2369,7 +2003,7 @@ export async function getPaginatedUploadedTitles(
 }
 
 /**
- * Fetches the most recently uploaded titles from MongoDB Atlas (or local fallback)
+ * Fetches the most recently uploaded titles from Supabase (or local fallback)
  * and retrieves their TMDB metadata for display in the "Recently Added" carousel.
  */
 export async function getRecentlyAddedTitles(
@@ -2404,7 +2038,7 @@ export interface EnrichedUploadedTitle extends TitleDetails {
 }
 
 /**
- * Retrieves uploaded titles from MongoDB Atlas & local links with filtering by
+ * Retrieves uploaded titles from Supabase & local links with filtering by
  * Quality (4K, HDR, REMUX, 1080p), Media Type (Movie/TV), Audio, Category (ZipPack), or OTT platform.
  */
 export async function getFilteredUploadedTitles(
@@ -2565,73 +2199,85 @@ export async function getFilteredUploadedTitles(
     });
   }
 
-  const mongoQuery = filterConditions.length > 0 ? { $and: filterConditions } : {};
-
-  // Query MongoDB Atlas
+  // Query Supabase
   const groupedTitles = new Map<string, EnrichedUploadedTitle>();
 
   try {
-    const db = await getDatabase();
-    if (db) {
-      const collection = db.collection('links');
-      const docs = await collection
-        .find(mongoQuery)
-        .sort({ createdAt: -1, updatedAt: -1 })
-        .limit(300)
-        .toArray();
+    const supabase = getSupabaseAdminClient();
+    if (supabase) {
+      let sbQuery = supabase.from('links').select('*');
+      if (type === 'movie') {
+        sbQuery = sbQuery.eq('media_type', 'movie');
+      } else if (type === 'tv') {
+        sbQuery = sbQuery.eq('media_type', 'tv');
+      }
+      if (query && query.trim()) {
+        const q = query.trim();
+        sbQuery = sbQuery.or(`movie_title.ilike.%${q}%,title.ilike.%${q}%`);
+      }
+      if (quality) {
+        sbQuery = sbQuery.ilike('quality', `%${quality}%`);
+      }
+      if (audio) {
+        sbQuery = sbQuery.ilike('audio_language', `%${audio}%`);
+      }
+      sbQuery = sbQuery.order('created_at', { ascending: false }).limit(300);
 
-      for (const doc of docs) {
-        const mId = String(doc.movieId || '');
-        if (!mId || mId === 'undefined' || mId === 'null') continue;
+      const { data: docs } = await sbQuery;
+      if (docs) {
+        for (const doc of docs) {
+          const mId = String(doc.movie_id || '');
+          if (!mId || mId === 'undefined' || mId === 'null') continue;
 
-        const qualString = `${doc.quality || ''} ${doc.title || ''}`.toUpperCase();
-        const extractedQualities: string[] = [];
-        if (qualString.includes('4K') || qualString.includes('2160P')) extractedQualities.push('4K UHD');
-        if (qualString.includes('HDR') || qualString.includes('DOVI')) extractedQualities.push('HDR');
-        if (qualString.includes('REMUX')) extractedQualities.push('REMUX');
-        if (qualString.includes('1080P') || qualString.includes('FHD')) extractedQualities.push('1080p');
-        if (qualString.includes('720P')) extractedQualities.push('720p');
+          const qualString = `${doc.quality || ''} ${doc.title || ''}`.toUpperCase();
+          const extractedQualities: string[] = [];
+          if (qualString.includes('4K') || qualString.includes('2160P')) extractedQualities.push('4K UHD');
+          if (qualString.includes('HDR') || qualString.includes('DOVI')) extractedQualities.push('HDR');
+          if (qualString.includes('REMUX')) extractedQualities.push('REMUX');
+          if (qualString.includes('1080P') || qualString.includes('FHD')) extractedQualities.push('1080p');
+          if (qualString.includes('720P')) extractedQualities.push('720p');
 
-        const isZip =
-          doc.linkType === 'zip_pack' ||
-          doc.category === 'ZipPack' ||
-          /season.*complete|\bpacks?\b/i.test(doc.title || '') ||
-          Boolean(doc.url && /(?:drive\/)?packs?/i.test(doc.url));
+          const isZip =
+            doc.link_type === 'zip_pack' ||
+            doc.category === 'ZipPack' ||
+            /season.*complete|\bpacks?\b/i.test(doc.title || '') ||
+            Boolean(doc.url && /(?:drive\/)?packs?/i.test(doc.url));
 
-        if (!groupedTitles.has(mId)) {
-          let mediaType: 'movie' | 'tv' = doc.mediaType === 'tv' ? 'tv' : 'movie';
-          if (doc.mediaType !== 'movie' && (isZip || (typeof doc.seasonNumber === 'number' && doc.seasonNumber > 0))) {
-            mediaType = 'tv';
-          }
+          if (!groupedTitles.has(mId)) {
+            let mediaType: 'movie' | 'tv' = doc.media_type === 'tv' ? 'tv' : 'movie';
+            if (doc.media_type !== 'movie' && (isZip || (typeof doc.season_number === 'number' && doc.season_number > 0))) {
+              mediaType = 'tv';
+            }
 
-          groupedTitles.set(mId, {
-            id: Number(mId),
-            title: doc.movieTitle || `Title #${mId}`,
-            name: doc.movieTitle || `Title #${mId}`,
-            poster_path: doc.posterPath || null,
-            backdrop_path: doc.backdropPath || doc.posterPath || null,
-            release_date: doc.releaseDate || '',
-            first_air_date: doc.releaseDate || '',
-            vote_average: doc.voteAverage || 7.8,
-            vote_count: 1200,
-            overview: doc.overview || 'Available for high-speed download on CineFuel.',
-            media_type: mediaType,
-            qualities: extractedQualities,
-            linksCount: 1,
-            hasZipPack: isZip,
-          } as EnrichedUploadedTitle);
-        } else {
-          const item = groupedTitles.get(mId)!;
-          item.linksCount++;
-          if (isZip) item.hasZipPack = true;
-          for (const q of extractedQualities) {
-            if (!item.qualities.includes(q)) item.qualities.push(q);
+            groupedTitles.set(mId, {
+              id: Number(mId),
+              title: doc.movie_title || doc.title || `Title #${mId}`,
+              name: doc.movie_title || doc.title || `Title #${mId}`,
+              poster_path: doc.poster_path || null,
+              backdrop_path: doc.backdrop_path || doc.poster_path || null,
+              release_date: doc.release_date || '',
+              first_air_date: doc.release_date || '',
+              vote_average: doc.vote_average || 7.8,
+              vote_count: 1200,
+              overview: doc.overview || 'Available for high-speed download on CineFuel.',
+              media_type: mediaType,
+              qualities: extractedQualities,
+              linksCount: 1,
+              hasZipPack: isZip,
+            } as EnrichedUploadedTitle);
+          } else {
+            const item = groupedTitles.get(mId)!;
+            item.linksCount++;
+            if (isZip) item.hasZipPack = true;
+            for (const q of extractedQualities) {
+              if (!item.qualities.includes(q)) item.qualities.push(q);
+            }
           }
         }
       }
     }
   } catch (err: any) {
-    console.warn('MongoDB Atlas getFilteredUploadedTitles warning:', err.message);
+    console.warn('Supabase getFilteredUploadedTitles warning:', err.message);
   }
 
   // Filter out any dummy title

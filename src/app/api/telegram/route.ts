@@ -291,7 +291,7 @@ export async function GET(req: NextRequest) {
     bot: 'CineFlue_bot',
     service: 'CineFuel Telegram Auto-Uploader API',
     diagnostics: {
-      mongoUriConfigured: !!getEnv('MONGODB_URI'),
+      supabaseConfigured: !!(getEnv('NEXT_PUBLIC_SUPABASE_URL') && getEnv('SUPABASE_SERVICE_ROLE_KEY')),
       redisUrlConfigured: !!(getEnv('UPSTASH_REDIS_REST_URL') || getEnv('KV_REST_API_URL')),
       redisTokenConfigured: !!(getEnv('UPSTASH_REDIS_REST_TOKEN') || getEnv('KV_REST_API_TOKEN')),
       adminKeyConfigured: !!(getEnv('ADMIN_SECRET_KEY') || getEnv('ADMIN_PASSWORD')),

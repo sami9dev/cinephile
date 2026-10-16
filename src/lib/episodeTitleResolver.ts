@@ -1,12 +1,11 @@
 import { getSeasonEpisodes } from '@/lib/tmdb';
-import { fetchTraktSeasonEpisodes } from '@/lib/trakt';
 
 export interface ResolvedEpisodeItem {
   episode_number: number;
   name: string;
   overview?: string;
   still_path?: string | null;
-  source: 'imdb' | 'tvmaze' | 'tmdb' | 'trakt';
+  source: 'imdb' | 'tvmaze' | 'tmdb';
   isVerified: boolean;
 }
 
@@ -15,7 +14,7 @@ export interface ResolvedSeasonEpisodesResult {
   imdbId?: string;
   tmdbId?: number;
   showTitle?: string;
-  source: 'imdb' | 'tvmaze' | 'tmdb' | 'trakt' | 'none';
+  source: 'imdb' | 'tvmaze' | 'tmdb' | 'none';
   episodes: ResolvedEpisodeItem[];
 }
 
@@ -392,7 +391,7 @@ async function fetchTvMazeSeasonEpisodes(params: {
  * Multi-source official episode title resolver:
  * 1. Resolves series IMDb ID (tt...) via IMDb suggestion endpoint or passed imdbId.
  * 2. Queries IMDb (Cinemeta) and TVMaze by IMDb ID in parallel.
- * 3. Falls back to TMDB Season API and Trakt Season API.
+ * 3. Falls back to TMDB Season API.
  * 4. Filters out generic ("Episode 1") and release-filename strings so only verified official titles are returned.
  */
 export async function resolveSeasonEpisodes(params: {
@@ -455,41 +454,12 @@ export async function resolveSeasonEpisodes(params: {
       }
     }
   }
-
-  // Step 3: Optional Trakt fallback if still empty
-  const traktMap = new Map<number, ResolvedEpisodeItem>();
-  if (imdbMap.size === 0 && tvMazeRes.episodesMap.size === 0 && tmdbMap.size === 0) {
-    const traktRes = await fetchTraktSeasonEpisodes({
-      tmdbId: numericTmdbId,
-      imdbId: resolvedImdbId,
-      query: cleanQ || params.query,
-      season,
-    });
-    if (traktRes.success && Array.isArray(traktRes.episodes)) {
-      for (const ep of traktRes.episodes) {
-        const epNum = Number(ep.episodeNumber);
-        const rawName = String(ep.title || '').trim();
-        if (!isNaN(epNum) && epNum >= 1 && isVerifiedEpisodeTitleString(rawName)) {
-          traktMap.set(epNum, {
-            episode_number: epNum,
-            name: rawName,
-            overview: ep.overview || undefined,
-            still_path: null,
-            source: 'trakt',
-            isVerified: true,
-          });
-        }
-      }
-    }
-  }
-
   // Merge episode numbers across all sources:
-  // Priority per episode: IMDb (if verified non-generic) -> TVMaze (via IMDb ID) -> TMDB -> Trakt
+  // Priority per episode: IMDb (if verified non-generic) -> TVMaze (via IMDb ID) -> TMDB
   const allEpNums = new Set<number>([
     ...imdbMap.keys(),
     ...tvMazeRes.episodesMap.keys(),
     ...tmdbMap.keys(),
-    ...traktMap.keys(),
   ]);
 
   const mergedEpisodes: ResolvedEpisodeItem[] = Array.from(allEpNums)
@@ -498,9 +468,8 @@ export async function resolveSeasonEpisodes(params: {
       const fromImdb = imdbMap.get(epNum);
       const fromTvMaze = tvMazeRes.episodesMap.get(epNum);
       const fromTmdb = tmdbMap.get(epNum);
-      const fromTrakt = traktMap.get(epNum);
 
-      const primary = fromImdb || fromTvMaze || fromTmdb || fromTrakt!;
+      const primary = fromImdb || fromTvMaze || fromTmdb!;
       return {
         episode_number: epNum,
         name: primary.name,
@@ -508,8 +477,7 @@ export async function resolveSeasonEpisodes(params: {
           primary.overview ||
           fromTvMaze?.overview ||
           fromTmdb?.overview ||
-          fromImdb?.overview ||
-          fromTrakt?.overview,
+          fromImdb?.overview,
         still_path:
           primary.still_path ||
           fromTmdb?.still_path ||
@@ -525,7 +493,6 @@ export async function resolveSeasonEpisodes(params: {
   if (imdbMap.size > 0) primarySource = 'imdb';
   else if (tvMazeRes.episodesMap.size > 0) primarySource = 'tvmaze';
   else if (tmdbMap.size > 0) primarySource = 'tmdb';
-  else if (traktMap.size > 0) primarySource = 'trakt';
 
   const result: ResolvedSeasonEpisodesResult = {
     season_number: season,

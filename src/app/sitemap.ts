@@ -10,7 +10,6 @@ export default function sitemap(): MetadataRoute.Sitemap {
     '/recommendations',
     '/lists',
     '/watchlist',
-    '/mdblist',
     '/search',
     '/profile',
   ];

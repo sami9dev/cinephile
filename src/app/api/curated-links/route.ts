@@ -18,7 +18,6 @@ import {
 } from '@/lib/redisDb';
 import { validateAdminAuth } from '@/lib/adminAuth';
 import { isValidHttpUrl } from '@/lib/security';
-import { getEnv } from '@/lib/env';
 
 export const dynamic = 'force-dynamic';
 
@@ -38,24 +37,6 @@ export async function GET(request: NextRequest) {
     }
 
     if (movieId) {
-      // Optional Rust / Axum high-performance acceleration layer
-      const rustApiUrl = getEnv('RUST_API_URL');
-      if (rustApiUrl) {
-        try {
-          const rustRes = await fetch(`${rustApiUrl}/api/curated-links?id=${encodeURIComponent(movieId)}`, {
-            signal: AbortSignal.timeout(2000),
-          });
-          if (rustRes.ok) {
-            const rustData = await rustRes.json();
-            const response = NextResponse.json(rustData);
-            response.headers.set('X-Backend-Engine', 'rust-axum');
-            return response;
-          }
-        } catch {
-          // Fallback transparently to direct MongoDB Atlas engine
-        }
-      }
-
       const result = await getLinksFromDatabase(movieId);
       return NextResponse.json({
         success: true,
@@ -101,6 +82,32 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(migrationRes);
     }
 
+    // Handle fixing / updating title metadata directly (without TMDB search)
+    if (action === 'update_title_metadata') {
+      const rawSourceId = body.movieId ?? body.currentMovieId ?? body.sourceMovieId;
+      const cleanSourceId = rawSourceId !== undefined && rawSourceId !== null ? String(rawSourceId).trim() : '';
+      if (!cleanSourceId || cleanSourceId.toLowerCase() === 'undefined' || cleanSourceId.toLowerCase() === 'null') {
+        return NextResponse.json({ error: 'movieId is required and must be a valid identifier' }, { status: 400 });
+      }
+
+      const updates = body.updates || {};
+      const targetMovieId = updates.newMovieId ?? updates.targetMovieId ?? body.newMovieId ?? body.targetMovieId;
+      const cleanTargetMovieId = targetMovieId !== undefined && targetMovieId !== null ? String(targetMovieId).trim() : undefined;
+
+      const result = await updateTitleMetadata(cleanSourceId, {
+        newMovieId: cleanTargetMovieId && cleanTargetMovieId !== cleanSourceId ? cleanTargetMovieId : undefined,
+        movieTitle: updates.movieTitle ?? body.movieTitle,
+        year: updates.year ?? body.year,
+        releaseDate: updates.releaseDate ?? body.releaseDate,
+        mediaType: updates.mediaType ?? body.mediaType,
+        posterPath: updates.posterPath ?? body.posterPath,
+        backdropPath: updates.backdropPath ?? body.backdropPath,
+        overview: updates.overview ?? body.overview,
+      });
+      try { revalidatePath('/'); } catch {}
+      return NextResponse.json(result);
+    }
+
     const cleanMovieId = movieId !== undefined && movieId !== null ? String(movieId).trim() : '';
     if (!cleanMovieId || cleanMovieId.toLowerCase() === 'undefined' || cleanMovieId.toLowerCase() === 'null') {
       return NextResponse.json({ error: 'movieId is required and must be a valid identifier' }, { status: 400 });
@@ -134,23 +141,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(result);
     }
 
-    // Handle fixing / updating title metadata directly (without TMDB search)
-    if (action === 'update_title_metadata') {
-      const result = await updateTitleMetadata(movieId, {
-        newMovieId: body.newMovieId,
-        movieTitle: body.movieTitle,
-        year: body.year,
-        releaseDate: body.releaseDate,
-        mediaType: body.mediaType,
-        posterPath: body.posterPath,
-        backdropPath: body.backdropPath,
-        overview: body.overview,
-      });
-      try { revalidatePath('/'); } catch {}
-      return NextResponse.json(result);
-    }
-
-    // Handle updating an individual episode's title (Trakt / manual review)
+    // Handle updating an individual episode's title (official / manual review)
     if (action === 'update_episode_title') {
       const seasonNumber = Number(body.seasonNumber ?? body.season);
       const episodeNumber = Number(body.episodeNumber ?? body.episode);
