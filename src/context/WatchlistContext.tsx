@@ -10,100 +10,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   theme: 'dark',
 };
 
-const INITIAL_WATCHLIST: WatchlistItem[] = [
-  {
-    id: 872585,
-    mediaType: 'movie',
-    title: 'Oppenheimer',
-    poster_path: '/8Gxv8gSFCU0XGDykEGv7zR1n2ua.jpg',
-    backdrop_path: '/fm6KqXpk3M2HVveHwCrBSSBaO0V.jpg',
-    release_date: '2023-07-21',
-    vote_average: 8.1,
-    status: 'watched',
-    isFavorite: true,
-    personalRating: 9.5,
-    review: 'Masterpiece of modern cinema. Visuals and sound design are unmatched.',
-    watchedAt: '2024-01-15T20:30:00Z',
-    addedAt: '2023-08-01T10:00:00Z',
-    genres: ['Drama', 'History', 'Thriller'],
-    runtime: 180,
-    customLinks: [
-      {
-        id: 'link-1',
-        title: 'Making of Oppenheimer - YouTube',
-        url: 'https://www.youtube.com/watch?v=uYPbbksJxIg',
-        category: 'Official',
-        createdAt: '2024-01-16T12:00:00Z',
-      },
-      {
-        id: 'link-2',
-        title: 'Reddit Discussion Thread',
-        url: 'https://reddit.com/r/movies/comments/155i9s9/official_discussion_oppenheimer_spoilers/',
-        category: 'Discussion',
-        createdAt: '2024-01-16T12:05:00Z',
-      },
-    ],
-  },
-  {
-    id: 693134,
-    mediaType: 'movie',
-    title: 'Dune: Part Two',
-    poster_path: '/1pdfLvkbY9ohJlCjQH2CZjjYVvJ.jpg',
-    backdrop_path: '/xOMo8BRK7PfcJv9JCnx7s520QIq.jpg',
-    release_date: '2024-03-01',
-    vote_average: 8.3,
-    status: 'watchlist',
-    isFavorite: true,
-    addedAt: '2024-02-28T09:00:00Z',
-    genres: ['Sci-Fi', 'Adventure', 'Drama'],
-    runtime: 166,
-    customLinks: [
-      {
-        id: 'link-3',
-        title: 'Book vs Movie Analysis',
-        url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-        category: 'Review',
-        createdAt: '2024-03-02T15:00:00Z',
-      },
-    ],
-  },
-  {
-    id: 1396,
-    mediaType: 'tv',
-    title: 'Breaking Bad',
-    poster_path: '/ztkUQFLlC19CCMYHW9o1zWhJRNq.jpg',
-    backdrop_path: '/tsRy63Mu5cu8etL1X7ZLyf7UP1M.jpg',
-    release_date: '2008-01-20',
-    vote_average: 8.9,
-    status: 'watched',
-    isFavorite: true,
-    personalRating: 10,
-    review: 'Arguably the greatest television series ever made. Unparalleled writing.',
-    watchedAt: '2023-11-20T22:00:00Z',
-    addedAt: '2023-10-01T00:00:00Z',
-    genres: ['Drama', 'Crime'],
-    runtime: 47,
-    customLinks: [],
-  },
-  {
-    id: 157336,
-    mediaType: 'movie',
-    title: 'Interstellar',
-    poster_path: '/gEU2QniE6E77NI6lCU6MxlNBvIx.jpg',
-    backdrop_path: '/rAiYTAppmDnUTBnv87RiZHagM9H.jpg',
-    release_date: '2014-11-07',
-    vote_average: 8.4,
-    status: 'watched',
-    isFavorite: true,
-    personalRating: 9.8,
-    review: 'Hans Zimmer score and emotional father-daughter bond elevate this sci-fi titan.',
-    watchedAt: '2023-12-10T21:00:00Z',
-    addedAt: '2023-09-01T00:00:00Z',
-    genres: ['Adventure', 'Drama', 'Sci-Fi'],
-    runtime: 169,
-    customLinks: [],
-  },
-];
+const INITIAL_WATCHLIST: WatchlistItem[] = [];
 
 interface WatchlistStats {
   totalItems: number;
@@ -143,7 +50,18 @@ export const WatchlistProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     try {
       const storedWatchlist = localStorage.getItem('cinefuel_watchlist');
       if (storedWatchlist) {
-        setWatchlist(JSON.parse(storedWatchlist));
+        const parsed = JSON.parse(storedWatchlist);
+        if (Array.isArray(parsed)) {
+          // If watchlist only contains the legacy mock items (Oppenheimer, Dune, Breaking Bad, Interstellar), clear it
+          const DEMO_IDS = new Set([872585, 693134, 1396, 157336]);
+          const hasOnlyDemos = parsed.length > 0 && parsed.every((p: any) => DEMO_IDS.has(p.id));
+          if (hasOnlyDemos) {
+            localStorage.removeItem('cinefuel_watchlist');
+            setWatchlist([]);
+          } else {
+            setWatchlist(parsed);
+          }
+        }
       }
 
       const storedSettings = localStorage.getItem('cinefuel_settings');

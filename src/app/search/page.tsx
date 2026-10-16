@@ -19,8 +19,8 @@ const QUALITY_PRESETS = [
   { id: 'hdr', label: 'HDR / Dolby Vision', query: { quality: 'hdr' } },
   { id: 'zippack', label: 'Season Packs (Zip)', query: { category: 'zippack', type: 'tv' } },
   { id: 'hindi', label: 'Hindi / Dual Audio', query: { audio: 'hindi' } },
-  { id: 'movies_only', label: 'Movies (345+)', query: { type: 'movie' } },
-  { id: 'tv_only', label: 'Web Series (108+)', query: { type: 'tv' } },
+  { id: 'movies_only', label: 'Movies', query: { type: 'movie' } },
+  { id: 'tv_only', label: 'Web Series', query: { type: 'tv' } },
 ];
 
 function SearchContent() {

@@ -21,30 +21,7 @@ const INITIAL_GUEST_PROFILE: UserProfile = {
   isGuest: true,
 };
 
-const INITIAL_CUSTOM_LISTS: CustomList[] = [
-  {
-    id: 'list-nolan-mindbenders',
-    userId: 'guest-user-default',
-    title: 'Mind-Bending Sci-Fi & Epics',
-    description: 'A collection of reality-bending, visually stunning cinematic experiences.',
-    isPublic: true,
-    itemIds: [872585, 157336, 693134, 27205],
-    items: [],
-    createdAt: '2024-01-10T12:00:00Z',
-    updatedAt: '2024-02-15T18:30:00Z',
-  },
-  {
-    id: 'list-prestige-tv',
-    userId: 'guest-user-default',
-    title: 'Prestige Television Essentials',
-    description: 'The golden age of television drama, crime thrillers, and mystery series.',
-    isPublic: true,
-    itemIds: [1396, 114472],
-    items: [],
-    createdAt: '2024-01-12T14:00:00Z',
-    updatedAt: '2024-03-01T10:00:00Z',
-  },
-];
+const INITIAL_CUSTOM_LISTS: CustomList[] = [];
 
 interface AuthContextType {
   user: User | null;
@@ -105,11 +82,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const storedLists = localStorage.getItem('cinefuel_custom_lists');
         if (storedLists) {
           const parsedLists = JSON.parse(storedLists);
-          if (Array.isArray(parsedLists) && parsedLists.length > 0) {
-            setCustomLists(parsedLists);
+          if (Array.isArray(parsedLists)) {
+            const filtered = parsedLists.filter(
+              (l: any) => l.id !== 'list-nolan-mindbenders' && l.id !== 'list-prestige-tv'
+            );
+            setCustomLists(filtered);
+            if (filtered.length !== parsedLists.length) {
+              localStorage.setItem('cinefuel_custom_lists', JSON.stringify(filtered));
+            }
           }
-        } else {
-          localStorage.setItem('cinefuel_custom_lists', JSON.stringify(INITIAL_CUSTOM_LISTS));
         }
       }
     } catch (e) {

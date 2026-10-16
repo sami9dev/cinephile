@@ -101,20 +101,8 @@ interface PinnedTitle {
   poster_path?: string | null;
 }
 
-// Initial Quick-Select Titles for 1-Click Access
-const PINNED_TITLES: PinnedTitle[] = [
-  { id: 872585, title: 'Oppenheimer', media_type: 'movie', year: '2023', poster_path: '/8Gxv8gSFCU0XGDykEGv7zR1n2ua.jpg' },
-  { id: 693134, title: 'Dune: Part Two', media_type: 'movie', year: '2024', poster_path: '/1pdfLvkbY9ohJlCjQH2CZjjYVvJ.jpg' },
-  { id: 61889, title: "Marvel's Daredevil", media_type: 'tv', year: '2015', poster_path: '/QWbPaDxiB6LW2LjASknzYBvjMj.jpg' },
-  { id: 88396, title: 'Loki', media_type: 'tv', year: '2021', poster_path: '/kEl2t3OhXc3cm9hwvGuh8sqNVeb.jpg' },
-  { id: 108978, title: 'Reacher', media_type: 'tv', year: '2022', poster_path: '/j733mRndJhu3i81fO0h69Bt0a8f.jpg' },
-  { id: 113962, title: 'Special Ops: Lioness', media_type: 'tv', year: '2023', poster_path: '/eW9T8L1j5K7B6r3p1x8k7l0o5y.jpg' },
-  { id: 1396, title: 'Breaking Bad', media_type: 'tv', year: '2008', poster_path: '/ztkUQFLlC19CCMYHW9o1zWhJRNq.jpg' },
-  { id: 157336, title: 'Interstellar', media_type: 'movie', year: '2014', poster_path: '/gEU2QniE6E77NI6lCU6MxlNBvIx.jpg' },
-  { id: 155, title: 'The Dark Knight', media_type: 'movie', year: '2008', poster_path: '/qJ2tW6WMUDux911r6m7haRef0WH.jpg' },
-  { id: 27205, title: 'Inception', media_type: 'movie', year: '2010', poster_path: '/edv5CZvWj09upOsy2Y6IwDhK8bt.jpg' },
-  { id: 579974, title: 'RRR', media_type: 'movie', year: '2022', poster_path: '/nEufeZlyAOLqO2brrs0yeBEoo0R.jpg' },
-];
+// Initial Quick-Select Titles for 1-Click Access (empty by default; populated dynamically from catalog)
+const PINNED_TITLES: PinnedTitle[] = [];
 
 interface BackdropTheme {
   name: string;
@@ -273,7 +261,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
     release_date?: string;
     first_air_date?: string;
     vote_average?: number;
-  }>(PINNED_TITLES[0]);
+  } | null>(null);
 
   const [targetSearchQuery, setTargetSearchQuery] = useState('');
   const [targetSearchResults, setTargetSearchResults] = useState<TitleDetails[]>([]);
@@ -725,21 +713,9 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
     }
   }, []);
 
-  // Pre-seed known titles cache with pinned titles and mock titles
+  // Known titles cache starts clean; populated dynamically from database & TMDB lookups
   useEffect(() => {
-    const initialMap: Record<number, { title: string; poster_path?: string | null; media_type?: 'movie' | 'tv'; year?: string }> = { ...knownTitlesCache };
-    PINNED_TITLES.forEach((pt) => {
-      if (!initialMap[pt.id]) {
-        initialMap[pt.id] = { title: pt.title, poster_path: pt.poster_path, media_type: pt.media_type, year: pt.year };
-      }
-    });
-    Object.values(MOCK_TITLES).forEach((m) => {
-      if (!initialMap[m.id]) {
-        const year = (m.release_date || m.first_air_date || '').split('-')[0];
-        initialMap[m.id] = { title: m.title || m.name || `Title #${m.id}`, poster_path: m.poster_path, media_type: ((m.media_type as any) || (m.name ? 'tv' : 'movie')) as 'movie' | 'tv', year };
-      }
-    });
-    setKnownTitlesCache(initialMap);
+    // Dynamic caching only
   }, []);
 
   // Save cache helper (in-memory for speed, never triggers quota errors)
@@ -952,7 +928,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
 
   // Handle Target Title Selection
   const handleSelectTargetTitle = (item: {
-    id: number;
+    id: number | string;
     title?: string;
     name?: string;
     media_type?: string;
@@ -961,13 +937,15 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
     release_date?: string;
     first_air_date?: string;
     vote_average?: number;
+    year?: string;
   }) => {
-    const resolvedTitle = item.title || item.name || `Title #${item.id}`;
+    const numId = Number(item.id);
+    const resolvedTitle = item.title || item.name || `Title #${numId}`;
     const resolvedType = (item.media_type === 'tv' ? 'tv' : 'movie') as 'movie' | 'tv';
-    const resolvedYear = (item.release_date || item.first_air_date || '').split('-')[0];
+    const resolvedYear = item.year || (item.release_date || item.first_air_date || '').split('-')[0];
 
     const targetObj = {
-      id: item.id,
+      id: numId,
       title: resolvedTitle,
       media_type: resolvedType,
       poster_path: item.poster_path || null,
@@ -979,7 +957,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
     };
 
     setSelectedTargetTitle(targetObj);
-    cacheTitle(item.id, targetObj);
+    cacheTitle(numId, targetObj);
     setIsTargetDropdownOpen(false);
     setTargetSearchQuery('');
 
@@ -3705,24 +3683,13 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
     reader.readAsText(file);
   };
 
-  // Memoized Title Lookup Map for O(1) Instant Title Resolution across 7,000+ links
+  // Memoized Title Lookup Map for O(1) Instant Title Resolution
   const titleLookupMap = useMemo(() => {
     const map = new Map<number, { title: string; poster_path?: string | null; media_type?: 'movie' | 'tv' }>();
-    if (Array.isArray(PINNED_TITLES)) {
-      PINNED_TITLES.forEach((p) => {
+    if (Array.isArray(linkedCatalogTitles)) {
+      linkedCatalogTitles.forEach((p) => {
         if (p && p.id) {
-          map.set(p.id, { title: p.title || `Title #${p.id}`, poster_path: p.poster_path, media_type: p.media_type || 'movie' });
-        }
-      });
-    }
-    if (typeof MOCK_TITLES === 'object' && MOCK_TITLES !== null) {
-      Object.values(MOCK_TITLES).forEach((m) => {
-        if (m && m.id) {
-          map.set(m.id, {
-            title: m.title || m.name || `Title #${m.id}`,
-            poster_path: m.poster_path,
-            media_type: ((m.media_type as any) || (m.name ? 'tv' : 'movie')) as 'movie' | 'tv',
-          });
+          map.set(Number(p.id), { title: p.title || `Title #${p.id}`, poster_path: p.poster_path, media_type: (p.media_type as 'movie' | 'tv') || 'movie' });
         }
       });
     }
@@ -3989,11 +3956,6 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
     let list: LinkedCatalogTitle[] = [];
     if (linkedCatalogTitles.length > 0) {
       list = linkedCatalogTitles;
-    } else {
-      list = PINNED_TITLES.map((p) => ({
-        ...p,
-        linksCount: (customLinksMap[String(p.id)] || []).length,
-      }));
     }
     if (quickJumpSearch.trim()) {
       const q = quickJumpSearch.trim().toLowerCase();
@@ -4002,27 +3964,21 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
       ).slice(0, 16);
     }
     return list.slice(0, 16);
-  }, [linkedCatalogTitles, quickJumpSearch, customLinksMap]);
+  }, [linkedCatalogTitles, quickJumpSearch]);
 
   // Displayed titles for Manage Titles tab (combines live search or catalog)
   const displayedCatalogTitles = useMemo(() => {
     if (titleSearchQuery.trim() && manageTitlesResults.length > 0) {
       return manageTitlesResults;
     }
-    const combined: PinnedTitle[] = [...PINNED_TITLES];
-    Object.values(MOCK_TITLES).forEach((m) => {
-      if (!combined.some((c) => c.id === m.id)) {
-        combined.push({
-          id: m.id,
-          title: m.title || m.name || 'Untitled',
-          media_type: ((m.media_type as any) || (m.name ? 'tv' : 'movie')) as 'movie' | 'tv',
-          year: (m.release_date || m.first_air_date || '').split('-')[0],
-          poster_path: m.poster_path,
-        });
-      }
-    });
-    return combined;
-  }, [titleSearchQuery, manageTitlesResults]);
+    return linkedCatalogTitles.map((l) => ({
+      id: l.id,
+      title: l.title,
+      media_type: l.media_type,
+      year: l.year,
+      poster_path: l.poster_path,
+    }));
+  }, [titleSearchQuery, manageTitlesResults, linkedCatalogTitles]);
 
   // Filtered registered users for Manage Users directory tab
   const filteredRegisteredUsers = useMemo(() => {
@@ -4520,7 +4476,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                   Total Tracked Titles
                 </span>
                 <p className="text-2xl sm:text-3xl font-black text-cyan-400 my-1 truncate" suppressHydrationWarning>
-                  {isMounted ? (watchlist.length > 0 ? watchlist.length : 1) : 1}
+                  {isMounted ? watchlist.length : 0}
                 </p>
               </div>
               <span className="text-[11px] text-slate-400 font-medium">In local/cloud storage</span>
@@ -4541,11 +4497,11 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                   Total Custom Links
                 </span>
                 <p className="text-2xl sm:text-3xl font-black text-purple-400 my-1 truncate">
-                  {effectiveTotalLinks > 0 ? effectiveTotalLinks.toLocaleString() : '13,556'}
+                  {effectiveTotalLinks.toLocaleString()}
                 </p>
               </div>
               <span className="text-[11px] text-slate-400 font-medium">
-                {effectiveTotalLinks > 0 ? `${effectiveTotalLinks.toLocaleString()} in Supabase Database` : 'Synced in cloud database'}
+                {effectiveTotalLinks > 0 ? `${effectiveTotalLinks.toLocaleString()} in Supabase Database` : '0 in database'}
               </span>
               {/* Bottom-right purple wave */}
               <svg className="absolute -bottom-1 -right-1 w-24 h-12 pointer-events-none opacity-40" viewBox="0 0 100 50" fill="none">
@@ -4668,7 +4624,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                 <h3 className="text-sm font-black text-white uppercase tracking-wider flex flex-wrap items-center gap-2">
                   <LayoutGrid className="w-4 h-4 text-cyan-400 shrink-0" /> Quick Title Jump & Manage
                   <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 font-mono font-bold">
-                    {linkedTitlesTotal > 0 ? `${linkedTitlesTotal} Linked` : 'Catalog'}
+                    {linkedTitlesTotal > 0 ? `${linkedTitlesTotal} Linked` : '0 Linked'}
                   </span>
                 </h3>
               </div>
@@ -4696,57 +4652,67 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                   onClick={() => setActiveTab('titles')}
                   className="text-xs text-amber-400 font-bold hover:underline cursor-pointer shrink-0"
                 >
-                  View All Titles ({linkedTitlesTotal || 394}) →
+                  View All Titles ({linkedTitlesTotal}) →
                 </button>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-              {displayedQuickJumpTitles.map((pt) => (
-                <button
-                  key={`${pt.media_type}-${pt.id}`}
-                  type="button"
-                  onClick={() => openTitleManager(pt, 'view')}
-                  className="p-2.5 rounded-xl bg-slate-900/60 border border-white/5 hover:border-cyan-500/40 flex items-center gap-3 transition-all text-left group cursor-pointer hover:bg-slate-900/90"
-                  title={`Click to manage links for ${pt.title}`}
-                >
-                  {/* Short Poster with Reliable Fallback */}
-                  <div className="w-10 h-14 rounded-lg bg-slate-800 relative overflow-hidden shrink-0 border border-white/10 shadow-sm flex items-center justify-center">
-                    <img
-                      src={getImageURL(pt.poster_path, 'w200')}
-                      alt={pt.title}
-                      onError={(e) => {
-                        e.currentTarget.onerror = null;
-                        e.currentTarget.src = '/placeholder-poster.svg';
-                      }}
-                      className="w-full h-full object-cover"
-                      loading="lazy"
-                    />
-                  </div>
-                  <div className="overflow-hidden flex-1 min-w-0 space-y-1">
-                    <span className="text-xs font-bold text-white group-hover:text-cyan-300 truncate block">
-                      {pt.title}
-                    </span>
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className={`px-1.5 py-0.2 rounded font-mono text-[9px] font-black ${
-                        pt.media_type === 'tv' ? 'bg-sky-500/20 text-sky-300' : 'bg-amber-500/20 text-amber-300'
-                      }`}>
-                        {pt.media_type.toUpperCase()}
-                      </span>
-                      {pt.year && (
-                        <span className="text-[10px] text-slate-400 font-mono">• {pt.year}</span>
-                      )}
-                      {typeof pt.linksCount === 'number' && pt.linksCount > 0 && (
-                        <span className="text-[9px] font-bold text-emerald-400 px-1.5 py-0.2 rounded bg-emerald-500/10 border border-emerald-500/20 font-mono">
-                          🔥 {pt.linksCount}
-                        </span>
-                      )}
+            {displayedQuickJumpTitles.length > 0 ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                {displayedQuickJumpTitles.map((pt) => (
+                  <button
+                    key={`${pt.media_type}-${pt.id}`}
+                    type="button"
+                    onClick={() => openTitleManager(pt, 'view')}
+                    className="p-2.5 rounded-xl bg-slate-900/60 border border-white/5 hover:border-cyan-500/40 flex items-center gap-3 transition-all text-left group cursor-pointer hover:bg-slate-900/90"
+                    title={`Click to manage links for ${pt.title}`}
+                  >
+                    {/* Short Poster with Reliable Fallback */}
+                    <div className="w-10 h-14 rounded-lg bg-slate-800 relative overflow-hidden shrink-0 border border-white/10 shadow-sm flex items-center justify-center">
+                      <img
+                        src={getImageURL(pt.poster_path, 'w200')}
+                        alt={pt.title}
+                        onError={(e) => {
+                          e.currentTarget.onerror = null;
+                          e.currentTarget.src = '/placeholder-poster.svg';
+                        }}
+                        className="w-full h-full object-cover"
+                        loading="lazy"
+                      />
                     </div>
-                  </div>
-                  <ChevronRight className="w-4 h-4 text-slate-600 group-hover:text-cyan-400 transition-colors shrink-0" />
-                </button>
-              ))}
-            </div>
+                    <div className="overflow-hidden flex-1 min-w-0 space-y-1">
+                      <span className="text-xs font-bold text-white group-hover:text-cyan-300 truncate block">
+                        {pt.title}
+                      </span>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className={`px-1.5 py-0.2 rounded font-mono text-[9px] font-black ${
+                          pt.media_type === 'tv' ? 'bg-sky-500/20 text-sky-300' : 'bg-amber-500/20 text-amber-300'
+                        }`}>
+                          {pt.media_type.toUpperCase()}
+                        </span>
+                        {pt.year && (
+                          <span className="text-[10px] text-slate-400 font-mono">• {pt.year}</span>
+                        )}
+                        {typeof pt.linksCount === 'number' && pt.linksCount > 0 && (
+                          <span className="text-[9px] font-bold text-emerald-400 px-1.5 py-0.2 rounded bg-emerald-500/10 border border-emerald-500/20 font-mono">
+                            🔥 {pt.linksCount}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-slate-600 group-hover:text-cyan-400 transition-colors shrink-0" />
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="py-12 text-center rounded-2xl bg-slate-900/40 border border-white/5 space-y-2">
+                <LayoutGrid className="w-8 h-8 text-slate-600 mx-auto" />
+                <p className="text-sm font-bold text-slate-300">No Titles in Catalog</p>
+                <p className="text-xs text-slate-500 max-w-sm mx-auto">
+                  All titles and custom links have been cleared. Upload or add new links from the Links Management tab.
+                </p>
+              </div>
+            )}
           </div>
 
           {/* Bottom Status Bar */}
@@ -5007,29 +4973,43 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                       </div>
                     ) : (
                       <div className="p-3">
-                        <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block px-2 pb-2">
-                          Popular / Quick Pinned Titles:
-                        </span>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                          {PINNED_TITLES.map((pt) => (
-                            <button
-                              key={pt.id}
-                              type="button"
-                              onClick={() => handleSelectTargetTitle(pt)}
-                              className="flex items-center gap-2 p-2 rounded-xl hover:bg-zinc-800 transition-colors text-left"
-                            >
-                              <div className="w-7 h-9 rounded bg-zinc-800 relative overflow-hidden shrink-0">
-                                {pt.poster_path && (
-                                  <Image src={getImageURL(pt.poster_path, 'w200')} alt={pt.title} fill className="object-cover" sizes="28px" />
-                                )}
-                              </div>
-                              <div className="overflow-hidden">
-                                <span className="text-xs font-bold text-white block truncate">{pt.title}</span>
-                                <span className="text-[9px] text-zinc-400 font-mono">{pt.media_type.toUpperCase()} • {pt.year}</span>
-                              </div>
-                            </button>
-                          ))}
-                        </div>
+                        {linkedCatalogTitles.length > 0 ? (
+                          <>
+                            <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block px-2 pb-2">
+                              Recently Linked Titles in Database:
+                            </span>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                              {linkedCatalogTitles.slice(0, 8).map((pt) => (
+                                <button
+                                  key={`${pt.media_type}-${pt.id}`}
+                                  type="button"
+                                  onClick={() => handleSelectTargetTitle(pt)}
+                                  className="flex items-center gap-2 p-2 rounded-xl hover:bg-zinc-800 transition-colors text-left"
+                                >
+                                  <div className="w-7 h-9 rounded bg-zinc-800 relative overflow-hidden shrink-0">
+                                    {pt.poster_path && (
+                                      <Image src={getImageURL(pt.poster_path, 'w200')} alt={pt.title} fill className="object-cover" sizes="28px" />
+                                    )}
+                                  </div>
+                                  <div className="overflow-hidden">
+                                    <span className="text-xs font-bold text-white block truncate">{pt.title}</span>
+                                    <span className="text-[9px] text-zinc-400 font-mono">{(pt.media_type || 'movie').toUpperCase()}{pt.year ? ` • ${pt.year}` : ''}</span>
+                                  </div>
+                                </button>
+                              ))}
+                            </div>
+                          </>
+                        ) : (
+                          <div className="py-6 text-center space-y-1">
+                            <Film className="w-5 h-5 text-zinc-600 mx-auto" />
+                            <span className="text-xs font-bold text-zinc-300 block">
+                              No titles linked in database
+                            </span>
+                            <p className="text-[11px] text-zinc-500 max-w-xs mx-auto">
+                              Search above by title name or TMDB ID to select a movie or show to attach links to.
+                            </p>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -5037,23 +5017,25 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
               </div>
 
               {/* Quick Suggestion Pills */}
-              <div className="flex flex-wrap items-center gap-1.5 pt-1">
-                <span className="text-[10px] text-zinc-500 font-semibold">Quick pick:</span>
-                {PINNED_TITLES.map((pt) => (
-                  <button
-                    key={pt.id}
-                    type="button"
-                    onClick={() => handleSelectTargetTitle(pt)}
-                    className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all ${
-                      selectedTargetTitle?.id === pt.id
-                        ? 'bg-amber-500 text-black shadow-sm'
-                        : 'bg-zinc-900 text-zinc-400 hover:text-white border border-zinc-800'
-                    }`}
-                  >
-                    {pt.title} ({pt.id})
-                  </button>
-                ))}
-              </div>
+              {linkedCatalogTitles.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                  <span className="text-[10px] text-zinc-500 font-semibold">Quick pick:</span>
+                  {linkedCatalogTitles.slice(0, 8).map((pt) => (
+                    <button
+                      key={`${pt.media_type}-${pt.id}`}
+                      type="button"
+                      onClick={() => handleSelectTargetTitle(pt)}
+                      className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all ${
+                        selectedTargetTitle?.id === pt.id
+                          ? 'bg-amber-500 text-black shadow-sm'
+                          : 'bg-zinc-900 text-zinc-400 hover:text-white border border-zinc-800'
+                      }`}
+                    >
+                      {pt.title} ({pt.id})
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* VIEW A: SINGLE LINK FORM */}
@@ -5266,8 +5248,8 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                   <label className="text-xs font-bold text-zinc-300 block flex items-center justify-between">
                     <span>
                       {adminBulkMediaType === 'movie'
-                        ? `2. Paste Multiple Movie Links / Releases for "${selectedTargetTitle?.title}":`
-                        : `2. Paste Multiple Episode & Zip Pack Links for "${selectedTargetTitle?.title}":`}
+                        ? `2. Paste Multiple Movie Links / Releases for "${selectedTargetTitle?.title || 'Selected Title'}":`
+                        : `2. Paste Multiple Episode & Zip Pack Links for "${selectedTargetTitle?.title || 'Selected Title'}":`}
                     </span>
                     <span className="text-[10px] text-amber-400 font-mono">
                       {adminBulkMediaType === 'movie'
@@ -5279,8 +5261,8 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                     rows={6}
                     placeholder={
                       adminBulkMediaType === 'movie'
-                        ? `Paste multiple movie release lines or download URLs at once! Examples:\n${selectedTargetTitle?.title} 2160p UHD BluRay HEVC TrueHD Atmos 7.1 [Hindi DDP 5.1 + English] [24.5 GB] - https://hubcloud.cx/drive/movie4k\n${selectedTargetTitle?.title} 1080p FHD BluRay x264 [Hindi + English 5.1] [10.2 GB] - https://gdflix.dev/file/movie1080\n${selectedTargetTitle?.title} 720p HD WEB-DL [Hindi Dubbed] [2.1 GB] - https://mnmcloud.fun/files/movie720`
-                        : `Paste multiple release lines or download URLs at once! Examples:\n${selectedTargetTitle?.title} S01E01 2160p WEB-DL Hindi DDP 5.1 [6.36 GB] - https://hubcloud.foo/video/1...\n${selectedTargetTitle?.title} S01E02 2160p WEB-DL Hindi DDP 5.1 [6.28 GB] - https://hubcloud.foo/video/2...\n${selectedTargetTitle?.title} S01 Complete 2160p UHD BluRay DV HDR [Hindi DDP 5.1 + English Atmos].zip https://mega.nz/file/3...`
+                        ? `Paste multiple movie release lines or download URLs at once! Examples:\n${selectedTargetTitle?.title || 'Movie Name'} 2160p UHD BluRay HEVC TrueHD Atmos 7.1 [Hindi DDP 5.1 + English] [24.5 GB] - https://hubcloud.cx/drive/movie4k\n${selectedTargetTitle?.title || 'Movie Name'} 1080p FHD BluRay x264 [Hindi + English 5.1] [10.2 GB] - https://gdflix.dev/file/movie1080\n${selectedTargetTitle?.title || 'Movie Name'} 720p HD WEB-DL [Hindi Dubbed] [2.1 GB] - https://mnmcloud.fun/files/movie720`
+                        : `Paste multiple release lines or download URLs at once! Examples:\n${selectedTargetTitle?.title || 'Series Name'} S01E01 2160p WEB-DL Hindi DDP 5.1 [6.36 GB] - https://hubcloud.foo/video/1...\n${selectedTargetTitle?.title || 'Series Name'} S01E02 2160p WEB-DL Hindi DDP 5.1 [6.28 GB] - https://hubcloud.foo/video/2...\n${selectedTargetTitle?.title || 'Series Name'} S01 Complete 2160p UHD BluRay DV HDR [Hindi DDP 5.1 + English Atmos].zip https://mega.nz/file/3...`
                     }
                     value={adminBulkRawText}
                     onChange={(e) => setAdminBulkRawText(e.target.value)}
@@ -5370,7 +5352,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                           className="px-5 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-black font-black text-xs transition-all shadow-lg hover:scale-105 flex items-center gap-1.5 ml-2"
                         >
                           <ListPlus className="w-4 h-4" />
-                          <span>🚀 Import All ({adminBulkParsedItems.length}) {adminBulkMediaType === 'movie' ? 'Movie' : ''} Links to {selectedTargetTitle?.title}</span>
+                          <span>🚀 Import All ({adminBulkParsedItems.length}) {adminBulkMediaType === 'movie' ? 'Movie' : ''} Links to {selectedTargetTitle?.title || 'Title'}</span>
                         </button>
                       </div>
                     </div>
@@ -6199,7 +6181,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                   <Film className="w-5 h-5 text-amber-400" /> Linked Titles Hub & Media Manager
                 </h3>
                 <p className="text-xs text-zinc-400 max-w-2xl leading-relaxed">
-                  Browse all <strong className="text-amber-400">{linkedTitlesTotal > 0 ? linkedTitlesTotal : '394+'}</strong> movies & TV series currently linked in your database. Click any title to inspect active links, delete links, or batch-replace the entire link set in 1 click.
+                  Browse all <strong className="text-amber-400">{linkedTitlesTotal}</strong> movies & TV series currently linked in your database. Click any title to inspect active links, delete links, or batch-replace the entire link set in 1 click.
                 </p>
               </div>
 
@@ -6216,7 +6198,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                     }`}
                   >
                     <Database className="w-3.5 h-3.5" />
-                    <span>Linked in Database ({linkedTitlesTotal || 394})</span>
+                    <span>Linked in Database ({linkedTitlesTotal})</span>
                   </button>
 
                   <button
@@ -6300,7 +6282,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                           : 'bg-zinc-900 text-zinc-400 hover:text-white border border-zinc-800'
                       }`}
                     >
-                      All ({linkedTitlesTotal || 394})
+                      All ({linkedTitlesTotal})
                     </button>
 
                     <button
@@ -6541,7 +6523,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                   {displayedCatalogTitles.map((t) => {
                     const poster = getImageURL(t.poster_path, 'w200');
-                    const linksCount = (customLinksMap[String(t.id)] || []).length + (BUILTIN_CURATED_LINKS[t.id] || []).length;
+                    const linksCount = (customLinksMap[String(t.id)] || []).length + (BUILTIN_CURATED_LINKS[Number(t.id)] || []).length;
                     const titleText = t.title || (t as any).name || 'Title';
                     const mediaType = t.media_type || ((t as any).name ? 'tv' : 'movie');
                     const yearText = (t as any).year || ((t as any).release_date || (t as any).first_air_date || '').split('-')[0];
