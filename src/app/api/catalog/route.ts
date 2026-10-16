@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
       ...result,
     });
     response.headers.set('X-Cache', isCacheHit ? 'HIT' : 'MISS');
-    response.headers.set('Cache-Control', 'public, s-maxage=180, stale-while-revalidate=86400');
+    response.headers.set('Cache-Control', 'no-cache, no-store, must-revalidate');
     return response;
   } catch (err: any) {
     console.error('Error in /api/catalog:', err);

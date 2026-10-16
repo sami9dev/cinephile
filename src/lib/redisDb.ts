@@ -317,9 +317,11 @@ export async function getLinksFromDatabase(
 
   // Fallback to local
   if (movieId) {
-    return { links: localData[String(movieId)] || [], source: 'local_json' };
+    const list = localData[String(movieId)] || [];
+    return { links: list, total: list.length, source: 'local_json' };
   }
-  return { allLinks: localData, source: 'local_json' };
+  const totalCount = Object.values(localData).reduce((acc, arr) => acc + (Array.isArray(arr) ? arr.length : 0), 0);
+  return { allLinks: localData, total: totalCount, source: 'local_json' };
 }
 
 /**
@@ -331,7 +333,8 @@ async function proxyMutationToUpstream(method: 'POST' | 'DELETE', path: string, 
   const isCloudflare = typeof (globalThis as any).WebSocketPair !== 'undefined' || getEnv('WORKER_NAME');
   if (!isCloudflare) return false;
 
-  const upstreamBase = getEnv('UPSTREAM_API_URL') || 'https://cinephile-app.vercel.app';
+  const upstreamBase = getEnv('UPSTREAM_API_URL');
+  if (!upstreamBase) return false;
   const adminSecret = (getEnv('ADMIN_SECRET_KEY') || getEnv('ADMIN_PASSWORD') || '').trim();
   if (!adminSecret) return false;
   const adminUser = (getEnv('ADMIN_USER') || getEnv('ADMIN_USERNAME') || 'admin').trim();
@@ -1657,51 +1660,7 @@ export async function getPaginatedUploadedTitles(
   }
 
   const queryPromise = (async (): Promise<PaginatedUploadedResult> => {
-    // 2.5 Cloudflare Worker Edge Proxy Fallback:
-    // When executing inside Cloudflare Workers, fetch from primary Node.js production deployment with 3.5s timeout
-    const isCloudflare = typeof (globalThis as any).WebSocketPair !== 'undefined' || getEnv('WORKER_NAME');
-    if (isCloudflare) {
-      try {
-        const queryParams = new URLSearchParams();
-        if (type && type !== 'all') queryParams.set('type', type);
-        if (safePage > 1) queryParams.set('page', String(safePage));
-        queryParams.set('limit', String(safeLimit));
-        if (quality) queryParams.set('quality', quality);
-        if (category) queryParams.set('category', category);
-        if (audio) queryParams.set('audio', audio);
-        if (ott) queryParams.set('ott', ott);
-        if (options.genre) queryParams.set('genre', String(options.genre));
-        if (options.sort) queryParams.set('sort', String(options.sort));
-        if (query) queryParams.set('q', query);
-
-        const upstreamUrl = `https://cinephile-app.vercel.app/api/catalog?${queryParams.toString()}`;
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 3500);
-        let res: Response | null = null;
-        try {
-          res = await fetch(upstreamUrl, {
-            signal: controller.signal,
-            headers: { 'User-Agent': 'Cloudflare-Worker-CineFuel' },
-          });
-        } finally {
-          clearTimeout(timeoutId);
-        }
-        if (res && res.ok) {
-          const remoteJson: any = await res.json();
-          if (remoteJson && Array.isArray(remoteJson.items)) {
-            const { success, source, ...cleanResult } = remoteJson;
-            if (redisClient && cleanResult.items.length > 0) {
-              await redisClient.set(cacheKey, JSON.stringify(cleanResult), { ex: CATALOG_CACHE_TTL_SECONDS }).catch(() => {});
-            }
-            return { ...cleanResult, source: 'cache' as any };
-          }
-        }
-      } catch (upstreamErr: any) {
-        console.warn('Cloudflare upstream catalog sync error:', upstreamErr.message);
-      }
-    }
-
-    // 3. Database-Level Query on Supabase
+    // 1. Database-Level Query on Supabase
     try {
       const supabase = getSupabaseAdminClient();
       if (supabase) {

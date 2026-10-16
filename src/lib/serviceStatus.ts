@@ -758,10 +758,11 @@ export async function checkVercelService(): Promise<ServiceCheckItem> {
     });
   }
 
-  const upstreamUrl = (getEnv('UPSTREAM_API_URL') || 'https://cinephile-app.vercel.app').replace(
-    /\/+$/,
-    ''
-  );
+  const upstreamUrl = (
+    getEnv('UPSTREAM_API_URL') ||
+    getEnv('NEXT_PUBLIC_SITE_URL') ||
+    'https://cinephile.sk6216071.workers.dev'
+  ).replace(/\/+$/, '');
   const start = Date.now();
   try {
     const res = await fetchWithTimeout(`${upstreamUrl}/robots.txt`);

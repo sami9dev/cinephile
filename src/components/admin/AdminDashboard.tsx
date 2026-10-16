@@ -632,6 +632,10 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
             const data = await res.json();
             if (typeof data.total === 'number') {
               setTotalServerLinksCount(data.total);
+              if (data.total === 0) {
+                safeRemoveLocalStorage('cinefuel_custom_links');
+                setCustomLinksMap({});
+              }
             }
             if (data && data.allLinks && typeof data.allLinks === 'object' && !Array.isArray(data.allLinks)) {
               const currentDeleted = getDeletedLinkIds();
