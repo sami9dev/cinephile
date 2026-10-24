@@ -143,6 +143,15 @@ export async function POST(request: NextRequest) {
   try {
     const update = await request.json();
 
+    // Idempotency check: prevent duplicate execution if Telegram retries webhook
+    if (update.update_id) {
+      const { recordTelegramUpdateId } = await import('@/lib/supabaseDb');
+      const isNew = await recordTelegramUpdateId(update.update_id, update.message?.chat?.id);
+      if (!isNew) {
+        return NextResponse.json({ ok: true, note: 'Duplicate update ignored (idempotent)' });
+      }
+    }
+
     const message = update.message || update.edited_message;
     if (!message || !message.text) {
       return NextResponse.json({ ok: true, note: 'No text message' });

@@ -3,7 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import dns from 'dns';
 import { Redis } from '@upstash/redis';
-import { MongoClient } from 'mongodb';
+import { createClient } from '@supabase/supabase-js';
 import http from 'http';
 import { parseReleaseDetails, formatTelegramReleaseSummary } from '../src/lib/releaseParser.ts';
 import { resolveCanonicalMedia } from '../src/lib/canonicalMedia.ts';
@@ -58,31 +58,27 @@ const DATA_FILE = path.join(rootDir, 'src', 'data', 'serverLinks.json');
 
 const REDIS_URL = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
 const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
-const MONGODB_URI = process.env.MONGODB_URI;
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
 
-let redisClient = null;
-if (REDIS_URL && REDIS_TOKEN) {
+let supabaseClient = null;
+if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
   try {
-    redisClient = new Redis({ url: REDIS_URL, token: REDIS_TOKEN });
-    console.log('⚡ Upstash Redis Cloud Database Connected!');
+    supabaseClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    console.log('⚡ Supabase Database Connected (Service Role)!');
   } catch (e) {
-    console.warn('Upstash Redis init warning:', e.message);
+    console.warn('Supabase init warning:', e.message);
   }
 }
 
-let mongoDb = null;
-if (MONGODB_URI) {
-  try {
-    const mongoClient = new MongoClient(MONGODB_URI);
-    mongoClient.connect().then(() => {
-      mongoDb = mongoClient.db('cinefuel');
-      console.log('🍃 MongoDB Atlas Database Connected!');
-    }).catch(err => {
-      console.warn('MongoDB Atlas connection error:', err.message);
-    });
-  } catch (e) {
-    console.warn('MongoDB Atlas client init error:', e.message);
-  }
+// Strictly validates that movieId is a genuine TMDB ID (1-7 digits)
+// and rejects unmapped 8+ digit raw numeric IMDb IDs (e.g. 17024450)
+export function isValidTmdbId(id) {
+  if (!id) return false;
+  const str = String(id).trim();
+  return /^\d{1,7}$/.test(str);
 }
 
 // Authorized Admin IDs (Shyam)
@@ -797,28 +793,50 @@ async function saveMultipleLinks(linksByMovieId) {
     }));
   }
 
-  // 3. MongoDB Atlas Cloud save (if configured)
-  if (mongoDb) {
+  // 3. Supabase Cloud save
+  if (supabaseClient) {
     try {
-      const collection = mongoDb.collection('links');
-      const operations = [];
+      const allRows = [];
       for (const [movieId, newLinks] of Object.entries(linksByMovieId)) {
-        for (const link of newLinks) {
-          operations.push({
-            updateOne: {
-              filter: { movieId: String(movieId), url: link.url },
-              update: { $set: { ...link, movieId: String(movieId), updatedAt: new Date() } },
-              upsert: true,
-            },
+        for (const l of newLinks) {
+          allRows.push({
+            id: l.id,
+            movie_id: String(movieId).trim(),
+            title: l.title,
+            movie_title: l.movieTitle || null,
+            url: l.url,
+            category: l.category || 'Download',
+            quality: l.quality || null,
+            codec: l.codec || null,
+            audio_language: l.audioLanguage || null,
+            size: l.size || null,
+            link_type: l.linkType || 'general',
+            season_number: l.seasonNumber !== undefined ? Number(l.seasonNumber) : null,
+            episode_number: l.episodeNumber !== undefined ? Number(l.episodeNumber) : null,
+            server_name: l.serverName || null,
+            server_badge: l.serverBadge || null,
+            media_type: l.mediaType || 'movie',
+            release_date: l.releaseDate || null,
+            poster_path: l.posterPath || null,
+            backdrop_path: l.backdropPath || null,
+            vote_average: l.voteAverage !== undefined ? Number(l.voteAverage) : null,
+            created_at: l.createdAt || new Date().toISOString(),
+            updated_at: new Date().toISOString(),
           });
         }
       }
-      if (operations.length > 0) {
-        await collection.bulkWrite(operations);
-        console.log(`🍃 Synced to MongoDB Atlas: (${operations.length} links)`);
+      if (allRows.length > 0) {
+        const { error: sbErr } = await supabaseClient
+          .from('links')
+          .upsert(allRows, { onConflict: 'movie_id,url' });
+        if (sbErr) {
+          console.warn('Supabase batch link upsert warning:', sbErr.message);
+        } else {
+          console.log(`🗄️ Synced to Supabase: (${allRows.length} links across ${Object.keys(linksByMovieId).length} titles)`);
+        }
       }
-    } catch (mongoErr) {
-      console.warn('MongoDB Atlas batch sync warning:', mongoErr.message);
+    } catch (sbErr) {
+      console.warn('Supabase batch sync error:', sbErr.message);
     }
   }
 
@@ -2535,7 +2553,19 @@ CineFuel Auto-Uploader is online! Send any movie or TV series link with details 
     const mediaType = isTv ? 'tv' : 'movie';
     const officialTitle = tmdbItem.title || tmdbItem.name || meta.titleQuery;
     const releaseDate = tmdbItem.release_date || tmdbItem.first_air_date || '';
-    const releaseYear = releaseDate ? releaseDate.slice(0, 4) : (meta.year ? String(meta.year) : '');
+    if (!isValidTmdbId(tmdbItem.id)) {
+      console.warn(`🛑 Quarantining release due to invalid or unmapped numeric IMDb ID: "${tmdbItem.id}"`);
+      quarantinedItems.push({
+        reason: 'invalid_numeric_tmdb_id',
+        titleQuery: meta.titleQuery,
+        url: meta.url,
+        telegramMessageId: msg?.message_id,
+        telegramChatId: chatId,
+        createdAt: new Date().toISOString(),
+      });
+      continue;
+    }
+
     const movieId = tmdbItem.id;
 
     let displayTitle = '';
@@ -2952,6 +2982,13 @@ async function main() {
   pollUpdates();
 }
 
-main();
+// Only auto-start when invoked directly from command line (not when imported)
+const isDirectRun = process.argv[1] && (
+  fileURLToPath(import.meta.url) === path.resolve(process.argv[1]) ||
+  process.argv[1].endsWith('telegramBot.mjs')
+);
+if (isDirectRun) {
+  main();
+}
 
 

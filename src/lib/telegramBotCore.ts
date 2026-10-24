@@ -455,9 +455,16 @@ Failed to write link to the CineFuel database. Please check server logs.`,
     modeBadge = `🎬 Single Episode (Season ${meta.seasonNumber}, Ep ${meta.episodeNumber || 1}) (${forcedMode ? 'Command' : 'Auto-Sensed'})`;
   }
 
-  const photoUrl = tmdbItem.backdrop_path 
-    ? `https://image.tmdb.org/t/p/w780${tmdbItem.backdrop_path}`
-    : (tmdbItem.poster_path ? `https://image.tmdb.org/t/p/w780${tmdbItem.poster_path}` : null);
+  const formatTmdbImageUrl = (pathStr?: string | null, size: 'w500' | 'w780' = 'w780') => {
+    if (!pathStr || typeof pathStr !== 'string') return null;
+    const clean = pathStr.trim();
+    if (!clean) return null;
+    if (clean.startsWith('http://') || clean.startsWith('https://')) return clean;
+    const slash = clean.startsWith('/') ? '' : '/';
+    return `https://image.tmdb.org/t/p/${size}${slash}${clean}`;
+  };
+
+  const photoUrl = formatTmdbImageUrl(tmdbItem.backdrop_path, 'w780') || formatTmdbImageUrl(tmdbItem.poster_path, 'w500') || null;
   const rating = tmdbItem.vote_average ? Number(tmdbItem.vote_average).toFixed(1) : '6.5';
   const genreList = Array.isArray(tmdbItem.genres)
     ? tmdbItem.genres.map((g: any) => g.name).filter(Boolean).join(', ')

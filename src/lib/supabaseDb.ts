@@ -1,5 +1,5 @@
-import { getSupabaseAdminClient } from '@/lib/supabase';
-import { CustomLink } from '@/types';
+import { getSupabaseAdminClient } from './supabase.ts';
+import type { CustomLink } from '../types';
 
 // Map CustomLink from Cinephile application schema to Supabase snake_case row
 export function mapLinkToSupabaseRow(movieId: string | number, link: CustomLink, metadata?: any) {
@@ -67,17 +67,26 @@ export function mapSupabaseRowToLink(row: any): CustomLink {
 
 /**
  * Fetch links for a specific title from Supabase.
+ * Supports filtering by mediaType ('movie' | 'tv') to prevent ID collision across namespaces.
  */
-export async function getLinksFromSupabase(movieId: string | number): Promise<CustomLink[] | null> {
+export async function getLinksFromSupabase(
+  movieId: string | number,
+  mediaType?: 'movie' | 'tv'
+): Promise<CustomLink[] | null> {
   const supabase = getSupabaseAdminClient();
   if (!supabase) return null;
 
   const mId = String(movieId).trim();
-  const { data, error } = await supabase
+  let query = supabase
     .from('links')
     .select('*')
-    .eq('movie_id', mId)
-    .order('created_at', { ascending: false });
+    .eq('movie_id', mId);
+
+  if (mediaType) {
+    query = query.eq('media_type', mediaType);
+  }
+
+  const { data, error } = await query.order('created_at', { ascending: false });
 
   if (error) {
     console.error('Supabase getLinksFromSupabase error:', error.message);
@@ -89,19 +98,25 @@ export async function getLinksFromSupabase(movieId: string | number): Promise<Cu
 
 /**
  * Save or update a single link in Supabase.
+ * Conflicts on (movie_id, url) to prevent duplicate links for the same title.
  */
 export async function saveLinkToSupabase(movieId: string | number, link: CustomLink, metadata?: any): Promise<boolean> {
   const supabase = getSupabaseAdminClient();
   if (!supabase) return false;
 
   const row = mapLinkToSupabaseRow(movieId, link, metadata);
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('links')
-    .upsert(row, { onConflict: 'id' });
+    .upsert(row, { onConflict: 'movie_id,url' })
+    .select('id');
 
   if (error) {
     console.error('Supabase saveLinkToSupabase error:', error.message);
     throw new Error(`Supabase write error: ${error.message}`);
+  }
+
+  if (!data || data.length === 0) {
+    throw new Error('Supabase write error: 0 rows affected (RLS policy may be blocking write)');
   }
 
   return true;
@@ -109,6 +124,7 @@ export async function saveLinkToSupabase(movieId: string | number, link: CustomL
 
 /**
  * Bulk insert or upsert links into Supabase.
+ * Conflicts on (movie_id, url) to prevent duplicate links for the same title.
  */
 export async function saveMultipleLinksToSupabase(
   movieId: string | number,
@@ -119,9 +135,10 @@ export async function saveMultipleLinksToSupabase(
   if (!supabase) return false;
 
   const rows = links.map((l) => mapLinkToSupabaseRow(movieId, l, metadata));
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('links')
-    .upsert(rows, { onConflict: 'id' });
+    .upsert(rows, { onConflict: 'movie_id,url' })
+    .select('id');
 
   if (error) {
     console.error('Supabase saveMultipleLinksToSupabase error:', error.message);
@@ -132,7 +149,7 @@ export async function saveMultipleLinksToSupabase(
 }
 
 /**
- * Atomically replace all links for a title in Supabase.
+ * Atomically replace all links for a title in Supabase via Postgres RPC.
  */
 export async function replaceAllLinksForTitleInSupabase(
   movieId: string | number,
@@ -143,31 +160,38 @@ export async function replaceAllLinksForTitleInSupabase(
   if (!supabase) return false;
 
   const mId = String(movieId).trim();
+  const rows = links.map((l) => mapLinkToSupabaseRow(mId, l, metadata));
 
-  // 1. Delete existing links for this movie_id
-  const { error: delError } = await supabase
-    .from('links')
-    .delete()
-    .eq('movie_id', mId);
+  const { error: rpcError } = await supabase.rpc('replace_title_links', {
+    p_movie_id: mId,
+    p_links: rows,
+  });
 
-  if (delError) {
-    console.error('Supabase delete error in replaceAllLinksForTitleInSupabase:', delError.message);
-    throw new Error(`Supabase replace delete failed: ${delError.message}`);
+  if (rpcError) {
+    console.error('Supabase replace_title_links RPC error:', rpcError.message);
+    throw new Error(`Atomic title replacement failed: ${rpcError.message}`);
   }
 
-  // 2. Insert new links if any
-  if (links.length > 0) {
-    const rows = links.map((l) => mapLinkToSupabaseRow(mId, l, metadata));
-    const { error: insError } = await supabase
-      .from('links')
-      .insert(rows);
+  return true;
+}
 
-    if (insError) {
-      console.error('Supabase insert error in replaceAllLinksForTitleInSupabase:', insError.message);
-      throw new Error(`Supabase replace insert failed: ${insError.message}`);
+/**
+ * Idempotency check for Telegram updates. Returns true if update is new, false if already processed.
+ */
+export async function recordTelegramUpdateId(updateId: number, chatId?: number): Promise<boolean> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase || !updateId) return true;
+
+  const { error } = await supabase
+    .from('processed_updates')
+    .insert({ update_id: updateId, chat_id: chatId || null });
+
+  if (error) {
+    if (error.code === '23505' || error.message?.includes('duplicate key') || error.message?.includes('unique constraint')) {
+      return false; // Duplicate update
     }
+    console.warn('processed_updates check warning:', error.message);
   }
-
   return true;
 }
 

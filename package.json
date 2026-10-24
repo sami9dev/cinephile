@@ -11,7 +11,7 @@
     "deploy": "npx wrangler pages deploy"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.117.3",
+    "@supabase/supabase-js": "2.117.3",
     "@upstash/redis": "^1.38.4",
     "clsx": "^2.1.1",
     "firebase": "^12.18.0",

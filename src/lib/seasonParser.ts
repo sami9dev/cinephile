@@ -1,5 +1,5 @@
-import { CustomLink } from '@/types';
-import { parseReleaseDetails } from './releaseParser';
+import type { CustomLink } from '../types';
+import { parseReleaseDetails } from './releaseParser.ts';
 
 export interface ParsedMediaMeta {
   seasonNumber: number;
@@ -160,8 +160,13 @@ export function detectEpisodeNumber(link: { title?: string; episodeNumber?: numb
 
   if (!text) return undefined;
 
+  // Protect audio channel numbers and video codecs so '5.1] x264' is never matched as Season 1, Episode 264
+  const safeText = text
+    .replace(/\b([1-9])\.([0-2])\b/g, ' audio_$1_$2 ')
+    .replace(/\bx(264|265|266)\b/gi, ' codec_x$1 ');
+
   // 1. Check patterns like 1x05, 01x13, 10x12 (Season x Episode)
-  const xMatch = text.match(/(?:^|[\s._\-[\]()])[1-9]\d{0,1}x0*([1-9]\d{0,2})(?:[\s._\-[\]()]|\b)(?!(?:264|265|266|vid)\b)/i);
+  const xMatch = safeText.match(/(?:^|[\s._\-[\]()])[1-9]\d{0,1}x0*([1-9]\d{0,2})(?:[\s._\-[\]()]|\b)(?!(?:264|265|266|vid)\b)/i);
   if (xMatch && xMatch[1]) {
     const candidate = parseInt(xMatch[1], 10);
     if (![264, 265, 266].includes(candidate)) {

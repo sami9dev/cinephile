@@ -1,5 +1,5 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { getEnv } from '@/lib/env';
+import { getEnv } from './env.ts';
 
 let supabaseAdminClient: SupabaseClient | null = null;
 let supabasePublicClient: SupabaseClient | null = null;
@@ -11,7 +11,7 @@ let supabasePublicClient: SupabaseClient | null = null;
  */
 export function getSupabaseAdminClient(): SupabaseClient | null {
   const url = getEnv('NEXT_PUBLIC_SUPABASE_URL') || getEnv('SUPABASE_URL');
-  const serviceKey = getEnv('SUPABASE_SERVICE_ROLE_KEY') || getEnv('SUPABASE_SERVICE_KEY') || getEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY');
+  const serviceKey = getEnv('SUPABASE_SERVICE_ROLE_KEY') || getEnv('SUPABASE_SERVICE_KEY');
 
   if (!url || !serviceKey) {
     return null;
