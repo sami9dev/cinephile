@@ -16,5 +16,45 @@ services:
         sync: false
       - key: UPSTASH_REDIS_REST_TOKEN
         sync: false
-      - key: MONGODB_URI
+      - key: SUPABASE_URL
         sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: RUST_WORKER_URL
+        fromService:
+          type: web
+          name: cinefuel-rust-worker
+          property: host
+
+  - type: web
+    name: cinefuel-rust-worker
+    runtime: rust
+    plan: free
+    region: oregon
+    rootDir: rust-worker
+    buildCommand: cargo build --release
+    startCommand: ./target/release/cinefuel-rust-worker
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: "10000"
+      - key: WORKER_CONCURRENCY
+        value: "1"
+      - key: TMDB_API_KEY
+        value: 8265bd1679663a7ea12ac168da84d2e8
+      - key: UPSTASH_REDIS_REST_URL
+        sync: false
+      - key: UPSTASH_REDIS_REST_TOKEN
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: ADMIN_SECRET_KEY
+        sync: false
+      - key: CINEFUEL_API_URL
+        value: https://cineflue084.vercel.app
+      - key: RUST_LOG
+        value: "cinefuel_rust_worker=info,tower_http=info"

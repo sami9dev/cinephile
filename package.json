@@ -8,7 +8,9 @@
     "start": "next start",
     "lint": "eslint",
     "bot": "node scripts/telegramBot.mjs",
-    "deploy": "npx wrangler pages deploy"
+    "deploy": "npx wrangler pages deploy",
+    "render:preview": "node scripts/safe-render.js --preview",
+    "render:full": "node scripts/safe-render.js --full"
   },
   "dependencies": {
     "@supabase/supabase-js": "2.117.3",

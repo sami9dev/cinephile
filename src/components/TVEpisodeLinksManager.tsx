@@ -18,7 +18,6 @@ import {
   FileVideo,
   Layers,
   ExternalLink,
-  Flag,
   AlertTriangle,
   Filter,
 } from 'lucide-react';
@@ -46,8 +45,6 @@ import {
 } from '@/lib/seasonParser';
 import { parseReleaseDetails, ReleaseOverrides } from '@/lib/releaseParser';
 import { detectServer } from '@/lib/serverDetector';
-import RequestLinkModal from './RequestLinkModal';
-import ReportBrokenLinkModal, { ReportModalData } from './ReportBrokenLinkModal';
 
 interface TVEpisodeLinksManagerProps {
   titleDetails: TitleDetails;
@@ -752,8 +749,6 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
   // Option ID currently being managed by admin
   const [managingOptionId, setManagingOptionId] = useState<string | null>(null);
 
-  const [isRequestModalOpen, setIsRequestModalOpen] = useState<boolean>(false);
-  const [reportingLink, setReportingLink] = useState<ReportModalData | null>(null);
 
   // Click outside to dismiss open mirror dropdown
   useEffect(() => {
@@ -1806,27 +1801,6 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
 
                           {/* Left Report & Admin Actions */}
                           <div className="absolute left-0 flex items-center gap-1 opacity-70 group-hover:opacity-100 transition-opacity">
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setReportingLink({
-                                  linkId: pack.id,
-                                  movieId: titleDetails.id,
-                                  mediaTitle: titleDetails.name || titleDetails.title || 'TV Series',
-                                  mediaType: 'tv',
-                                  posterPath: titleDetails.poster_path,
-                                  linkTitle: title,
-                                  reportedUrl: destinationUrl,
-                                  quality: resolution,
-                                  server: serverName,
-                                });
-                              }}
-                              className="p-1.5 rounded-lg bg-black/30 hover:bg-black/50 text-zinc-300 hover:text-rose-400 border border-white/10 transition-colors"
-                              title="Report broken pack link"
-                            >
-                              <Flag className="w-3 h-3" />
-                            </button>
 
                             {isEffectiveAdmin && (
                               <>
@@ -1869,14 +1843,6 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
                     Single episodes are available in the episodes section below. You can also request a complete season pack.
                   </p>
                   <div className="pt-2 flex flex-wrap items-center justify-center gap-3">
-                    <button
-                      type="button"
-                      onClick={() => setIsRequestModalOpen(true)}
-                      className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs uppercase tracking-wider transition-all cursor-pointer inline-flex items-center gap-1.5"
-                    >
-                      <Sparkles className="w-3.5 h-3.5" />
-                      <span>Request Season {effectiveSeason} Zip Pack</span>
-                    </button>
                     {isEffectiveAdmin && (
                       <a
                         href={`/admin?title=${encodeURIComponent(titleDetails.name || titleDetails.title || '')}&id=${titleDetails.id}`}
@@ -2005,30 +1971,6 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
 
                                           {/* Left Report & Admin Actions */}
                                           <div className="absolute left-0 flex items-center gap-1 opacity-70 group-hover:opacity-100 transition-opacity">
-                                            <button
-                                              type="button"
-                                              onClick={(e) => {
-                                                e.stopPropagation();
-                                                setReportingLink({
-                                                  linkId: epItem.link.id,
-                                                  movieId: titleDetails.id,
-                                                  mediaTitle:
-                                                    titleDetails.name ||
-                                                    titleDetails.title ||
-                                                    'TV Series',
-                                                  mediaType: 'tv',
-                                                  posterPath: titleDetails.poster_path,
-                                                  linkTitle: epItem.filename,
-                                                  reportedUrl: epDestinationUrl,
-                                                  quality: tier.tierLabel,
-                                                  server: epServer,
-                                                });
-                                              }}
-                                              className="p-1.5 rounded-lg bg-black/30 hover:bg-black/50 text-zinc-300 hover:text-rose-400 border border-white/10 transition-colors"
-                                              title="Report broken episode link"
-                                            >
-                                              <Flag className="w-3 h-3" />
-                                            </button>
 
                                             {isEffectiveAdmin && (
                                               <>
@@ -2079,14 +2021,6 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
                     Download links for Season {effectiveSeason} haven&apos;t been uploaded yet. Request below and our team will add them!
                   </p>
                   <div className="pt-2 flex flex-wrap items-center justify-center gap-3">
-                    <button
-                      type="button"
-                      onClick={() => setIsRequestModalOpen(true)}
-                      className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs uppercase tracking-wider transition-all cursor-pointer inline-flex items-center gap-1.5"
-                    >
-                      <Sparkles className="w-3.5 h-3.5" />
-                      <span>Request Season {effectiveSeason} Links</span>
-                    </button>
                     {isEffectiveAdmin && (
                       <a
                         href={`/admin?title=${encodeURIComponent(titleDetails.name || titleDetails.title || '')}&id=${titleDetails.id}`}
@@ -2103,44 +2037,6 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
         </div>
       </div>
 
-      {/* Bottom Request Custom Quality & Report Card */}
-      <div className="p-4 sm:p-6 rounded-2xl bg-[#0b0e17] border border-blue-500/25 shadow-xl text-center space-y-3.5 relative overflow-hidden">
-        <div className="absolute top-0 right-0 w-36 h-36 bg-blue-500/10 rounded-full blur-3xl pointer-events-none" />
-        <div className="w-10 h-10 rounded-full bg-blue-500/15 border border-blue-500/40 flex items-center justify-center mx-auto text-blue-400 shadow-md shadow-blue-500/10">
-          <Info className="w-5 h-5" />
-        </div>
-        <p className="text-xs sm:text-sm text-zinc-200 font-medium max-w-md mx-auto leading-relaxed">
-          Can&apos;t find the episode or quality you want? Request custom format (4K DV HDR, 1080p, Dual Audio) or report a broken link and our team will add it!
-        </p>
-        <div className="flex flex-wrap items-center justify-center gap-2.5 sm:gap-3">
-          <button
-            type="button"
-            onClick={() => setIsRequestModalOpen(true)}
-            className="w-full sm:w-auto px-6 sm:px-8 py-3 min-h-[44px] rounded-2xl bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-500 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs uppercase tracking-wider shadow-lg shadow-blue-600/30 transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
-          >
-            REQUEST LINK
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              const currentUrl = typeof window !== 'undefined' ? window.location.href : '';
-              setReportingLink({
-                movieId: titleDetails.id,
-                mediaTitle: titleDetails.name || titleDetails.title || 'TV Series',
-                mediaType: 'tv',
-                posterPath: titleDetails.poster_path,
-                linkTitle: `${titleDetails.name || titleDetails.title} (Broken Link Report)`,
-                reportedUrl: currentUrl,
-              });
-            }}
-            className="w-full sm:w-auto justify-center px-6 py-3 min-h-[44px] rounded-2xl bg-[#141824] hover:bg-[#1d2335] text-zinc-300 hover:text-rose-400 border border-white/10 hover:border-rose-500/40 font-bold text-xs uppercase tracking-wider shadow-lg transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer inline-flex items-center gap-2"
-            title="Report broken or defective link"
-          >
-            <Flag className="w-4 h-4 text-zinc-400 group-hover:text-rose-400" />
-            <span>REPORT LINK</span>
-          </button>
-        </div>
-      </div>
 
       {/* Admin Quick Edit Modal */}
       {editingLink && (
@@ -2347,23 +2243,6 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
         </div>
       )}
 
-      {/* Request Modal */}
-      <RequestLinkModal
-        isOpen={isRequestModalOpen}
-        onClose={() => setIsRequestModalOpen(false)}
-        prefillTitle={titleDetails.name || titleDetails.title}
-        prefillMediaType="tv"
-        prefillTmdbId={titleDetails.id}
-        prefillPosterPath={titleDetails.poster_path}
-        prefillYear={titleDetails.first_air_date ? new Date(titleDetails.first_air_date).getFullYear().toString() : undefined}
-      />
-
-      {/* Report Broken Link Modal */}
-      <ReportBrokenLinkModal
-        isOpen={!!reportingLink}
-        data={reportingLink}
-        onClose={() => setReportingLink(null)}
-      />
     </div>
   );
 };

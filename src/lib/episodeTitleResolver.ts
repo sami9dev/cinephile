@@ -1,4 +1,4 @@
-import { getSeasonEpisodes } from '@/lib/tmdb';
+import { getSeasonEpisodes } from './tmdb.ts';
 
 export interface ResolvedEpisodeItem {
   episode_number: number;
@@ -401,7 +401,7 @@ export async function resolveSeasonEpisodes(params: {
   season: number;
   year?: number | string;
 }): Promise<ResolvedSeasonEpisodesResult> {
-  const season = Math.max(0, Number(params.season) || 1);
+  const season = params.season !== undefined && !isNaN(Number(params.season)) ? Math.max(0, Number(params.season)) : 1;
   const cleanQ = cleanSeriesQueryTitle(params.query);
   const cacheKey = `${params.tmdbId || ''}_${params.imdbId || ''}_${cleanQ.toLowerCase()}_S${season}`;
 

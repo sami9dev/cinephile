@@ -1,4 +1,4 @@
-import { TitleDetails, PersonDetails } from '@/types';
+import type { TitleDetails, PersonDetails } from '../types/index.ts';
 
 export const POPULAR_GENRES = [
   { id: 28, name: 'Action' },

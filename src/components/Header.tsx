@@ -3,14 +3,8 @@
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { Search, Menu, X, ChevronDown, Film } from 'lucide-react';
-import dynamic from 'next/dynamic';
-import { useAuth } from '@/context/AuthContext';
-import NotificationBell from './NotificationBell';
+import { Search, Menu, X, ChevronDown } from 'lucide-react';
 import ThemeToggle from './ThemeToggle';
-
-const AuthModal = dynamic(() => import('./AuthModal'), { ssr: false });
-const RequestLinkModal = dynamic(() => import('./RequestLinkModal'), { ssr: false });
 
 interface NavDropdownItem {
   label: string;
@@ -70,13 +64,10 @@ const NAVIGATION_ITEMS: NavItem[] = [
 export const Header: React.FC = () => {
   const pathname = usePathname();
   const router = useRouter();
-  const { userProfile, isLoggedIn } = useAuth();
-  const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [isScrolled, setIsScrolled] = useState(false);
   const [mobileExpanded, setMobileExpanded] = useState<string | null>(null);
-  const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
 
   useEffect(() => {
     if (pathname?.startsWith('/admin')) return;
@@ -104,119 +95,99 @@ export const Header: React.FC = () => {
     e.preventDefault();
     if (searchQuery.trim()) {
       router.push(`/search?q=${encodeURIComponent(searchQuery.trim())}`);
+      setSearchQuery('');
     }
   };
-
-  // Do not render public website header on admin routes
-  if (pathname?.startsWith('/admin')) {
-    return null;
-  }
 
   return (
     <>
       <header
-        className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
+        className={`fixed top-0 left-0 right-0 z-40 transition-all duration-300 ${
           isScrolled
-            ? 'bg-[#08090c]/90 backdrop-blur-md border-b border-white/10 shadow-2xl py-3'
-            : 'bg-gradient-to-b from-[#08090c]/95 via-[#08090c]/60 to-transparent py-4'
+            ? 'bg-[#08090c]/90 backdrop-blur-md border-b border-white/5 py-3 shadow-2xl'
+            : 'bg-transparent py-4'
         }`}
       >
-        <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 flex items-center justify-between gap-2 sm:gap-4">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between gap-4">
           {/* Logo */}
-          <Link href="/" className="inline-flex items-center group shrink-0 min-w-0" aria-label="Cinephile Home">
-            <span className="font-logo text-[22px] sm:text-[30px] leading-none tracking-[0.06em] text-[#9d8ec2] group-hover:text-[#bcaedb] transition-colors drop-shadow-sm select-none">
-              Cinephile
+          <Link href="/" className="flex items-center gap-2 group shrink-0">
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-amber-500 to-orange-600 flex items-center justify-center shadow-lg shadow-amber-500/20 group-hover:scale-105 transition-transform">
+              <span className="text-black font-black text-xl tracking-tighter">C</span>
+            </div>
+            <span className="text-xl font-black tracking-tight text-white group-hover:text-amber-400 transition-colors">
+              CINE<span className="text-amber-400">FUEL</span>
             </span>
           </Link>
 
-          {/* Centered Modern Search Bar */}
-          <div className="relative flex-1 max-w-md mx-2 sm:mx-6 hidden sm:block">
-            <form onSubmit={handleSearchSubmit} className="relative w-full">
-              <input
-                type="text"
-                placeholder="Search movies, series, collections... (Press /)"
-                aria-label="Search movies and TV shows"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full bg-[#14121f] hover:bg-[#1a1728] focus:bg-[#1a1728] text-xs font-medium text-zinc-100 placeholder:text-zinc-500 rounded-xl pl-9 pr-9 py-2 border border-[#2b2542] focus:border-purple-500/60 focus:outline-none focus:ring-1 focus:ring-purple-500/50 transition-all shadow-inner"
-                suppressHydrationWarning
-              />
-              <Search className="w-4 h-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <kbd className="hidden md:inline-flex items-center absolute right-3 top-1/2 -translate-y-1/2 px-1.5 py-0.5 text-[9px] text-zinc-400 bg-zinc-800/80 rounded border border-zinc-700/60">
+          {/* Desktop Navigation */}
+          <nav className="hidden lg:flex items-center gap-1 xl:gap-2">
+            {NAVIGATION_ITEMS.map((item) => {
+              if (item.children) {
+                return (
+                  <div key={item.label} className="relative group/menu py-2">
+                    <button className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium text-zinc-300 hover:text-white hover:bg-white/5 transition-colors">
+                      <span>{item.label}</span>
+                      <ChevronDown className="w-3.5 h-3.5 opacity-60 group-hover/menu:rotate-180 transition-transform" />
+                    </button>
+                    <div className="absolute top-full left-0 w-56 p-2 rounded-2xl bg-[#0f1117] border border-white/10 shadow-2xl opacity-0 translate-y-2 pointer-events-none group-hover/menu:opacity-100 group-hover/menu:translate-y-0 group-hover/menu:pointer-events-auto transition-all duration-200 z-50">
+                      {item.children.map((child) => (
+                        <Link
+                          key={child.label}
+                          href={child.href}
+                          className="flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold text-zinc-300 hover:text-white hover:bg-white/10 transition-colors"
+                        >
+                          <span>{child.label}</span>
+                          {child.badge && <span>{child.badge}</span>}
+                        </Link>
+                      ))}
+                    </div>
+                  </div>
+                );
+              }
+
+              const isActive = pathname === item.href;
+              return (
+                <Link
+                  key={item.label}
+                  href={item.href || '/'}
+                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                    isActive
+                      ? 'bg-amber-400/10 text-amber-400 font-semibold'
+                      : 'text-zinc-300 hover:text-white hover:bg-white/5'
+                  }`}
+                >
+                  {item.label}
+                </Link>
+              );
+            })}
+          </nav>
+
+          {/* Right Controls */}
+          <div className="flex items-center gap-2 sm:gap-3">
+            {/* Desktop Search Button */}
+            <Link
+              href="/search"
+              className="p-2 sm:px-3 sm:py-1.5 rounded-full bg-zinc-900/80 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 hover:text-white text-xs font-medium flex items-center gap-2 transition-colors cursor-pointer"
+              title="Search titles, actors, directors (Press / or Ctrl+K)"
+            >
+              <Search className="w-4 h-4 text-zinc-400" />
+              <span className="hidden md:inline text-zinc-400">Search catalog...</span>
+              <kbd className="hidden md:inline-block px-1.5 py-0.5 text-[10px] bg-zinc-800 text-zinc-400 rounded border border-zinc-700">
                 /
               </kbd>
-            </form>
-          </div>
+            </Link>
 
-          {/* Right Action Bar */}
-          <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
             {/* Mobile Search Button */}
             <Link
               href="/search"
-              className="sm:hidden min-w-[38px] min-h-[38px] p-2 rounded-xl bg-zinc-850 text-zinc-300 hover:text-white border border-zinc-750 inline-flex items-center justify-center"
-              aria-label="Search catalog"
-              suppressHydrationWarning
+              className="md:hidden p-2 rounded-full bg-zinc-900 border border-zinc-800 text-zinc-300 hover:text-white"
+              aria-label="Search"
             >
               <Search className="w-4 h-4" />
             </Link>
 
-            {/* Quick Request Button */}
-            <button
-              type="button"
-              onClick={() => setIsRequestModalOpen(true)}
-              className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-400 hover:text-amber-300 font-bold text-xs transition-all hover:scale-105 active:scale-95 cursor-pointer shrink-0"
-              title="Request a movie or web series link"
-            >
-              <Film className="w-3.5 h-3.5" />
-              <span>Request</span>
-            </button>
-
             {/* Theme Toggle Button */}
             <ThemeToggle />
-
-            {/* User Notifications Bell */}
-            <NotificationBell />
-
-            {/* User Profile / Auth Button */}
-            {!isLoggedIn ? (
-              <button
-                type="button"
-                onClick={() => setIsAuthOpen(true)}
-                className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3.5 py-1.5 min-h-[36px] rounded-full bg-white hover:bg-zinc-100 text-zinc-900 font-bold text-[11px] sm:text-xs shadow-md transition-all hover:scale-105 active:scale-95 cursor-pointer shrink-0 whitespace-nowrap"
-                title="Connect your Google Account"
-              >
-                <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24">
-                  <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
-                  <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-                  <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
-                  <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
-                </svg>
-                <span>Sign In</span>
-              </button>
-            ) : (
-              <Link
-                href="/profile"
-                className="flex items-center gap-1.5 p-1.5 sm:px-2.5 sm:py-1.5 min-w-[38px] min-h-[38px] justify-center rounded-xl bg-zinc-800/80 hover:bg-zinc-700 border border-zinc-700 text-zinc-200 transition-all hover:border-amber-400/50"
-                title={`Signed in as ${userProfile.displayName || userProfile.name || 'User'} (${userProfile.email})`}
-                aria-label={`User profile for ${userProfile.displayName || userProfile.name || 'User'}`}
-              >
-                <div className="w-6 h-6 rounded-full overflow-hidden bg-gradient-to-tr from-amber-500 to-orange-500 flex items-center justify-center text-black font-black text-xs shrink-0">
-                  {userProfile.photoURL ? (
-                    <img
-                      src={userProfile.photoURL}
-                      alt={userProfile.displayName || 'Profile'}
-                      className="w-full h-full object-cover"
-                      referrerPolicy="no-referrer"
-                    />
-                  ) : (
-                    <span>{(userProfile.displayName || userProfile.email || 'U')[0].toUpperCase()}</span>
-                  )}
-                </div>
-                <span className="hidden md:inline text-xs font-semibold max-w-[90px] truncate">
-                  {userProfile.displayName || userProfile.name || 'Account'}
-                </span>
-              </Link>
-            )}
 
             {/* Mobile Menu Toggle */}
             <button
@@ -248,23 +219,9 @@ export const Header: React.FC = () => {
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="w-full bg-[#14121f] text-xs font-medium text-zinc-100 placeholder:text-zinc-500 rounded-xl pl-9 pr-3 py-2.5 border border-[#2b2542] focus:border-purple-500/60 focus:outline-none"
-                suppressHydrationWarning
               />
-              <Search className="w-4 h-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <Search className="w-4 h-4 text-zinc-400 absolute left-3 top-3 pointer-events-none" />
             </form>
-
-            {/* Quick Mobile Request Button */}
-            <button
-              type="button"
-              onClick={() => {
-                setMobileMenuOpen(false);
-                setIsRequestModalOpen(true);
-              }}
-              className="w-full flex items-center justify-center gap-2 py-2.5 px-4 min-h-[42px] rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-400 hover:text-amber-300 font-bold text-xs transition-all active:scale-98"
-            >
-              <Film className="w-4 h-4 text-amber-400" />
-              <span>Request Movie or TV Series</span>
-            </button>
 
             {NAVIGATION_ITEMS.map((item) => {
               if (item.children) {
@@ -273,30 +230,24 @@ export const Header: React.FC = () => {
                   <div key={item.label} className="space-y-1">
                     <button
                       onClick={() => setMobileExpanded(isExpanded ? null : item.label)}
-                      className="w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm font-semibold text-zinc-200 hover:bg-zinc-800 transition-colors"
+                      className="w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium text-zinc-300 hover:bg-zinc-800"
                     >
                       <span>{item.label}</span>
                       <ChevronDown
-                        className={`w-4 h-4 text-zinc-400 transition-transform ${
-                          isExpanded ? 'rotate-180 text-amber-400' : ''
-                        }`}
+                        className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
                       />
                     </button>
                     {isExpanded && (
-                      <div className="pl-3 space-y-1 border-l border-zinc-800 ml-3">
-                        {item.children.map((sub) => (
+                      <div className="pl-4 space-y-1">
+                        {item.children.map((child) => (
                           <Link
-                            key={sub.label}
-                            href={sub.href}
+                            key={child.label}
+                            href={child.href}
                             onClick={() => setMobileMenuOpen(false)}
-                            className={`block px-3 py-1.5 rounded-lg text-xs font-medium flex items-center justify-between ${
-                              pathname === sub.href
-                                ? 'bg-amber-400/10 text-amber-400 font-bold'
-                                : 'text-zinc-400 hover:text-white hover:bg-zinc-800'
-                            }`}
+                            className="flex items-center justify-between px-3 py-1.5 rounded-lg text-xs font-medium text-zinc-400 hover:text-white hover:bg-zinc-800/60"
                           >
-                            <span>{sub.label}</span>
-                            {sub.badge && <span className="text-[10px]">{sub.badge}</span>}
+                            <span>{child.label}</span>
+                            {child.badge && <span>{child.badge}</span>}
                           </Link>
                         ))}
                       </div>
@@ -319,69 +270,9 @@ export const Header: React.FC = () => {
                 </Link>
               );
             })}
-
-            {/* Mobile Auth Button */}
-            <div className="pt-3 border-t border-zinc-800">
-              {!isLoggedIn ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMobileMenuOpen(false);
-                    setIsAuthOpen(true);
-                  }}
-                  className="w-full flex items-center justify-center gap-2.5 py-2.5 px-4 rounded-xl bg-white hover:bg-zinc-100 text-zinc-900 font-black text-xs shadow-md transition-all active:scale-98 cursor-pointer"
-                >
-                  <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
-                    <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
-                    <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-                    <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
-                    <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
-                  </svg>
-                  <span>Sign In with Google</span>
-                </button>
-              ) : (
-                <Link
-                  href="/profile"
-                  onClick={() => setMobileMenuOpen(false)}
-                  className="flex items-center gap-3 p-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-200"
-                >
-                  <div className="w-8 h-8 rounded-full overflow-hidden bg-gradient-to-tr from-amber-500 to-orange-500 flex items-center justify-center text-black font-black text-xs shrink-0">
-                    {userProfile.photoURL ? (
-                      <img
-                        src={userProfile.photoURL}
-                        alt={userProfile.displayName || 'Profile'}
-                        className="w-full h-full object-cover"
-                        referrerPolicy="no-referrer"
-                      />
-                    ) : (
-                      <span>{(userProfile.displayName || userProfile.email || 'U')[0].toUpperCase()}</span>
-                    )}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <span className="text-xs font-bold text-white block truncate">
-                      {userProfile.displayName || userProfile.name || 'Account'}
-                    </span>
-                    <span className="text-[11px] text-zinc-500 block truncate font-mono">
-                      {userProfile.email}
-                    </span>
-                  </div>
-                </Link>
-              )}
-            </div>
           </div>
         )}
       </header>
-
-      {/* Auth Modal */}
-      {isAuthOpen && <AuthModal onClose={() => setIsAuthOpen(false)} />}
-
-      {/* General User Request Modal */}
-      {isRequestModalOpen && (
-        <RequestLinkModal
-          isOpen={isRequestModalOpen}
-          onClose={() => setIsRequestModalOpen(false)}
-        />
-      )}
     </>
   );
 };

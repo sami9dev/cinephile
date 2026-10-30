@@ -5,6 +5,17 @@ const nextConfig: NextConfig = {
   compress: true,
   experimental: {
     optimizePackageImports: ['lucide-react', 'clsx', 'tailwind-merge'],
+    cpus: Math.max(1, Math.min(2, Number(process.env.RENDER_WORKERS || 2))),
+    workerThreads: false,
+  },
+  webpack: (config, { dev }) => {
+    if (!dev) {
+      config.cache = {
+        type: 'filesystem',
+        maxMemoryGenerations: 1,
+      };
+    }
+    return config;
   },
   allowedDevOrigins: ['192.168.1.7', 'localhost', '127.0.0.1'],
   images: {

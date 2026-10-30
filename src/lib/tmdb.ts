@@ -1,6 +1,6 @@
-import { TitleDetails, PersonDetails, WatchProvidersData } from '@/types';
-import { MOCK_TITLES, TRENDING_LIST, TOP_RATED_LIST, UPCOMING_LIST } from './mockData';
-import { resolveCanonicalMedia, CANONICAL_MEDIA_MAP, CanonicalMediaInfo } from './canonicalMedia';
+import type { TitleDetails, PersonDetails, WatchProvidersData } from '../types/index.ts';
+import { MOCK_TITLES, TRENDING_LIST, TOP_RATED_LIST, UPCOMING_LIST } from './mockData.ts';
+import { resolveCanonicalMedia, CANONICAL_MEDIA_MAP, type CanonicalMediaInfo } from './canonicalMedia.ts';
 
 const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
 const TMDB_IMAGE_BASE = 'https://image.tmdb.org/t/p';
@@ -659,7 +659,7 @@ export function cleanTitleString(raw?: string): string {
     .trim();
 }
 
-export * from './canonicalMedia';
+export * from './canonicalMedia.ts';
 
 /**
  * Returns a lightweight, safe TitleDetails object optimized for catalog card rendering.
@@ -806,7 +806,7 @@ export async function getSeasonEpisodes(
   }>;
 } | null> {
   const numId = Number(tvId);
-  const sNum = Math.max(0, Number(seasonNumber) || 1);
+  const sNum = seasonNumber !== undefined && !isNaN(Number(seasonNumber)) ? Math.max(0, Number(seasonNumber)) : 1;
   if (!numId || isNaN(numId)) return null;
 
   try {
@@ -829,6 +829,6 @@ export async function getSeasonEpisodes(
   return null;
 }
 
-export { resolveCanonicalMedia, CANONICAL_MEDIA_MAP } from './canonicalMedia';
-export type { CanonicalMediaInfo } from './canonicalMedia';
+export { resolveCanonicalMedia, CANONICAL_MEDIA_MAP } from './canonicalMedia.ts';
+export type { CanonicalMediaInfo } from './canonicalMedia.ts';
 

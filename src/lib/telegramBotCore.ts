@@ -14,9 +14,15 @@ const DATA_FILE = path.join(process.cwd(), 'src', 'data', 'serverLinks.json');
 export const STRICT_URL_REGEX = /(?:https?:\/\/[^\s<>'"`]+|www\.[^\s<>'"`]+|(?:[a-zA-Z0-9-]+\.)+(?:com|org|net|io|cx|in|co|cc|me|app|dev|to|is|pw|club|vip|link|xyz|live|pro|site|online|top|info|stream|ws|download|tech|click|cloud|movie|nz)\/[^\s<>'"`]*)/gi;
 
 // Authorized Admin IDs (Shyam's Telegram ID is 930928310)
-export const AUTHORIZED_TELEGRAM_IDS = [
-  930928310, // Shyam
-];
+export function getAuthorizedTelegramIds(): number[] {
+  const envIds = (process.env.TELEGRAM_ADMIN_ID || process.env.ADMIN_TELEGRAM_IDS || '')
+    .split(',')
+    .map((s) => Number(s.trim()))
+    .filter((n) => !isNaN(n) && n > 0);
+  const defaults = [930928310];
+  return Array.from(new Set([...defaults, ...envIds]));
+}
+export const AUTHORIZED_TELEGRAM_IDS = getAuthorizedTelegramIds();
 
 export const TMDB_GENRES: Record<number, string> = {
   28: 'Action',

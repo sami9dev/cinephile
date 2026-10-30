@@ -4,12 +4,11 @@ import React, { useState, useEffect, useTransition, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Image from 'next/image';
 import Link from 'next/link';
-import { Search, Filter, Star, Film, Tv, User, X, SlidersHorizontal, Sparkles, Download, Check, Clock, Layers, Send } from 'lucide-react';
+import { Search, Filter, Star, Film, Tv, User, X, SlidersHorizontal, Sparkles, Download, Check, Clock, Layers } from 'lucide-react';
 import { TitleDetails, PersonDetails } from '@/types';
 import { searchMulti, getDiscover, getImageURL } from '@/lib/tmdb';
 import { POPULAR_GENRES } from '@/lib/mockData';
 import MovieCard from '@/components/MovieCard';
-import RequestLinkModal from '@/components/RequestLinkModal';
 
 const QUALITY_PRESETS = [
   { id: 'all_uploaded', label: 'All Uploaded', query: {} },
@@ -50,7 +49,6 @@ function SearchContent() {
   const [tmdbResults, setTmdbResults] = useState<(TitleDetails | PersonDetails)[]>([]);
   const [loading, setLoading] = useState(false);
   const [isPending, startTransition] = useTransition();
-  const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
 
   // Sync state when searchParams change from navigation clicks
   useEffect(() => {
@@ -310,25 +308,9 @@ function SearchContent() {
           <p className="text-xs text-zinc-400">
             Try choosing another quality option (such as 4K HDR, 1080p, or REMUX) or clearing your search term.
           </p>
-          <div className="pt-2">
-            <button
-              onClick={() => setIsRequestModalOpen(true)}
-              className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-500 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs uppercase tracking-wider shadow-lg shadow-blue-600/30 transition-all hover:scale-105 active:scale-95"
-            >
-              <Send className="w-3.5 h-3.5" />
-              <span>Request This Title / Link</span>
-            </button>
-          </div>
         </div>
       )}
 
-      {/* User Title Request Modal */}
-      <RequestLinkModal
-        isOpen={isRequestModalOpen}
-        onClose={() => setIsRequestModalOpen(false)}
-        prefillTitle={query}
-        prefillMediaType="movie"
-      />
     </div>
   );
 }

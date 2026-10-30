@@ -534,7 +534,15 @@ export async function dispatchTelegramNotificationForReport(
   }
 }
 
-const ADMIN_TELEGRAM_IDS = [930928310];
+export function getAdminTelegramIds(): number[] {
+  const envIds = (process.env.TELEGRAM_ADMIN_ID || process.env.ADMIN_TELEGRAM_IDS || '')
+    .split(',')
+    .map((s) => Number(s.trim()))
+    .filter((n) => !isNaN(n) && n > 0);
+  const defaults = [930928310];
+  return Array.from(new Set([...defaults, ...envIds]));
+}
+const ADMIN_TELEGRAM_IDS = getAdminTelegramIds();
 
 // Deduplication cache to prevent sending duplicate alerts when the same event is retried
 const sentAdminAlerts = new Set<string>();
@@ -585,7 +593,7 @@ ${notes ? `📝 <b>Notes:</b> <i>${notes}</i>\n` : ''}
       ],
     };
 
-    for (const adminId of ADMIN_TELEGRAM_IDS) {
+    for (const adminId of getAdminTelegramIds()) {
       await sendTelegramMessage(adminId, text, replyMarkup).catch((err) => {
         console.warn(`Admin telegram alert delivery note for request ${request.id}:`, err?.message);
       });
@@ -640,7 +648,7 @@ ${notes ? `📝 <b>Notes:</b> <i>${notes}</i>\n` : ''}
       ],
     };
 
-    for (const adminId of ADMIN_TELEGRAM_IDS) {
+    for (const adminId of getAdminTelegramIds()) {
       await sendTelegramMessage(adminId, text, replyMarkup).catch((err) => {
         console.warn(`Admin telegram alert delivery note for report ${report.id}:`, err?.message);
       });

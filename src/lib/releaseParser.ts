@@ -29,6 +29,11 @@ export interface ReleaseDetails {
   isEpisode: boolean;
   seasonNumber?: number;
   episodeNumber?: number;
+  episodeNumberEnd?: number;
+  isMultiEpisode?: boolean;
+  isSpecial?: boolean;
+  seriesFolder?: string;
+  folderSeasonNumber?: number;
 
   // 3. Resolution
   resolution?: '2160p' | '1080p' | '720p' | '480p';
@@ -161,46 +166,113 @@ export function parseReleaseDetails(
   // so audio channels like '5.1] x265' are never misparsed as Season 1, Episode 265!
   const textWithProtectedTokens = ` ${cleanInput} ${cleanUrlFilename} `
     .replace(/\b([1-9])\.([0-2])\b/g, ' audio_$1_$2 ')
-    .replace(/\bx(264|265|266)\b/gi, ' codec_x$1 ');
+    .replace(/\bx(264|265|266)\b/gi, ' codec_x$1 ')
+    .replace(/\b(s0*\d{1,3}[\s._-]*e0*\d{1,4})[\s._-]*[-~to]+[\s._-]*(?:e|ep|episode)?0*(\d{1,4})\b/gi, ' $1_to_e$2 ')
 
   const normText = textWithProtectedTokens
     .replace(/[\.\_\-\[\]\(\)\{\}\\\/]/g, ' ')
     .replace(/\s+/g, ' ');
 
   // 2. PACK VS EPISODE DETECTION
-  // Check for explicit episode number in filename (S01E05, S1 E5, E05, Ep 05, Episode 5)
+  // Check for explicit episode number in filename (S01E05, S01E02-E03, 1x02, Season 1 Episode 2, E05, Ep 05)
   // CRITICAL: Individual episode markers ALWAYS take precedence over provider labels like "HubCloud Pack"!
   let seasonNumber: number | undefined = undefined;
   let episodeNumber: number | undefined = undefined;
+  let episodeNumberEnd: number | undefined = undefined;
+  let isMultiEpisode = false;
+  let isSpecial = false;
 
-  // A. Season + Episode: S01E05, S1E1, 1x05
-  const seMatch = normText.match(/\bS0*(\d{1,3})\s*(?:EP|E|Episode)\s*0*(\d{1,4})\b/i) ||
-                  normText.match(/\b([1-9]\d{0,1})\s*x\s*0*([1-9]\d{0,2})\b(?!(?:264|265|266|vid)\b)/i);
-  if (seMatch) {
-    const candidateSeason = parseInt(seMatch[1], 10);
-    const candidateEp = parseInt(seMatch[2], 10);
-    // Audio channel/codec false-positive guard: 264/265/266 is a codec, not an episode
+  // Folder context inspection from rawInput (e.g. "TV/Show/Season 1/02.mkv", "Specials/S00E01.mkv")
+  const normalizedPath = (rawInput || '').replace(/\\/g, '/');
+  const pathSegments = normalizedPath.split('/').filter(Boolean);
+  let folderSeasonNumber: number | undefined = undefined;
+  let seriesFolder: string | undefined = undefined;
+
+  if (pathSegments.length > 1) {
+    const parentSegments = pathSegments.slice(0, -1);
+    for (let i = parentSegments.length - 1; i >= 0; i--) {
+      const seg = parentSegments[i];
+      if (/specials/i.test(seg) || /season\s*0\b/i.test(seg)) {
+        folderSeasonNumber = 0;
+        isSpecial = true;
+        if (i > 0) seriesFolder = parentSegments[i - 1];
+        break;
+      }
+      const seasonFolderMatch = seg.match(/\b(?:season|series)\s*0*(\d{1,3})\b/i) || seg.match(/\bS0*(\d{1,3})\b/i);
+      if (seasonFolderMatch) {
+        folderSeasonNumber = parseInt(seasonFolderMatch[1], 10);
+        if (i > 0) seriesFolder = parentSegments[i - 1];
+        break;
+      }
+    }
+  }
+
+  // A. Season + Episode: S01E05, S1E1, 1x02, 01x02, Season 1 Episode 2, S01E02-E03, S00E01
+  const sEpMatch = normText.match(/\bS0*(\d{1,3})\s*(?:EP|E|Episode)\s*0*(\d{1,4})(?:\s*[-~to]+\s*(?:EP|E|Episode)?\s*0*(\d{1,4}))?\b/i);
+  const seasonEpisodeWordMatch = normText.match(/\bSeason\s*0*(\d{1,3})\s*(?:Episode|Ep|E)\s*0*(\d{1,4})(?:\s*[-~to]+\s*(?:Episode|Ep|E)?\s*0*(\d{1,4}))?\b/i);
+  const xMatch = normText.match(/\b0*([0-9]\d{0,1})\s*x\s*0*([1-9]\d{0,2})(?:\s*[-~to]+\s*0*([1-9]\d{0,2}))?\b(?!(?:264|265|266|vid)\b)/i);
+
+  if (sEpMatch) {
+    const candidateSeason = parseInt(sEpMatch[1], 10);
+    const candidateEp = parseInt(sEpMatch[2], 10);
     if (![264, 265, 266].includes(candidateEp)) {
       seasonNumber = candidateSeason;
       episodeNumber = candidateEp;
+      if (sEpMatch[3]) {
+        episodeNumberEnd = parseInt(sEpMatch[3], 10);
+        isMultiEpisode = episodeNumberEnd > episodeNumber;
+      }
+      if (candidateSeason === 0) isSpecial = true;
+    }
+  } else if (seasonEpisodeWordMatch) {
+    const candidateSeason = parseInt(seasonEpisodeWordMatch[1], 10);
+    const candidateEp = parseInt(seasonEpisodeWordMatch[2], 10);
+    seasonNumber = candidateSeason;
+    episodeNumber = candidateEp;
+    if (seasonEpisodeWordMatch[3]) {
+      episodeNumberEnd = parseInt(seasonEpisodeWordMatch[3], 10);
+      isMultiEpisode = episodeNumberEnd > episodeNumber;
+    }
+    if (candidateSeason === 0) isSpecial = true;
+  } else if (xMatch) {
+    const candidateSeason = parseInt(xMatch[1], 10);
+    const candidateEp = parseInt(xMatch[2], 10);
+    if (![264, 265, 266].includes(candidateEp)) {
+      seasonNumber = candidateSeason;
+      episodeNumber = candidateEp;
+      if (xMatch[3]) {
+        episodeNumberEnd = parseInt(xMatch[3], 10);
+        isMultiEpisode = episodeNumberEnd > episodeNumber;
+      }
+      if (candidateSeason === 0) isSpecial = true;
     }
   }
 
   // B. Standalone Episode: E05, Episode 05, Ep 5 (ensuring it's not a resolution like 1080p or part)
   if (episodeNumber === undefined) {
-    const epMatch = normText.match(/\b(?:Episode|Ep)\s*0*(\d{1,4})\b/i) ||
-                    normText.match(/\bE\s*0*(\d{1,4})\b(?!\s*p\b)/i);
+    const epMatch = normText.match(/\b(?:Episode|Ep)\s*0*(\d{1,4})(?:\s*[-~to]+\s*0*(\d{1,4}))?\b/i) ||
+                    normText.match(/\bE\s*0*(\d{1,4})(?:\s*[-~to]+\s*0*(\d{1,4}))?\b(?!\s*p\b)/i);
     if (epMatch) {
       episodeNumber = parseInt(epMatch[1], 10);
+      if (epMatch[2]) {
+        episodeNumberEnd = parseInt(epMatch[2], 10);
+        isMultiEpisode = episodeNumberEnd > episodeNumber;
+      }
     }
   }
 
-  // C. Standalone Season: S01, Season 1
+  // C. Adopt Season from Folder Context if available
+  if (seasonNumber === undefined && folderSeasonNumber !== undefined) {
+    seasonNumber = folderSeasonNumber;
+  }
+
+  // D. Standalone Season: S01, Season 1
   if (seasonNumber === undefined) {
     const sMatch = normText.match(/\bS0*(\d{1,3})\b/i) ||
                    normText.match(/\bSeason\s*0*(\d{1,3})\b/i);
     if (sMatch) {
       seasonNumber = parseInt(sMatch[1], 10);
+      if (seasonNumber === 0) isSpecial = true;
     }
   }
 
@@ -525,6 +597,11 @@ export function parseReleaseDetails(
     isEpisode: packType === 'individual_episode',
     seasonNumber,
     episodeNumber,
+    episodeNumberEnd,
+    isMultiEpisode,
+    isSpecial,
+    seriesFolder,
+    folderSeasonNumber,
     resolution,
     resolutionLabel,
     dynamicRange,

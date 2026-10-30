@@ -81,8 +81,16 @@ export function isValidTmdbId(id) {
   return /^\d{1,7}$/.test(str);
 }
 
-// Authorized Admin IDs (Shyam)
-const AUTHORIZED_TELEGRAM_IDS = [930928310];
+// Authorized Admin IDs (Dynamically loaded from environment + defaults)
+function getAuthorizedTelegramIds() {
+  const envIds = (process.env.TELEGRAM_ADMIN_ID || process.env.ADMIN_TELEGRAM_IDS || '')
+    .split(',')
+    .map(s => Number(s.trim()))
+    .filter(n => !isNaN(n) && n > 0);
+  const defaults = [930928310];
+  return Array.from(new Set([...defaults, ...envIds]));
+}
+const AUTHORIZED_TELEGRAM_IDS = getAuthorizedTelegramIds();
 
 // Memory state for multi-message uploads & interactive modes
 const pendingChatState = new Map();
@@ -93,28 +101,36 @@ console.log(`📁 Database Path: ${DATA_FILE}`);
 
 async function registerBotCommands() {
   try {
+    const commandsList = [
+      { command: 'id', description: 'Show your Telegram User ID & admin status' },
+      { command: 'status', description: 'Check database & bot status' },
+      { command: 'help', description: 'Show commands and upload examples' },
+      { command: 'movie', description: 'Upload a Movie link (4K / 1080p / BluRay)' },
+      { command: 'episode', description: 'Upload a Single TV Episode (S01E01)' },
+      { command: 'bulk', description: 'Bulk upload multiple TV episodes' },
+      { command: 'zip', description: 'Upload a Full Season Zip/Pack' },
+      { command: 'requests', description: 'View & fulfill pending user movie/series requests' },
+      { command: 'reports', description: 'View & fix broken link reports' },
+      { command: 'reply', description: 'Reply to request or report: /reply <id> <msg>' },
+      { command: 'resolve', description: 'Resolve request or report: /resolve <id> [link]' },
+      { command: 'auto', description: 'Full Auto-Sensing Mode' },
+      { command: 'domain', description: '1-Click switch HubCloud or GDFlix domain across all links' },
+      { command: 'hubcloud', description: 'Update all HubCloud links (e.g. /hubcloud hubcloud.cx)' },
+      { command: 'gdflix', description: 'Update all GDFlix links (e.g. /gdflix new1.gdflix.io)' },
+    ];
+
     const res = await safeFetch(`https://api.telegram.org/bot${BOT_TOKEN}/setMyCommands`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        commands: [
-          { command: 'movie', description: 'Upload a Movie link (4K / 1080p / BluRay)' },
-          { command: 'episode', description: 'Upload a Single TV Episode (S01E01)' },
-          { command: 'bulk', description: 'Bulk upload multiple TV episodes' },
-          { command: 'zip', description: 'Upload a Full Season Zip/Pack' },
-          { command: 'requests', description: 'View & fulfill pending user movie/series requests' },
-          { command: 'reports', description: 'View & fix broken link reports' },
-          { command: 'reply', description: 'Reply to request or report: /reply <id> <msg>' },
-          { command: 'resolve', description: 'Resolve request or report: /resolve <id> [link]' },
-          { command: 'auto', description: 'Full Auto-Sensing Mode' },
-          { command: 'domain', description: '1-Click switch HubCloud or GDFlix domain across all links' },
-          { command: 'hubcloud', description: 'Update all HubCloud links (e.g. /hubcloud hubcloud.cx)' },
-          { command: 'gdflix', description: 'Update all GDFlix links (e.g. /gdflix new1.gdflix.io)' },
-          { command: 'status', description: 'Check database & bot status' },
-          { command: 'help', description: 'Show commands and upload examples' },
-        ],
-      }),
+      body: JSON.stringify({ commands: commandsList }),
     });
+
+    await safeFetch(`https://api.telegram.org/bot${BOT_TOKEN}/setMyCommands`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ commands: commandsList, scope: { type: 'all_private_chats' } }),
+    });
+
     const data = await res?.json();
     if (data?.ok) {
       console.log('🤖 Telegram Slash Commands Registered Successfully with Telegram API!');
@@ -2125,9 +2141,39 @@ async function handleMessage(msg) {
 
   console.log(`📩 Received message from ${msg.from?.first_name || 'User'} (${fromId}):\n"${rawText}"`);
 
+  const authorizedIds = getAuthorizedTelegramIds();
+
+  // Normalize command parsing early (handles "/id", "/ id", "/myid", "/id@bot", etc.)
+  const cleanCmdText = rawText.replace(/^\/\s+/, '/');
+  let command = null;
+  let commandArgs = '';
+  const cmdMatch = cleanCmdText.match(/^\/([a-zA-Z0-9_-]+)(?:@\w+)?(?:\s+([\s\S]*))?$/);
+  if (cmdMatch) {
+    command = cmdMatch[1].toLowerCase();
+    commandArgs = (cmdMatch[2] || '').trim();
+  }
+
+  // Universal /id, /myid, /whoami command (accessible to EVERYONE, even unauthenticated)
+  const isIdCommand = (
+    command === 'id' ||
+    command === 'myid' ||
+    command === 'whoami' ||
+    command === 'me' ||
+    cleanCmdText.toLowerCase() === '/id' ||
+    rawText.toLowerCase().trim() === 'id' ||
+    rawText.toLowerCase().trim() === 'my id' ||
+    rawText.toLowerCase().trim() === '/ id' ||
+    rawText.toLowerCase().trim() === '/start id'
+  );
+
+  if (isIdCommand) {
+    const isAuth = authorizedIds.includes(fromId);
+    return sendTelegram(chatId, `🆔 <b>Your Telegram Information:</b>\n• User ID: <code>${fromId}</code>\n• Chat ID: <code>${chatId}</code>\n• Username: ${msg.from?.username ? '@' + msg.from.username : 'None'}\n• Admin Status: ${isAuth ? '✅ Authorized Admin' : '👤 Standard User'}\n\n${isAuth ? '🎉 You have full admin access to CineFuel Bot!' : '👉 To authorize as Admin, add <code>TELEGRAM_ADMIN_ID=' + fromId + '</code> to your <code>.env.local</code> and restart the bot.'}`);
+  }
+
   // 1. Authorization check
-  if (!AUTHORIZED_TELEGRAM_IDS.includes(fromId)) {
-    return sendTelegram(chatId, `⛔ *Unauthorized*\nYour Telegram ID (${fromId}) is not registered as an Admin.`);
+  if (!authorizedIds.includes(fromId)) {
+    return sendTelegram(chatId, `⛔ <b>Unauthorized</b>\nYour Telegram ID (<code>${fromId}</code>) is not registered as an Admin.\n\n👉 <b>To authorize:</b> Add <code>TELEGRAM_ADMIN_ID=${fromId}</code> to your <code>.env.local</code> and restart the bot.`);
   }
 
   // 1b. Rapid repeat anti-spam check (if exact same message sent within 15 seconds)
@@ -2164,18 +2210,15 @@ This exact release was just processed a moment ago. Your links are already live 
     }
   }
 
-  // 2. Parse command if present
-  let command = null;
-  let commandArgs = '';
-  const cmdMatch = rawText.match(/^\/([a-zA-Z0-9_-]+)(?:@\w+)?(?:\s+([\s\S]*))?$/);
-  if (cmdMatch) {
-    command = cmdMatch[1].toLowerCase();
-    commandArgs = (cmdMatch[2] || '').trim();
-  }
+    // 2. Command routing (command and commandArgs already normalized above)
 
   // Handle Command Menu & Help
   if (command === 'start' || command === 'help' || command === 'commands') {
     return sendTelegram(chatId, `🚀 *Welcome to CineFuel Auto-Uploader & Moderation Bot!*
+
+🆔 *Admin & Identity:*
+• \`/id\` or \`/myid\` - Show your Telegram User ID & Admin Authorization status
+• \`/status\` - Server database & active link stats
 
 ⚡ *Content Upload Commands:*
 • \`/movie\` - Movie Upload Mode (4K / 1080p / BluRay)
@@ -2192,7 +2235,6 @@ This exact release was just processed a moment ago. Your links are already live 
 • \`/resolve <id> [link]\` - Fulfill request or fix broken report (notifies website + Telegram)
 • \`/reject <id> [reason]\` - Reject a movie request
 • \`/dismiss <id> [reason]\` - Dismiss a false alarm report
-• \`/status\` - Server database & active link stats
 
 💡 *Instant Interactive Actions:*
 You can also use the inline buttons under notification cards to reply, fulfill, or fix in 1 tap!`);
@@ -2753,7 +2795,7 @@ CineFuel Auto-Uploader is online! Send any movie or TV series link with details 
       },
     ];
 
-    return await sendMediaPostCard(chatId, {
+    return await broadcastReleaseCard(chatId, {
       photoUrl,
       title: cardTitle,
       year: item.year,
@@ -2793,7 +2835,7 @@ CineFuel Auto-Uploader is online! Send any movie or TV series link with details 
 
     const allAudios = Array.from(new Set(publishedItems.map(i => i.audio).filter(Boolean))).join(', ') || 'Hindi, English';
 
-    return await sendMediaPostCard(chatId, {
+    return await broadcastReleaseCard(chatId, {
       photoUrl,
       title: `${first.title} - SEASON ${first.season}`,
       year: first.year,
@@ -2826,7 +2868,7 @@ CineFuel Auto-Uploader is online! Send any movie or TV series link with details 
 
     const allAudios = Array.from(new Set(publishedItems.map(i => i.audio).filter(Boolean))).join(', ') || 'Hindi, English';
 
-    return await sendMediaPostCard(chatId, {
+    return await broadcastReleaseCard(chatId, {
       photoUrl,
       title: first.title,
       year: first.year,
@@ -2869,7 +2911,7 @@ CineFuel Auto-Uploader is online! Send any movie or TV series link with details 
 
     const allAudios = Array.from(new Set(items.map(i => i.audio).filter(Boolean))).join(', ') || 'Hindi, English';
 
-    await sendMediaPostCard(chatId, {
+    await broadcastReleaseCard(chatId, {
       photoUrl,
       title: cardTitle,
       year: first.year,
@@ -2895,6 +2937,25 @@ async function pollUpdates() {
   while (true) {
     try {
       const res = await safeFetch(`https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=${lastUpdateId + 1}&timeout=25`, { timeoutMs: 32000 });
+      if (res && res.status === 409) {
+        const errorData = await res.json().catch(() => null);
+        const desc = errorData?.description || '';
+        if (desc.includes('webhook is active')) {
+          console.error('⚠️ 409 Conflict: Telegram webhook is still active on edge servers. Clearing automatically...');
+          await safeFetch(`https://api.telegram.org/bot${BOT_TOKEN}/deleteWebhook?drop_pending_updates=false`, { timeoutMs: 8000 });
+          await new Promise(r => setTimeout(r, 3000));
+          continue;
+        } else if (desc.includes('terminated by other getUpdates')) {
+          console.error('⚠️ 409 Conflict: Another instance of the bot is already running and polling.');
+          console.error('👉 Please make sure only ONE instance of the bot is running.');
+          await new Promise(r => setTimeout(r, 6000));
+          continue;
+        } else {
+          console.error('⚠️ 409 Conflict:', desc);
+          await new Promise(r => setTimeout(r, 5000));
+          continue;
+        }
+      }
       if (res && res.status === 401) {
         console.error('❌ FATAL AUTH ERROR: Telegram API returned 401 Unauthorized during polling.');
         console.error('🔒 Your TELEGRAM_BOT_TOKEN is invalid or was revoked by BotFather / GitHub Secret Scanning.');
@@ -2976,6 +3037,20 @@ async function main() {
         console.warn('Keep-alive ping notice:', pingErr.message);
       }
     }, 10 * 60 * 1000);
+  }
+
+  // Auto-ensure Telegram webhook is cleared so polling getUpdates never conflicts
+  try {
+    const whRes = await safeFetch(`https://api.telegram.org/bot${BOT_TOKEN}/getWebhookInfo`, { timeoutMs: 8000 });
+    const whData = await whRes?.json();
+    if (whData?.result?.url) {
+      console.log(`⚡ Existing webhook detected (${whData.result.url}). Clearing webhook to activate Long Polling...`);
+      await safeFetch(`https://api.telegram.org/bot${BOT_TOKEN}/deleteWebhook?drop_pending_updates=false`, { timeoutMs: 8000 });
+      console.log('✅ Webhook cleared. Polling mode is 100% active!');
+      await new Promise(r => setTimeout(r, 2000));
+    }
+  } catch (whErr) {
+    console.warn('Webhook auto-clear check note:', whErr.message);
   }
 
   await registerBotCommands();

@@ -18,7 +18,6 @@ import {
   ChevronDown,
   ChevronUp,
   Copy,
-  Flag,
   Sparkles,
   FolderArchive,
 } from 'lucide-react';
@@ -37,8 +36,6 @@ import { safeGetLocalStorage, safeSetLocalStorage, pruneCustomLinksCache } from 
 import { sanitizeSafeUrl } from '@/lib/security';
 import TVEpisodeLinksManager from './TVEpisodeLinksManager';
 import CollapsibleSection from './CollapsibleSection';
-import RequestLinkModal from './RequestLinkModal';
-import ReportBrokenLinkModal, { ReportModalData } from './ReportBrokenLinkModal';
 
 interface CustomLinksManagerProps {
   titleDetails: TitleDetails;
@@ -490,8 +487,6 @@ export const CustomLinksManager: React.FC<CustomLinksManagerProps> = ({ titleDet
   const { watchlist, removeCustomLink, isMounted, settings } = useWatchlist();
   const [activeCategoryFilter, setActiveCategoryFilter] = useState<string>('All');
   const [linksRefresh, setLinksRefresh] = useState(0);
-  const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
-  const [reportingLink, setReportingLink] = useState<ReportModalData | null>(null);
 
   // Edit Modal State
   const [editingLink, setEditingLink] = useState<CustomLink | null>(null);
@@ -917,31 +912,7 @@ export const CustomLinksManager: React.FC<CustomLinksManagerProps> = ({ titleDet
                           </p>
                         </div>
 
-                        {/* Report Broken Link Button (media_1790900300745.png) */}
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            setReportingLink({
-                              linkId: link.id,
-                              movieId: titleDetails.id,
-                              mediaTitle: titleDetails.title || titleDetails.name || 'Movie',
-                              mediaType: mediaType === 'tv' ? 'tv' : 'movie',
-                              posterPath: titleDetails.poster_path,
-                              linkTitle: card.title,
-                              reportedUrl: link.url,
-                              quality: link.quality,
-                              server: detectServer(link.url).name || 'HubCloud',
-                            });
-                          }}
-                          className="min-w-[38px] min-h-[38px] p-2 sm:p-3 rounded-2xl bg-[#141824] hover:bg-[#1d2335] text-zinc-400 hover:text-rose-400 border border-white/5 hover:border-rose-500/30 transition-colors cursor-pointer shrink-0 self-center inline-flex items-center justify-center"
-                          title="Report broken or defective link"
-                        >
-                          <Flag className="w-4 h-4" />
-                        </button>
-
-                        {/* Admin Controls (Only visible to admin) */}
+                                                {/* Admin Controls (Only visible to admin) */}
                         {isAdmin && (
                           <div
                             className="flex items-center gap-1.5 shrink-0 self-start"
@@ -990,46 +961,8 @@ export const CustomLinksManager: React.FC<CustomLinksManagerProps> = ({ titleDet
           </div>
         )}
 
-        {/* Can't find the link you want? Request custom quality or report card */}
-        <div className="mt-5 p-4 sm:p-6 rounded-2xl bg-[#0b0e17] border border-blue-500/25 shadow-xl text-center space-y-3.5 relative overflow-hidden">
-          <div className="absolute top-0 right-0 w-36 h-36 bg-blue-500/10 rounded-full blur-3xl pointer-events-none" />
-          <div className="w-10 h-10 rounded-full bg-blue-500/15 border border-blue-500/40 flex items-center justify-center mx-auto text-blue-400 shadow-md shadow-blue-500/10">
-            <Info className="w-5 h-5" />
-          </div>
-          <p className="text-xs sm:text-sm text-zinc-200 font-medium max-w-md mx-auto leading-relaxed">
-            Can&apos;t find the link you want? Request custom quality or report a broken link and we&apos;ll fix it for you.
-          </p>
-          <div className="flex flex-wrap items-center justify-center gap-2.5 sm:gap-3">
-            <button
-              type="button"
-              onClick={() => setIsRequestModalOpen(true)}
-              className="w-full sm:w-auto px-6 sm:px-8 py-3 min-h-[44px] rounded-2xl bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-500 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs uppercase tracking-wider shadow-lg shadow-blue-600/30 transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
-            >
-              REQUEST LINK
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                const currentUrl = typeof window !== 'undefined' ? window.location.href : '';
-                setReportingLink({
-                  movieId: titleDetails.id,
-                  mediaTitle: titleDetails.title || titleDetails.name || 'Movie',
-                  mediaType: mediaType === 'tv' ? 'tv' : 'movie',
-                  posterPath: titleDetails.poster_path,
-                  linkTitle: `${titleDetails.title || titleDetails.name} (Broken Link Report)`,
-                  reportedUrl: currentUrl,
-                });
-              }}
-              className="w-full sm:w-auto justify-center px-6 py-3 min-h-[44px] rounded-2xl bg-[#141824] hover:bg-[#1d2335] text-zinc-300 hover:text-rose-400 border border-white/10 hover:border-rose-500/40 font-bold text-xs uppercase tracking-wider shadow-lg transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer inline-flex items-center gap-2"
-              title="Report broken or defective link"
-            >
-              <Flag className="w-4 h-4 text-zinc-400 group-hover:text-rose-400" />
-              <span>REPORT LINK</span>
-            </button>
-          </div>
         </div>
-      </div>
-    )}
+        )}
 
       {/* Edit Custom Link Modal (Admin Only) */}
       {isAdmin && editingLink && (
@@ -1213,24 +1146,7 @@ export const CustomLinksManager: React.FC<CustomLinksManagerProps> = ({ titleDet
         </div>
       )}
 
-      {/* User Link Request Modal */}
-      <RequestLinkModal
-        isOpen={isRequestModalOpen}
-        onClose={() => setIsRequestModalOpen(false)}
-        prefillTitle={titleName}
-        prefillMediaType={mediaType === 'tv' ? 'tv' : 'movie'}
-        prefillTmdbId={titleDetails.id}
-        prefillPosterPath={titleDetails.poster_path}
-        prefillYear={releaseYear}
-      />
-
-      {/* User Defective / Broken Link Report Modal */}
-      <ReportBrokenLinkModal
-        isOpen={!!reportingLink}
-        onClose={() => setReportingLink(null)}
-        data={reportingLink}
-      />
-
+      
     </CollapsibleSection>
   );
 };
