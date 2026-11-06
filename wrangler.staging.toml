@@ -11,11 +11,12 @@ binding = "ASSETS"
 
 [vars]
 NEXT_PUBLIC_SITE_URL = "https://cinephile-staging.sk6216071.workers.dev"
-NEXT_PUBLIC_TMDB_API_KEY = "8265bd1679663a7ea12ac168da84d2e8"
+NEXT_PUBLIC_TMDB_API_KEY = "dbce50ff6498e9830bfe0f931dc5632d"
 APP_ENV = "staging"
 CINEFUEL_ENV = "staging"
 WORKER_NAME = "cinephile-staging"
-NEXT_PUBLIC_SUPABASE_URL = "https://kpxlpmepfxhkmefnfrcq.supabase.co"
+NEXT_PUBLIC_SUPABASE_URL = "https://igacrnjjthrmvikprwmr.supabase.co"
+NEXT_PUBLIC_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlnYWNybmpqdGhybXZpa3Byd21yIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIwNTM3NDEsImV4cCI6MjEwNzYyOTc0MX0.bv0h4Pf5dg4F_dg6dSKmv0ADmUZ9uVlvVM_WmBNOY4Q"
 UPSTASH_REDIS_REST_URL = "https://nearby-wren-184114.upstash.io"
 UPSTASH_REDIS_REST_TOKEN = "gQAAAAAAAs8yAAIgcDJjOWYwZjkyNzlhNmQ0NTk2YTE2ZTAwNGFhODA0NGIxYg"
 # TELEGRAM_BOT_TOKEN is bound as an encrypted Worker secret via wrangler secret put TELEGRAM_BOT_TOKEN

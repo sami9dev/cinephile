@@ -1,20 +1,84 @@
 services:
+  # ----------------------------------------------------------------------------
+  # 1. Main Next.js Full-Stack Web Application (UI + API Routes + Admin Panel)
+  # ----------------------------------------------------------------------------
+  - type: web
+    name: cinephile-web
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: npm install && npm run build
+    startCommand: npm run start
+    healthCheckPath: /api/catalog
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: APP_ENV
+        value: production
+      - key: CINEFUEL_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: NEXT_PUBLIC_SITE_URL
+        sync: false
+      - key: NEXT_PUBLIC_SUPABASE_URL
+        value: https://igacrnjjthrmvikprwmr.supabase.co
+      - key: NEXT_PUBLIC_SUPABASE_ANON_KEY
+        value: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlnYWNybmpqdGhybXZpa3Byd21yIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIwNTM3NDEsImV4cCI6MjEwNzYyOTc0MX0.bv0h4Pf5dg4F_dg6dSKmv0ADmUZ9uVlvVM_WmBNOY4Q
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: UPSTASH_REDIS_REST_URL
+        value: https://nearby-wren-184114.upstash.io
+      - key: UPSTASH_REDIS_REST_TOKEN
+        sync: false
+      - key: TMDB_API_KEY
+        value: dbce50ff6498e9830bfe0f931dc5632d
+      - key: NEXT_PUBLIC_TMDB_API_KEY
+        value: dbce50ff6498e9830bfe0f931dc5632d
+      - key: ADMIN_USERNAME
+        value: shyam
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: ADMIN_SECRET_KEY
+        sync: false
+      - key: ADMIN_EMAILS
+        value: admin@example.com
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_BOT_USERNAME
+        value: CineFlue_bot
+      - key: TELEGRAM_ADMIN_CHAT_ID
+        value: "930928310"
+
+  # ----------------------------------------------------------------------------
+  # 2. 24/7 Telegram Polling Bot Daemon (Automatic link parser & admin alerts)
+  # ----------------------------------------------------------------------------
   - type: web
     name: cinefuel-telegram-bot
     runtime: node
     plan: free
+    region: oregon
     buildCommand: npm install
     startCommand: node scripts/telegramBot.mjs
+    healthCheckPath: /
     envVars:
       - key: TELEGRAM_BOT_TOKEN
         sync: false
+      - key: TELEGRAM_BOT_USERNAME
+        value: CineFlue_bot
+      - key: TELEGRAM_ADMIN_CHAT_ID
+        value: "930928310"
+      - key: TMDB_API_KEY
+        value: dbce50ff6498e9830bfe0f931dc5632d
       - key: NEXT_PUBLIC_TMDB_API_KEY
-        value: 8265bd1679663a7ea12ac168da84d2e8
-      - key: NEXT_PUBLIC_SITE_URL
-        value: https://cineflue084.vercel.app
+        value: dbce50ff6498e9830bfe0f931dc5632d
+      - key: NEXT_PUBLIC_SUPABASE_URL
+        value: https://igacrnjjthrmvikprwmr.supabase.co
+      - key: NEXT_PUBLIC_SUPABASE_ANON_KEY
+        value: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlnYWNybmpqdGhybXZpa3Byd21yIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIwNTM3NDEsImV4cCI6MjEwNzYyOTc0MX0.bv0h4Pf5dg4F_dg6dSKmv0ADmUZ9uVlvVM_WmBNOY4Q
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
       - key: UPSTASH_REDIS_REST_URL
-        sync: false
+        value: https://nearby-wren-184114.upstash.io
       - key: UPSTASH_REDIS_REST_TOKEN
-        sync: false
-      - key: MONGODB_URI
         sync: false

@@ -77,3 +77,6 @@ Cargo.lock.bk
 # Backups
 backups/
 
+# Local workspace tools
+.ua/
+

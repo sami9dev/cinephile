@@ -93,7 +93,7 @@ export async function POST(req: NextRequest) {
       const cleanPass = String(password).trim();
 
       const expectedUser = (getEnv('ADMIN_USER') || getEnv('ADMIN_USERNAME') || '').trim().toLowerCase();
-      const configuredPass = (getEnv('ADMIN_SECRET_KEY') || getEnv('ADMIN_PASSWORD') || '').trim();
+      const configuredPass = (getEnv('ADMIN_PASSWORD') || getEnv('ADMIN_SECRET_KEY') || '').trim();
 
       if (!expectedUser || !configuredPass) {
         return NextResponse.json(

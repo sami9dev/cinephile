@@ -2900,7 +2900,7 @@ async function pollUpdates() {
 }
 
 async function main() {
-  const PORT = process.env.BOT_PORT || 3005;
+  const PORT = process.env.PORT || process.env.BOT_PORT || 3005;
   const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({

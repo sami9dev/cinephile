@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "bot": "node scripts/telegramBot.mjs",
+    "doctor": "node scripts/doctor.mjs",
     "deploy": "npx wrangler pages deploy"
   },
   "dependencies": {
