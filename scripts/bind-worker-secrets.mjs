@@ -36,5 +36,8 @@ if (pass) bindSecret('ADMIN_PASSWORD', pass);
 const key = getVar('ADMIN_SECRET_KEY') || pass;
 if (key) bindSecret('ADMIN_SECRET_KEY', key);
 
+const telegramToken = getVar('TELEGRAM_BOT_TOKEN');
+if (telegramToken) bindSecret('TELEGRAM_BOT_TOKEN', telegramToken);
+
 const sess = getVar('ADMIN_SESSION_SECRET') || key;
 if (sess) bindSecret('ADMIN_SESSION_SECRET', sess);
