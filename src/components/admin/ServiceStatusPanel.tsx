@@ -14,7 +14,9 @@ import {
   X,
   ChevronDown,
   ChevronUp,
+  Layers,
 } from 'lucide-react';
+import { ArchitectureStackPanel } from '@/components/admin/ArchitectureStackPanel';
 import type {
   ServiceStatusReport,
   ServiceCheckItem,
@@ -194,8 +196,8 @@ export const ServiceStatusPanel: React.FC<ServiceStatusPanelProps> = ({
     };
   }, [getAuthHeaders]);
 
-  // Exclude unconfigured optional services (Firebase Auth) from cluttering UI
-  const UNCONFIGURED_OPTIONAL_SERVICE_IDS = React.useMemo(() => new Set(['firebase_auth']), []);
+  // Include all configured and active core services
+  const UNCONFIGURED_OPTIONAL_SERVICE_IDS = React.useMemo(() => new Set<string>(), []);
 
   const visibleServices = React.useMemo(() => {
     if (!report?.services) return [];
@@ -298,6 +300,7 @@ export const ServiceStatusPanel: React.FC<ServiceStatusPanelProps> = ({
             refreshing={refreshing}
             error={error}
             groupedServices={groupedServices}
+            getAuthHeaders={getAuthHeaders}
             onRefresh={() => fetchStatus(true)}
             onClose={() => setIsModalOpen(false)}
           />
@@ -439,6 +442,7 @@ export const ServiceStatusPanel: React.FC<ServiceStatusPanelProps> = ({
           refreshing={refreshing}
           error={error}
           groupedServices={groupedServices}
+          getAuthHeaders={getAuthHeaders}
           onRefresh={() => fetchStatus(true)}
           onClose={() => setIsModalOpen(false)}
         />
@@ -461,6 +465,7 @@ interface ServiceStatusModalProps {
   refreshing: boolean;
   error: string | null;
   groupedServices: Record<ServiceCategoryGroup, ServiceCheckItem[]>;
+  getAuthHeaders: () => Record<string, string>;
   onRefresh: () => void;
   onClose: () => void;
 }
@@ -472,9 +477,11 @@ const ServiceStatusModal: React.FC<ServiceStatusModalProps> = ({
   refreshing,
   error,
   groupedServices,
+  getAuthHeaders,
   onRefresh,
   onClose,
 }) => {
+  const [viewMode, setViewMode] = useState<'stack' | 'grid'>('stack');
   const overallStatus = report?.overallStatus || 'Unknown';
   const overallStyles = getStatusStyles(overallStatus);
 
@@ -576,6 +583,40 @@ const ServiceStatusModal: React.FC<ServiceStatusModalProps> = ({
           </div>
         )}
 
+        {/* View Mode Switcher */}
+        <div className="px-4 sm:px-6 py-2.5 bg-black/60 border-b border-white/5 flex flex-wrap items-center justify-between gap-3 shrink-0">
+          <div className="flex items-center gap-1.5 p-1 rounded-xl bg-slate-900 border border-white/10">
+            <button
+              type="button"
+              onClick={() => setViewMode('stack')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                viewMode === 'stack'
+                  ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-black shadow-md'
+                  : 'text-slate-300 hover:text-white'
+              }`}
+            >
+              <Layers className="w-3.5 h-3.5" />
+              <span>Architecture Stack (7)</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('grid')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                viewMode === 'grid'
+                  ? 'bg-cyan-500 text-black shadow-md'
+                  : 'text-slate-300 hover:text-white'
+              }`}
+            >
+              <Activity className="w-3.5 h-3.5" />
+              <span>Diagnostics Grid</span>
+            </button>
+          </div>
+
+          <span className="text-[11px] text-zinc-400 font-mono">
+            {viewMode === 'stack' ? 'Unified 7-tier ecosystem stack' : 'Grouped service health checks'}
+          </span>
+        </div>
+
         {/* Body Content */}
         <div className="p-3.5 sm:p-6 overflow-y-auto space-y-5 sm:space-y-6 flex-1">
           {error && (
@@ -585,7 +626,13 @@ const ServiceStatusModal: React.FC<ServiceStatusModalProps> = ({
             </div>
           )}
 
-          {report &&
+          {viewMode === 'stack' ? (
+            <ArchitectureStackPanel
+              getAuthHeaders={getAuthHeaders}
+              showLiveStatus={true}
+            />
+          ) : (
+            report &&
             GROUP_ORDER.map((groupName) => {
               const items = groupedServices[groupName];
               if (!items || items.length === 0) return null;
@@ -644,7 +691,8 @@ const ServiceStatusModal: React.FC<ServiceStatusModalProps> = ({
                   </div>
                 </div>
               );
-            })}
+            })
+          )}
         </div>
       </div>
     </div>

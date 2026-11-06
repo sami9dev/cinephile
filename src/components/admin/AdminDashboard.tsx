@@ -75,6 +75,7 @@ import { detectServer } from '@/lib/serverDetector';
 import { AdminFilmReelGraphic } from '@/components/admin/AdminFilmReelGraphic';
 import { AdminCinemaSilhouetteGraphic } from '@/components/admin/AdminCinemaSilhouetteGraphic';
 import { ServiceStatusPanel } from '@/components/admin/ServiceStatusPanel';
+import { ArchitectureStackPanel } from '@/components/admin/ArchitectureStackPanel';
 
 const DEFAULT_ADMIN_USER = 'shyam';
 
@@ -4715,6 +4716,16 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
             )}
           </div>
 
+          {/* Production Architecture & Infrastructure Stack (7-Tier Ecosystem) */}
+          <div className="p-4 sm:p-6 rounded-2xl sm:rounded-[26px] bg-[#090d18]/90 backdrop-blur-xl border border-cyan-500/30 shadow-2xl space-y-4">
+            <ArchitectureStackPanel
+              getAuthHeaders={getAdminAuthHeaders}
+              title="Core Ecosystem Architecture & Infrastructure"
+              subtitle="Hosting, edge runtimes, primary databases, high-speed caches, APIs, and automation"
+              showLiveStatus={true}
+            />
+          </div>
+
           {/* Bottom Status Bar */}
           <footer className="mt-6 p-4 rounded-2xl bg-[#080d19]/90 border border-cyan-500/30 backdrop-blur-xl flex flex-col sm:flex-row items-center justify-between gap-4 shadow-xl">
             <div className="flex items-center gap-3">
@@ -7887,6 +7898,16 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
               </p>
             )}
           </form>
+
+          {/* 7-Tier Ecosystem Architecture Stack */}
+          <div className="pt-6 border-t border-zinc-800">
+            <ArchitectureStackPanel
+              getAuthHeaders={getAdminAuthHeaders}
+              title="Integrated Infrastructure Stack (7 Cloud Services)"
+              subtitle="Live status and configuration overview of all 7 core cloud services"
+              showLiveStatus={true}
+            />
+          </div>
         </div>
       )}
 
