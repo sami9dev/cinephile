@@ -126,6 +126,16 @@ export const CANONICAL_MEDIA_MAP: Record<string, CanonicalMediaInfo> = {
     releaseDate: '2023-04-21',
     voteAverage: 6.8,
   },
+  // Panchayat (TV Series): TMDB TV 101352
+  '101352': {
+    canonicalId: 101352,
+    mediaType: 'tv',
+    title: 'Panchayat',
+    posterPath: '/ulwZb3l4WNnUdx2hwZ4frPpwh3E.jpg',
+    backdropPath: '/ulwZb3l4WNnUdx2hwZ4frPpwh3E.jpg',
+    releaseDate: '2020-04-03',
+    voteAverage: 8.8,
+  },
   // Oppenheimer (2023): IMDb tt15398776 / 15398776 <-> TMDB Movie 872585
   '872585': {
     canonicalId: 872585,
