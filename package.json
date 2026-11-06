@@ -12,6 +12,7 @@
     "deploy": "npx wrangler pages deploy"
   },
   "dependencies": {
+    "@opennextjs/cloudflare": "^1.20.6",
     "@supabase/supabase-js": "^2.117.3",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
@@ -29,7 +30,6 @@
     "typescript": "^5"
   },
   "devDependencies": {
-    "@opennextjs/cloudflare": "^1.20.6",
     "eslint": "^9",
     "eslint-config-next": "^16.3.8",
     "wrangler": "^4.128.0"
