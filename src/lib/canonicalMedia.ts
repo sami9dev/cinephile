@@ -126,16 +126,76 @@ export const CANONICAL_MEDIA_MAP: Record<string, CanonicalMediaInfo> = {
     releaseDate: '2023-04-21',
     voteAverage: 6.8,
   },
+  // Oppenheimer (2023): IMDb tt15398776 / 15398776 <-> TMDB Movie 872585
+  '872585': {
+    canonicalId: 872585,
+    mediaType: 'movie',
+    title: 'Oppenheimer',
+    posterPath: '/8Gxv8gSFCU0XGDykEGv7zR1n2ua.jpg',
+    backdropPath: '/neeNHeXjMF5fXoCJRsOmkNGC7q.jpg',
+    releaseDate: '2023-07-21',
+    voteAverage: 8.1,
+  },
+  '15398776': {
+    canonicalId: 872585,
+    mediaType: 'movie',
+    title: 'Oppenheimer',
+    posterPath: '/8Gxv8gSFCU0XGDykEGv7zR1n2ua.jpg',
+    backdropPath: '/neeNHeXjMF5fXoCJRsOmkNGC7q.jpg',
+    releaseDate: '2023-07-21',
+    voteAverage: 8.1,
+  },
+  'tt15398776': {
+    canonicalId: 872585,
+    mediaType: 'movie',
+    title: 'Oppenheimer',
+    posterPath: '/8Gxv8gSFCU0XGDykEGv7zR1n2ua.jpg',
+    backdropPath: '/neeNHeXjMF5fXoCJRsOmkNGC7q.jpg',
+    releaseDate: '2023-07-21',
+    voteAverage: 8.1,
+  },
+  // Interstellar (2014): IMDb tt0816692 / 816692 <-> TMDB Movie 157336
+  '157336': {
+    canonicalId: 157336,
+    mediaType: 'movie',
+    title: 'Interstellar',
+    posterPath: '/gEU2QniE6E77NI6lCU6MxlNBvIx.jpg',
+    backdropPath: '/rAiYTsqBkRefbitUDBhApLbhQnl.jpg',
+    releaseDate: '2014-11-05',
+    voteAverage: 8.4,
+  },
+  '816692': {
+    canonicalId: 157336,
+    mediaType: 'movie',
+    title: 'Interstellar',
+    posterPath: '/gEU2QniE6E77NI6lCU6MxlNBvIx.jpg',
+    backdropPath: '/rAiYTsqBkRefbitUDBhApLbhQnl.jpg',
+    releaseDate: '2014-11-05',
+    voteAverage: 8.4,
+  },
+  'tt0816692': {
+    canonicalId: 157336,
+    mediaType: 'movie',
+    title: 'Interstellar',
+    posterPath: '/gEU2QniE6E77NI6lCU6MxlNBvIx.jpg',
+    backdropPath: '/rAiYTsqBkRefbitUDBhApLbhQnl.jpg',
+    releaseDate: '2014-11-05',
+    voteAverage: 8.4,
+  },
 };
 
 export function resolveCanonicalMedia(id: string | number, _currentMediaType?: string): CanonicalMediaInfo | null {
-  const strId = String(id).trim();
+  const strId = String(id || '').trim();
+  if (!strId) return null;
   const normalizedKey = strId.startsWith('tt') ? strId.replace(/^tt0*/, '') : strId;
   if (CANONICAL_MEDIA_MAP[normalizedKey]) {
     return CANONICAL_MEDIA_MAP[normalizedKey];
   }
   if (CANONICAL_MEDIA_MAP[strId]) {
     return CANONICAL_MEDIA_MAP[strId];
+  }
+  if (CANONICAL_MEDIA_MAP[strId.toLowerCase()]) {
+    return CANONICAL_MEDIA_MAP[strId.toLowerCase()];
   }
   return null;
 }

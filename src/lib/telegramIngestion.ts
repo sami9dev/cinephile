@@ -73,6 +73,25 @@ async function resolveTmdbMedia(params: {
 }) {
   const { imdbId, tmdbId, titleQuery, year, mediaTypeHint } = params;
 
+  // 0. Check Canonical dictionary first (instant & resilient offline/ISP-safe)
+  const canonicalCandidate = (tmdbId && resolveCanonicalMedia(tmdbId)) ||
+    (imdbId && resolveCanonicalMedia(imdbId)) ||
+    (titleQuery && resolveCanonicalMedia(titleQuery));
+
+  if (canonicalCandidate) {
+    return {
+      id: canonicalCandidate.canonicalId,
+      title: canonicalCandidate.title,
+      name: canonicalCandidate.title,
+      poster_path: canonicalCandidate.posterPath,
+      backdrop_path: canonicalCandidate.backdropPath || canonicalCandidate.posterPath,
+      release_date: canonicalCandidate.releaseDate,
+      first_air_date: canonicalCandidate.releaseDate,
+      vote_average: canonicalCandidate.voteAverage || 8.0,
+      media_type: canonicalCandidate.mediaType || mediaTypeHint || 'movie',
+    } as any;
+  }
+
   // 1. If explicit TMDB ID is present
   if (tmdbId) {
     try {
@@ -347,6 +366,20 @@ export async function processTelegramIngestion(
     mergedLinksMap.set(l.url, l);
   });
 
+  const existingPoster = existingLinks.find(
+    (l) => l.posterPath && typeof l.posterPath === 'string' && !l.posterPath.includes('placeholder')
+  )?.posterPath;
+  const existingBackdrop = existingLinks.find(
+    (l) => l.backdropPath && typeof l.backdropPath === 'string' && !l.backdropPath.includes('placeholder')
+  )?.backdropPath;
+
+  const resolvedPoster = (tmdb?.poster_path && !tmdb.poster_path.includes('placeholder'))
+    ? tmdb.poster_path
+    : (existingPoster || null);
+  const resolvedBackdrop = (tmdb?.backdrop_path && !tmdb.backdrop_path.includes('placeholder'))
+    ? tmdb.backdrop_path
+    : (existingBackdrop || resolvedPoster || null);
+
   const ingestedItems: IngestedReleaseItem[] = [];
 
   for (const item of preparedReleases) {
@@ -359,8 +392,8 @@ export async function processTelegramIngestion(
       mediaType,
       title: item.releaseTitle,
       movieTitle: officialTitle,
-      posterPath: tmdb?.poster_path || null,
-      backdropPath: tmdb?.backdrop_path || null,
+      posterPath: resolvedPoster,
+      backdropPath: resolvedBackdrop,
       releaseDate,
       voteAverage: tmdb?.vote_average || 7.8,
       url: item.url,

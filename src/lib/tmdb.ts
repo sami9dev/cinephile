@@ -448,7 +448,7 @@ export async function getTitleDetails(mediaType: 'movie' | 'tv', id: number | st
         const supabase = getSupabaseAdminClient();
         if (supabase) {
           const { data } = await supabase
-            .from('curated_links')
+            .from('links')
             .select('*')
             .eq('movie_id', strId)
             .limit(1)
@@ -680,8 +680,9 @@ export function getLightweightTitleCard(
   doc: any = {},
   linksCount = 1
 ): TitleDetails {
-  const numId = Number(id) || 1;
-  const canonical = resolveCanonicalMedia(numId, mediaType);
+  const strId = String(id || '').trim();
+  const canonical = resolveCanonicalMedia(strId, mediaType) || (Number(id) ? resolveCanonicalMedia(Number(id), mediaType) : null);
+  const numId = canonical?.canonicalId || Number(id) || 1;
   const effectiveMediaType = canonical?.mediaType || mediaType;
   const effectiveId = canonical?.canonicalId || numId;
   const key = `${effectiveMediaType}-${effectiveId}`;
@@ -703,8 +704,12 @@ export function getLightweightTitleCard(
     const cleanPosterPath = cleanStr(doc.posterPath) || cleanStr(doc.poster_path);
     const cleanBackdropPath = cleanStr(doc.backdropPath) || cleanStr(doc.backdrop_path);
 
-    const poster = cleanPosterPath || canonical?.posterPath || cleanBackdropPath || canonical?.backdropPath || '/placeholder-poster.svg';
-    const backdrop = cleanBackdropPath || canonical?.backdropPath || cleanPosterPath || canonical?.posterPath || '/placeholder-backdrop.svg';
+    let poster = cleanPosterPath || canonical?.posterPath || cleanBackdropPath || canonical?.backdropPath;
+    if (!poster) {
+      const fallbackCanonical = resolveCanonicalMedia(cleanDocTitle || rawTitle);
+      poster = fallbackCanonical?.posterPath || '/placeholder-poster.svg';
+    }
+    const backdrop = cleanBackdropPath || canonical?.backdropPath || poster || '/placeholder-backdrop.svg';
 
     const releaseDate = cleanStr(doc.releaseDate) || canonical?.releaseDate || '';
     const overview = doc.overview || `${rawTitle} is available for streaming & high-speed download on CineFuel.`;
