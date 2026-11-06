@@ -9,6 +9,7 @@
     "lint": "eslint",
     "bot": "node scripts/telegramBot.mjs",
     "doctor": "node scripts/doctor.mjs",
+    "supabase:audit": "node scripts/audit-and-sync-supabase.mjs",
     "cf:build": "opennextjs-cloudflare build --config wrangler.production.toml",
     "cf:deploy": "opennextjs-cloudflare deploy --config wrangler.production.toml",
     "cf:preview": "opennextjs-cloudflare preview --config wrangler.production.toml",
