@@ -3,7 +3,6 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import dns from 'dns';
 import { Redis } from '@upstash/redis';
-import { MongoClient } from 'mongodb';
 import http from 'http';
 import { parseReleaseDetails, formatTelegramReleaseSummary } from '../src/lib/releaseParser.ts';
 import { resolveCanonicalMedia } from '../src/lib/canonicalMedia.ts';
@@ -73,6 +72,7 @@ if (REDIS_URL && REDIS_TOKEN) {
 let mongoDb = null;
 if (MONGODB_URI) {
   try {
+    const { MongoClient } = await import('mongodb');
     const mongoClient = new MongoClient(MONGODB_URI);
     mongoClient.connect().then(() => {
       mongoDb = mongoClient.db('cinefuel');
