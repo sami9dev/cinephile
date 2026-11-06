@@ -9,7 +9,10 @@
     "lint": "eslint",
     "bot": "node scripts/telegramBot.mjs",
     "doctor": "node scripts/doctor.mjs",
-    "deploy": "npx wrangler pages deploy"
+    "cf:build": "opennextjs-cloudflare build --config wrangler.production.toml",
+    "cf:deploy": "opennextjs-cloudflare deploy --config wrangler.production.toml",
+    "cf:preview": "opennextjs-cloudflare preview --config wrangler.production.toml",
+    "deploy": "opennextjs-cloudflare build --config wrangler.production.toml && opennextjs-cloudflare deploy --config wrangler.production.toml"
   },
   "dependencies": {
     "@opennextjs/cloudflare": "^1.20.6",
@@ -33,6 +36,6 @@
   "devDependencies": {
     "eslint": "^9",
     "eslint-config-next": "^16.3.8",
-    "wrangler": "^4.128.0"
+    "wrangler": "^4.158.0"
   }
 }

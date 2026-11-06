@@ -79,4 +79,5 @@ backups/
 
 # Local workspace tools
 .ua/
+.wrangler/
 
