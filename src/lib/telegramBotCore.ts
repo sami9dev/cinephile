@@ -511,3 +511,7 @@ ${meta.size ? `💾 *Size:* \`${meta.size}\`\n` : ''}🌐 *View on Website:*
 \`${primaryUrl}\``,
   };
 }
+
+export * from './telegramIngestion';
+export * from './hubcloudParser';
+

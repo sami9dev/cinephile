@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { processTelegramMessage, AUTHORIZED_TELEGRAM_IDS } from '@/lib/telegramBotCore';
+import { processTelegramIngestion } from '@/lib/telegramIngestion';
 import { getEnv } from '@/lib/env';
 import { validateAdminAuth } from '@/lib/adminAuth';
 import {
@@ -60,7 +61,7 @@ async function sendTelegramPhotoCard(chatId: number, card: any) {
     cleanOutline = cleanOutline.slice(0, 237) + '...';
   }
 
-  const caption = 
+  const caption = card.rawCaption ||
 `⚡ <b>${escapeHtml(card.title?.toUpperCase())} ${card.year ? `(${card.year})` : ''}</b>
 ─────────────────────────────
 ⭐ <b>Rating:</b> ${card.rating || '6.5'}/10
@@ -144,13 +145,13 @@ export async function POST(request: NextRequest) {
     const update = await request.json();
 
     const message = update.message || update.edited_message;
-    if (!message || !message.text) {
-      return NextResponse.json({ ok: true, note: 'No text message' });
+    if (!message || (!message.text && !message.caption && !message.document && !message.video)) {
+      return NextResponse.json({ ok: true, note: 'No message content to process' });
     }
 
     const chatId = message.chat.id;
     const fromId = message.from ? message.from.id : chatId;
-    const text = message.text;
+    const text = message.text || message.caption || '';
     const botToken = getBotToken();
 
     // Send typing status immediately to Telegram
@@ -258,6 +259,43 @@ I deliver instant updates on your movie & TV requests and broken link reports.
     }
 
     // Case 3: Admin auto-uploader messages
+    const hasDocOrVideo = !!(message.document || message.video);
+    const hasLinks = /https?:\/\//i.test(text);
+
+    if (isAdmin && (hasDocOrVideo || hasLinks)) {
+      const ingestRes = await processTelegramIngestion({
+        text: message.text || '',
+        caption: message.caption || '',
+        document: message.document ? {
+          file_name: message.document.file_name,
+          file_size: message.document.file_size,
+          mime_type: message.document.mime_type,
+        } : undefined,
+        video: message.video ? {
+          file_name: message.video.file_name,
+          file_size: message.video.file_size,
+        } : undefined,
+        fromId,
+        senderName: message.from?.first_name || 'Admin',
+      });
+
+      if (ingestRes.success && ingestRes.htmlCard) {
+        await sendTelegramPhotoCard(chatId, {
+          photoUrl: ingestRes.htmlCard.photoUrl,
+          title: ingestRes.movie?.title || 'Release',
+          year: ingestRes.movie?.year,
+          mediaType: ingestRes.movie?.mediaType,
+          movieId: ingestRes.movie?.id,
+          rating: ingestRes.movie?.rating,
+          genres: ingestRes.movie?.genres,
+          outline: ingestRes.movie?.overview,
+          pageUrl: ingestRes.movie?.pageUrl,
+          rawCaption: ingestRes.htmlCard.caption,
+        });
+        return NextResponse.json({ ok: true, processed: true, ingestion: ingestRes });
+      }
+    }
+
     const result = await processTelegramMessage(fromId, text);
 
     if ((result as any).cards && (result as any).cards.length > 0) {

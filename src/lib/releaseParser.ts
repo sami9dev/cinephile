@@ -555,3 +555,6 @@ export function formatTelegramReleaseSummary(detailsOrTitle: ReleaseDetails | st
 
   return details.summaryLine;
 }
+
+export * from './hubcloudParser';
+

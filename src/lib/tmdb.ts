@@ -2,6 +2,13 @@ import { TitleDetails, PersonDetails, WatchProvidersData } from '@/types';
 import { MOCK_TITLES, TRENDING_LIST, TOP_RATED_LIST, UPCOMING_LIST } from './mockData';
 import { resolveCanonicalMedia, CANONICAL_MEDIA_MAP, CanonicalMediaInfo } from './canonicalMedia';
 
+if (typeof window === 'undefined') {
+  try {
+    const dns = require('dns');
+    dns.setDefaultResultOrder?.('ipv4first');
+  } catch {}
+}
+
 const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
 const TMDB_IMAGE_BASE = 'https://image.tmdb.org/t/p';
 
@@ -83,7 +90,7 @@ async function tmdbFetch<T>(endpoint: string, params: Record<string, string | nu
   try {
     const res = await fetch(`${TMDB_BASE_URL}${endpoint}?${searchParams.toString()}`, {
       next: { revalidate: 3600 },
-      signal: AbortSignal.timeout(2500),
+      signal: AbortSignal.timeout(7000),
     });
     if (!res.ok) {
       return null;
@@ -274,22 +281,8 @@ export async function getTitleDetails(mediaType: 'movie' | 'tv', id: number | st
     };
   }
 
-  // 1. Try TMDB API first (direct mediaType + ID)
-  const data = await tmdbFetch<TitleDetails>(`/${mediaType}/${numId}`, {
-    append_to_response: 'credits,videos,similar,recommendations,watch/providers,external_ids',
-  });
-
-  if (data && (data.title || data.name)) {
-    return {
-      ...data,
-      media_type: mediaType,
-      title: data.title || data.name || 'Untitled',
-      imdb_rating: data.vote_average ? Number((data.vote_average + 0.3).toFixed(1)) : 8.4,
-    };
-  }
-
-  // 1b. Check if the ID is an IMDb ID (e.g. tt4550098 or numeric 4550098 / 13623632)
-  const isLikelyImdb = strId.startsWith('tt') || (strId.length >= 7 && /^\d+$/.test(strId));
+  // 1a. Check if the ID is an IMDb ID (e.g. tt15398776 or tt4550098)
+  const isLikelyImdb = strId.startsWith('tt') || (strId.length >= 7 && /^\d+$/.test(strId) && !Number(id));
   const imdbId = strId.startsWith('tt') ? strId : (isLikelyImdb ? `tt${strId.padStart(7, '0')}` : null);
   if (imdbId) {
     try {
@@ -308,7 +301,7 @@ export async function getTitleDetails(mediaType: 'movie' | 'tv', id: number | st
           if (fullMatch && (fullMatch.title || fullMatch.name)) {
             return {
               ...fullMatch,
-              id: numId,
+              id: match.id,
               media_type: targetType,
               title: fullMatch.title || fullMatch.name || 'Untitled',
               imdb_rating: fullMatch.vote_average ? Number((fullMatch.vote_average + 0.3).toFixed(1)) : 8.4,
@@ -321,6 +314,22 @@ export async function getTitleDetails(mediaType: 'movie' | 'tv', id: number | st
         }
       }
     } catch {}
+  }
+
+  // 1b. Try TMDB API first (direct mediaType + ID)
+  if (numId > 0 && !strId.startsWith('tt')) {
+    const data = await tmdbFetch<TitleDetails>(`/${mediaType}/${numId}`, {
+      append_to_response: 'credits,videos,similar,recommendations,watch/providers,external_ids',
+    });
+
+    if (data && (data.title || data.name)) {
+      return {
+        ...data,
+        media_type: mediaType,
+        title: data.title || data.name || 'Untitled',
+        imdb_rating: data.vote_average ? Number((data.vote_average + 0.3).toFixed(1)) : 8.4,
+      };
+    }
   }
 
   // 1c. Check canonical media dictionary

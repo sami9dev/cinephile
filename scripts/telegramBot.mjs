@@ -49,10 +49,11 @@ process.on('unhandledRejection', (reason) => {
 });
 
 const TMDB_API_KEY = (process.env.TMDB_API_KEY || process.env.NEXT_PUBLIC_TMDB_API_KEY || '').trim();
-const SITE_URL = (process.env.LIVE_SITE_URL || process.env.NEXT_PUBLIC_SITE_URL || 'https://cinephile.sk6216071.workers.dev')
-  .replace('http://localhost:3000', 'https://cinephile.sk6216071.workers.dev')
-  .replace('cineflue084.sk6216071.workers.dev', 'cinephile.sk6216071.workers.dev')
-  .replace(/\/+$/, '');
+const SITE_URL = (
+  process.env.LIVE_SITE_URL ||
+  process.env.NEXT_PUBLIC_SITE_URL ||
+  (process.env.RENDER ? 'https://cinephile-web.onrender.com' : 'http://localhost:3001')
+).replace(/\/+$/, '');
 const DATA_FILE = path.join(rootDir, 'src', 'data', 'serverLinks.json');
 
 const REDIS_URL = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
@@ -1271,6 +1272,58 @@ async function sendMediaPostCard(chatId, {
   });
 }
 
+/**
+ * Stage 6: Send confirmation card with movie poster, badges, and live site link
+ */
+async function sendHtmlIngestionCard(chatId, htmlCard, fallbackSummary) {
+  const destinationUrl = htmlCard?.destinationUrl || `${SITE_URL}`;
+  const replyMarkup = {
+    inline_keyboard: [
+      [
+        {
+          text: `🚀 Download on CineFuel`,
+          url: destinationUrl,
+        },
+      ],
+    ],
+  };
+
+  if (htmlCard?.photoUrl) {
+    try {
+      const res = await safeFetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId,
+          photo: htmlCard.photoUrl,
+          caption: htmlCard.caption,
+          parse_mode: 'HTML',
+          reply_markup: replyMarkup,
+        }),
+        timeoutMs: 10000,
+      });
+      const data = await res?.json();
+      if (data?.ok) return data;
+      console.warn('sendPhoto failed in ingestion card, falling back to sendMessage:', data?.description);
+    } catch (e) {
+      console.warn('sendPhoto error in ingestion card, falling back to sendMessage:', e.message);
+    }
+  }
+
+  return await safeFetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: chatId,
+      text: htmlCard?.caption || fallbackSummary,
+      parse_mode: 'HTML',
+      reply_markup: replyMarkup,
+      disable_web_page_preview: false,
+    }),
+    timeoutMs: 8000,
+  });
+}
+
 async function sendTelegram(chatId, text, replyMarkup = null, parseMode = 'Markdown') {
   try {
     const payload = {
@@ -2404,6 +2457,64 @@ I will auto-sense the Season number, quality, audio, and publish it under the Se
     if (pending && pending.mode) {
       activeMode = pending.mode;
       pendingChatState.delete(chatId);
+    }
+  }
+
+  // ===========================================================================
+  // 6-STAGE ADVANCED RELEASE INGESTION PIPELINE (Bare links, Channel posts, Direct files)
+  // ===========================================================================
+  const hasDocOrVideo = !!(msg.document || msg.video);
+  const hasLinks = /https?:\/\/[^\s<>'"`]+/i.test(textToProcess);
+  const isReleaseSubmission = hasDocOrVideo || hasLinks || (activeMode && textToProcess.length >= 5);
+
+  if (isReleaseSubmission) {
+    sendChatAction(chatId, 'upload_photo').catch(() => {});
+
+    try {
+      const ingestPayload = {
+        text: textToProcess,
+        caption: msg.caption || '',
+        document: msg.document ? {
+          file_name: msg.document.file_name,
+          file_size: msg.document.file_size,
+          mime_type: msg.document.mime_type,
+        } : undefined,
+        video: msg.video ? {
+          file_name: msg.video.file_name,
+          file_size: msg.video.file_size,
+        } : undefined,
+        fromId,
+        senderName: msg.from?.first_name || 'Shyam',
+      };
+
+      const ingestUrl = `${SITE_URL}/api/telegram/ingest`;
+      const adminSecret = process.env.ADMIN_SECRET_KEY || process.env.ADMIN_PASSWORD || '';
+
+      const apiRes = await safeFetch(ingestUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${adminSecret}`,
+          'x-admin-key': adminSecret,
+          'x-telegram-token': BOT_TOKEN,
+        },
+        body: JSON.stringify(ingestPayload),
+        timeoutMs: 25000,
+      });
+
+      const result = await apiRes?.json();
+
+      if (result && result.success && result.htmlCard) {
+        await sendHtmlIngestionCard(chatId, result.htmlCard, result.replySummary);
+        return;
+      } else if (result && result.error && !result.success) {
+        console.warn('Ingestion pipeline reported note:', result.error);
+        if (hasDocOrVideo) {
+          return sendTelegram(chatId, `⚠️ *Ingestion Notice:*\n${result.error}`);
+        }
+      }
+    } catch (ingestErr) {
+      console.warn('Advanced ingestion pipeline call note (falling back to legacy blocks):', ingestErr.message);
     }
   }
 
