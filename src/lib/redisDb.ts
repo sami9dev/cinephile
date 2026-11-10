@@ -1590,6 +1590,119 @@ export interface PaginatedUploadedResult {
   source?: 'cache' | 'database';
 }
 
+function buildCatalogCardsPayload(
+  aggResults: any[],
+  safePage: number,
+  safeLimit: number,
+  total: number,
+  totalPages: number
+): PaginatedUploadedResult {
+  const cleanString = (val?: any): string | null => {
+    if (typeof val !== 'string') return null;
+    const trimmed = val.trim();
+    if (!trimmed || trimmed === 'undefined' || trimmed === 'null' || trimmed.includes('placeholder')) return null;
+    return trimmed;
+  };
+
+  const rawItems = aggResults.map((item: any) => {
+    const mId = String(item._id || item.latestDoc?.movieId || '');
+    const baseDoc = item.latestDoc || {};
+    const doc = {
+      ...baseDoc,
+      movieTitle: cleanString(baseDoc.movieTitle) || cleanString(item.groupMovieTitle) || '',
+      posterPath:
+        cleanString(baseDoc.posterPath) ||
+        cleanString(item.groupPosterPath) ||
+        cleanString(baseDoc.poster_path) ||
+        cleanString(item.groupPosterPathSnake) ||
+        null,
+      backdropPath:
+        cleanString(baseDoc.backdropPath) ||
+        cleanString(item.groupBackdropPath) ||
+        cleanString(baseDoc.backdrop_path) ||
+        cleanString(item.groupBackdropPathSnake) ||
+        null,
+    };
+
+    const canonical = resolveCanonicalMedia(mId);
+    let mediaType: 'movie' | 'tv' = 'movie';
+
+    const cleanMediaTypes = (item.allMediaTypes || []).filter((t: any) => t === 'movie' || t === 'tv');
+    if (canonical?.mediaType) {
+      mediaType = canonical.mediaType;
+    } else {
+      const rawExplicit = baseDoc.mediaType === 'movie' || baseDoc.mediaType === 'tv'
+        ? baseDoc.mediaType
+        : (cleanMediaTypes.includes('movie') ? 'movie' : (cleanMediaTypes.includes('tv') ? 'tv' : undefined));
+
+      if (rawExplicit === 'movie') {
+        mediaType = 'movie';
+      } else if (rawExplicit === 'tv') {
+        mediaType = 'tv';
+      } else {
+        const cleanTitle = (doc.title || '').replace(/\b(?:x26[45]|h26[45]|hevc|avc|[1257]\.[01]|1080p|2160p|720p|4k)\b/gi, ' ');
+        const hasStrictSeasonPattern = /\b[Ss](?:eason\s*)?0*[1-9]\d{0,1}[Ee]0*[1-9]\d{0,2}\b/i.test(cleanTitle);
+        const isTv =
+          (typeof doc.seasonNumber === 'number' && doc.seasonNumber > 0 && doc.seasonNumber < 200 && (doc.linkType === 'single_episode' || doc.linkType === 'zip_pack' || doc.category === 'SingleEpisode' || doc.category === 'ZipPack')) ||
+          hasStrictSeasonPattern;
+        mediaType = isTv ? 'tv' : 'movie';
+      }
+    }
+
+    const card = getLightweightTitleCard(mediaType, mId, doc, item.linksCount || 1);
+    return {
+      ...card,
+      uploadMeta: extractUploadMeta(doc, mediaType, card),
+    };
+  }).filter(Boolean) as TitleDetails[];
+
+  const items: TitleDetails[] = [];
+  const seenCardMap = new Map<string, number>();
+
+  for (const card of rawItems) {
+    const cardKey = `${card.media_type}:${card.id}`;
+    if (seenCardMap.has(cardKey)) {
+      const existingIdx = seenCardMap.get(cardKey)!;
+      const existing = items[existingIdx];
+      existing.linksCount = (existing.linksCount || 1) + (card.linksCount || 1);
+      const existingHasPlaceholder = !existing.poster_path || existing.poster_path.includes('placeholder');
+      const incomingHasRealPoster = card.poster_path && !card.poster_path.includes('placeholder');
+      if (existingHasPlaceholder && incomingHasRealPoster) {
+        existing.poster_path = card.poster_path;
+        existing.backdrop_path = card.backdrop_path || card.poster_path;
+        existing.vote_average = card.vote_average || existing.vote_average;
+      }
+    } else {
+      seenCardMap.set(cardKey, items.length);
+      items.push(card);
+    }
+  }
+
+  const hasMore = safePage < totalPages;
+  const lastItem = aggResults[aggResults.length - 1];
+  const nextCursor =
+    hasMore && lastItem
+      ? encodeCatalogCursor({
+          page: safePage + 1,
+          sortDate: lastItem.sortDate,
+          movieId: String(lastItem._id),
+        })
+      : null;
+
+  const prevCursor = safePage > 1 ? encodeCatalogCursor({ page: safePage - 1 }) : null;
+
+  return {
+    items,
+    total,
+    page: safePage,
+    totalPages,
+    limit: safeLimit,
+    nextCursor,
+    prevCursor,
+    hasMore,
+  };
+}
+
 /**
  * Fetches paginated titles that CONTAIN CUSTOM LINKS exclusively.
  * Implements TRUE DATABASE-LEVEL PAGINATION, PROJECTION, and REDIS PAGE CACHING.
@@ -1660,7 +1773,67 @@ export async function getPaginatedUploadedTitles(
   }
 
   const queryPromise = (async (): Promise<PaginatedUploadedResult> => {
-    // 1. Database-Level Query on Supabase
+    // 1. High-Performance Full Catalog from Redis Summary (All 486 Titles)
+    if (redisClient) {
+      try {
+        const rawSummary = await redisClient.get<string | any[]>('cinefuel:all_titles_summary');
+        let summaryList: any[] | null = null;
+        if (typeof rawSummary === 'string') {
+          try { summaryList = JSON.parse(rawSummary); } catch {}
+        } else if (Array.isArray(rawSummary)) {
+          summaryList = rawSummary;
+        }
+
+        if (summaryList && Array.isArray(summaryList) && summaryList.length > 0) {
+          let filteredGroups = summaryList;
+          if (type === 'movie') {
+            filteredGroups = filteredGroups.filter((g) => g.latestDoc?.mediaType === 'movie' || g.allMediaTypes?.includes('movie'));
+          } else if (type === 'tv') {
+            filteredGroups = filteredGroups.filter((g) => g.latestDoc?.mediaType === 'tv' || g.allMediaTypes?.includes('tv'));
+          }
+          if (query && query.trim()) {
+            const q = query.trim().toLowerCase();
+            filteredGroups = filteredGroups.filter((g) =>
+              (g.groupMovieTitle && g.groupMovieTitle.toLowerCase().includes(q)) ||
+              (g.latestDoc?.title && g.latestDoc.title.toLowerCase().includes(q)) ||
+              (String(g._id) === q)
+            );
+          }
+          if (quality) {
+            const ql = quality.toLowerCase();
+            filteredGroups = filteredGroups.filter((g) =>
+              g.latestDoc?.quality && g.latestDoc.quality.toLowerCase().includes(ql)
+            );
+          }
+          if (audio) {
+            const al = audio.toLowerCase();
+            filteredGroups = filteredGroups.filter((g) =>
+              g.latestDoc?.audioLanguage && g.latestDoc.audioLanguage.toLowerCase().includes(al)
+            );
+          }
+
+          if (options.sort === 'top_rated') {
+            filteredGroups.sort((a, b) => (b.groupVoteAverage || 0) - (a.groupVoteAverage || 0));
+          } else {
+            filteredGroups.sort((a, b) => new Date(b.sortDate).getTime() - new Date(a.sortDate).getTime());
+          }
+
+          const total = filteredGroups.length;
+          const totalPages = Math.max(1, Math.ceil(total / safeLimit));
+          const aggResults = filteredGroups.slice((safePage - 1) * safeLimit, safePage * safeLimit);
+
+          const resultPayload = buildCatalogCardsPayload(aggResults, safePage, safeLimit, total, totalPages);
+          if (redisClient && resultPayload.items.length > 0) {
+            await redisClient.set(cacheKey, JSON.stringify(resultPayload), { ex: CATALOG_CACHE_TTL_SECONDS }).catch(() => {});
+          }
+          return { ...resultPayload, source: 'cache' as any };
+        }
+      } catch (sumErr: any) {
+        console.warn('Redis titles summary read error (continuing with DB fallback):', sumErr.message);
+      }
+    }
+
+    // 2. Database-Level Query on Supabase (Fallback)
     try {
       const supabase = getSupabaseAdminClient();
       if (supabase) {
@@ -1741,132 +1914,12 @@ export async function getPaginatedUploadedTitles(
           const totalPages = Math.max(1, Math.ceil(total / safeLimit));
           const aggResults = allGroups.slice((safePage - 1) * safeLimit, safePage * safeLimit);
 
-        // Cleanse string literals "undefined", "null", or placeholder strings
-        const cleanString = (val?: any): string | null => {
-          if (typeof val !== 'string') return null;
-          const trimmed = val.trim();
-          if (!trimmed || trimmed === 'undefined' || trimmed === 'null' || trimmed.includes('placeholder')) return null;
-          return trimmed;
-        };
+          const resultPayload = buildCatalogCardsPayload(aggResults, safePage, safeLimit, total, totalPages);
 
-        // Enrich the current page entries (at most safeLimit records) into lightweight card objects
-        const rawItems = aggResults.map((item: any) => {
-          const mId = String(item._id || item.latestDoc?.movieId || '');
-          const baseDoc = item.latestDoc || {};
-          const doc = {
-            ...baseDoc,
-            movieTitle: cleanString(baseDoc.movieTitle) || cleanString(item.groupMovieTitle) || '',
-            posterPath:
-              cleanString(baseDoc.posterPath) ||
-              cleanString(item.groupPosterPath) ||
-              cleanString(baseDoc.poster_path) ||
-              cleanString(item.groupPosterPathSnake) ||
-              null,
-            backdropPath:
-              cleanString(baseDoc.backdropPath) ||
-              cleanString(item.groupBackdropPath) ||
-              cleanString(baseDoc.backdrop_path) ||
-              cleanString(item.groupBackdropPathSnake) ||
-              null,
-          };
-
-          // Canonical Media Resolution (Authority over raw ID anomalies)
-          const canonical = resolveCanonicalMedia(mId);
-
-          // Strict Movie vs TV Classification:
-          // 1. Authoritative canonical mediaType takes highest priority if present
-          // 2. If explicit mediaType in document/group is 'movie', it is a MOVIE
-          // 3. If explicit mediaType is 'tv', it is TV
-          // 4. Filename codec tokens like x264, x265, 5.1, 7.1 must NEVER trigger TV/season detection!
-          let mediaType: 'movie' | 'tv' = 'movie';
-
-          // Detect conflict between stored media types in group
-          const cleanMediaTypes = (item.allMediaTypes || []).filter((t: any) => t === 'movie' || t === 'tv');
-          if (cleanMediaTypes.includes('movie') && cleanMediaTypes.includes('tv')) {
-            console.warn(`[Classification Conflict] Title ${mId} contains conflicting media types:`, cleanMediaTypes);
+          // Cache in Redis with 300s TTL
+          if (redisClient && resultPayload.items.length > 0) {
+            await redisClient.set(cacheKey, JSON.stringify(resultPayload), { ex: CATALOG_CACHE_TTL_SECONDS }).catch(() => {});
           }
-
-          if (canonical?.mediaType) {
-            mediaType = canonical.mediaType;
-          } else {
-            const rawExplicit = baseDoc.mediaType === 'movie' || baseDoc.mediaType === 'tv'
-              ? baseDoc.mediaType
-              : (cleanMediaTypes.includes('movie') ? 'movie' : (cleanMediaTypes.includes('tv') ? 'tv' : undefined));
-
-            if (rawExplicit === 'movie') {
-              mediaType = 'movie';
-            } else if (rawExplicit === 'tv') {
-              mediaType = 'tv';
-            } else {
-              // Safe explicit fallback: Only genuine season/episode patterns; NEVER audio/video codec tokens!
-              const cleanTitle = (doc.title || '').replace(/\b(?:x26[45]|h26[45]|hevc|avc|[1257]\.[01]|1080p|2160p|720p|4k)\b/gi, ' ');
-              const hasStrictSeasonPattern = /\b[Ss](?:eason\s*)?0*[1-9]\d{0,1}[Ee]0*[1-9]\d{0,2}\b/i.test(cleanTitle);
-              const isTv =
-                (typeof doc.seasonNumber === 'number' && doc.seasonNumber > 0 && doc.seasonNumber < 200 && (doc.linkType === 'single_episode' || doc.linkType === 'zip_pack' || doc.category === 'SingleEpisode' || doc.category === 'ZipPack')) ||
-                hasStrictSeasonPattern;
-              mediaType = isTv ? 'tv' : 'movie';
-            }
-          }
-
-          const card = getLightweightTitleCard(mediaType, mId, doc, item.linksCount || 1);
-          return {
-            ...card,
-            uploadMeta: extractUploadMeta(doc, mediaType, card),
-          };
-        }).filter(Boolean) as TitleDetails[];
-
-        // Deduplicate cards by canonical media ID + explicit media type
-        const items: TitleDetails[] = [];
-        const seenCardMap = new Map<string, number>();
-
-        for (const card of rawItems) {
-          const cardKey = `${card.media_type}:${card.id}`;
-          if (seenCardMap.has(cardKey)) {
-            const existingIdx = seenCardMap.get(cardKey)!;
-            const existing = items[existingIdx];
-            // Merge link counts
-            existing.linksCount = (existing.linksCount || 1) + (card.linksCount || 1);
-            // Upgrade artwork if existing has placeholder but incoming has genuine poster
-            const existingHasPlaceholder = !existing.poster_path || existing.poster_path.includes('placeholder');
-            const incomingHasRealPoster = card.poster_path && !card.poster_path.includes('placeholder');
-            if (existingHasPlaceholder && incomingHasRealPoster) {
-              existing.poster_path = card.poster_path;
-              existing.backdrop_path = card.backdrop_path || card.poster_path;
-              existing.vote_average = card.vote_average || existing.vote_average;
-            }
-          } else {
-            seenCardMap.set(cardKey, items.length);
-            items.push(card);
-          }
-        }
-        const hasMore = safePage < totalPages;
-        const lastItem = aggResults[aggResults.length - 1];
-        const nextCursor =
-          hasMore && lastItem
-            ? encodeCatalogCursor({
-                page: safePage + 1,
-                sortDate: lastItem.sortDate,
-                movieId: String(lastItem._id),
-              })
-            : null;
-
-        const prevCursor = safePage > 1 ? encodeCatalogCursor({ page: safePage - 1 }) : null;
-
-        const resultPayload: PaginatedUploadedResult = {
-          items,
-          total,
-          page: safePage,
-          totalPages,
-          limit: safeLimit,
-          nextCursor,
-          prevCursor,
-          hasMore,
-        };
-
-        // Cache in Redis with 300s TTL
-        if (redisClient && items.length > 0) {
-          await redisClient.set(cacheKey, JSON.stringify(resultPayload), { ex: CATALOG_CACHE_TTL_SECONDS }).catch(() => {});
-        }
 
           return { ...resultPayload, source: 'database' as any };
         }
