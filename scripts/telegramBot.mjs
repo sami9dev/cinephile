@@ -5,7 +5,33 @@ import dns from 'dns';
 import { Redis } from '@upstash/redis';
 import http from 'http';
 import { parseReleaseDetails, formatTelegramReleaseSummary } from '../src/lib/releaseParser.ts';
+import { parseHubCloudTitle } from '../src/lib/hubcloudParser.ts';
 import { resolveCanonicalMedia } from '../src/lib/canonicalMedia.ts';
+
+function extractQualityBadge(rawTitle, url, fallbackQuality) {
+  try {
+    if (rawTitle || url) {
+      const p = parseHubCloudTitle(rawTitle || '', url || '');
+      const tags = [
+        p.resolution !== 'Unknown' ? p.resolution : null,
+        p.ott ? (p.ott.code || p.ott.name).toUpperCase() : null,
+        p.source,
+        p.videoCodec,
+        p.hdr.length ? p.hdr.join('+') : null,
+      ].filter(Boolean);
+      if (tags.length > 0) {
+        return tags.join(' | ');
+      }
+    }
+  } catch {}
+
+  if (fallbackQuality && typeof fallbackQuality === 'string' && fallbackQuality.trim()) {
+    let clean = fallbackQuality.replace(/[\(\[\{].*?[\)\]\}]/g, '').trim();
+    clean = clean.replace(/\s*·\s*/g, ' | ').replace(/\s*\|\s*/g, ' | ');
+    if (clean) return clean;
+  }
+  return '1080p FHD | WEB-DL';
+}
 
 // Ensure IPv4 lookup precedence for stable TMDB API and external cloud connections
 try {
@@ -1184,26 +1210,28 @@ async function sendMediaPostCard(chatId, {
   pageUrl,
   autoMigrationNotice = '',
 }) {
-  const versionsLines = versions.map((v) => {
-    let q = v.quality || '1080p';
-    if (!q.includes('·')) {
-      if (/\b(?:2160p|2160|4k|uhd)\b/i.test(q)) q = '2160p';
-      else if (/\b(?:1080p|1080|fhd)\b/i.test(q)) q = '1080p';
-      else if (/\b(?:720p|720|hd)\b/i.test(q)) q = '720p';
-      else if (/\b(?:480p|480|sd)\b/i.test(q)) q = '480p';
-    }
-    const s = v.size ? `\n  ${v.size}` : '';
-    return `• ${q} :${s}`;
-  }).join('\n');
+  const versionsList = Array.isArray(versions) ? versions : [versions];
+  const uniqueQualities = Array.from(
+    new Set(
+      versionsList.map((v) => {
+        if (!v) return null;
+        if (typeof v === 'string') return v.trim();
+        const q = v.qualityTag || v.quality || v.name;
+        return typeof q === 'string' ? q.trim() : null;
+      }).filter(Boolean)
+    )
+  );
 
-  const versionsText = versionsLines || '• 1080p :\n  WEB-DL';
+  const versionsLines = uniqueQualities.length > 0
+    ? uniqueQualities.map((q) => `• <b>${escapeHtml(q)}</b>`).join('\n')
+    : '• <b>1080p FHD | WEB-DL</b>';
 
   let cleanOutline = (outline || 'Every release brings the cinema home.').trim();
   if (cleanOutline.length > 240) {
     cleanOutline = cleanOutline.slice(0, 237) + '...';
   }
 
-  const caption = 
+  let caption = 
 `⚡ <b>${escapeHtml(title.toUpperCase())} ${year ? `(${year})` : ''}</b>
 ─────────────────────────────
 ⭐ <b>Rating:</b> ${rating || '6.5'}/10
@@ -1214,13 +1242,36 @@ async function sendMediaPostCard(chatId, {
 <blockquote>${escapeHtml(cleanOutline)}</blockquote>
 
 📦 <b>Available Versions:</b>
-<pre>${escapeHtml(versionsText)}</pre>
+${versionsLines}
 
 🔊 <b>Audio Track:</b> ${escapeHtml(audio || 'Hindi, English')}
 
 👤 <b>Uploaded by:</b> #${uploadedBy.replace(/^#/, '')}
 
 🚀 ${channelHandle}${autoMigrationNotice ? `\n\n${autoMigrationNotice}` : ''}`;
+
+  if (caption.length > 1020) {
+    const maxOutline = Math.max(60, cleanOutline.length - (caption.length - 1020));
+    cleanOutline = cleanOutline.slice(0, maxOutline) + '...';
+    caption = 
+`⚡ <b>${escapeHtml(title.toUpperCase())} ${year ? `(${year})` : ''}</b>
+─────────────────────────────
+⭐ <b>Rating:</b> ${rating || '6.5'}/10
+🎭 <b>Genres:</b> ${escapeHtml(genres || 'Drama, Cinema')}
+─────────────────────────────
+
+📖 <b>Plot Outline:</b>
+<blockquote>${escapeHtml(cleanOutline)}</blockquote>
+
+📦 <b>Available Versions:</b>
+${versionsLines}
+
+🔊 <b>Audio Track:</b> ${escapeHtml(audio || 'Hindi, English')}
+
+👤 <b>Uploaded by:</b> #${uploadedBy.replace(/^#/, '')}
+
+🚀 ${channelHandle}${autoMigrationNotice ? `\n\n${autoMigrationNotice}` : ''}`;
+  }
 
   const destinationUrl = pageUrl || `${SITE_URL}/${mediaType}/${movieId}`;
   const replyMarkup = {
@@ -2732,6 +2783,7 @@ CineFuel Auto-Uploader is online! Send any movie or TV series link with details 
       pageUrl: `${SITE_URL}/${mediaType}/${movieId}`,
       tmdbItem,
       releaseSummary: meta.releaseSummary,
+      rawReleaseTitle: meta.rawReleaseTitle || block?.text || '',
     });
   }
 
@@ -2827,12 +2879,8 @@ CineFuel Auto-Uploader is online! Send any movie or TV series link with details 
       else cardTitle = `${item.title} - S${String(item.season).padStart(2, '0')}${item.episode ? `E${String(item.episode).padStart(2, '0')}` : ''}`;
     }
 
-    const versions = [
-      {
-        quality: item.releaseSummary || item.quality,
-        size: item.size || (item.quality.includes('2160p') ? '4K UHD' : 'WEB-DL'),
-      },
-    ];
+    const qualityTag = extractQualityBadge(item.rawReleaseTitle, item.url, item.quality);
+    const versions = [qualityTag];
 
     return await sendMediaPostCard(chatId, {
       photoUrl,
@@ -2852,7 +2900,7 @@ CineFuel Auto-Uploader is online! Send any movie or TV series link with details 
     });
   }
 
-  // Case B: Batch of TV Episodes for the SAME show and season (e.g. Daredevil Season 2 E01-E13)
+  // Case B: Batch of TV Episodes for the SAME show and season (e.g. Campus Drivers Season 1 with 78 episodes)
   const allSameTvSeason = publishedItems.length > 1 &&
     publishedItems.every(i => i.mediaType === 'tv' && i.movieId === publishedItems[0].movieId && i.season === publishedItems[0].season);
 
@@ -2860,17 +2908,12 @@ CineFuel Auto-Uploader is online! Send any movie or TV series link with details 
     const first = publishedItems[0];
     const { photoUrl, rating, genreList, outline } = extractMediaCardMeta(first);
 
-    const epNumbers = publishedItems.map(i => i.episode).filter(Boolean).sort((a, b) => a - b);
-    const epRange = epNumbers.length > 0 
-      ? `E${String(epNumbers[0]).padStart(2, '0')} - E${String(epNumbers[epNumbers.length - 1]).padStart(2, '0')}` 
-      : `${publishedItems.length} Episodes`;
-
-    const versions = [
-      {
-        quality: `${first.quality} (${epRange})`,
-        size: `${publishedItems.length} Episodes`,
-      },
-    ];
+    // Deduplicate distinct available version qualities across the entire episode batch!
+    const uniqueQualities = Array.from(
+      new Set(
+        publishedItems.map(i => extractQualityBadge(i.rawReleaseTitle, i.url, i.quality)).filter(Boolean)
+      )
+    );
 
     const allAudios = Array.from(new Set(publishedItems.map(i => i.audio).filter(Boolean))).join(', ') || 'Hindi, English';
 
@@ -2883,7 +2926,7 @@ CineFuel Auto-Uploader is online! Send any movie or TV series link with details 
       rating,
       genres: genreList,
       outline,
-      versions,
+      versions: uniqueQualities.length > 0 ? uniqueQualities : ['1080p FHD | WEB-DL'],
       audio: allAudios,
       uploadedBy: uploadedByTag,
       channelHandle,
@@ -2900,10 +2943,11 @@ CineFuel Auto-Uploader is online! Send any movie or TV series link with details 
     const first = publishedItems[0];
     const { photoUrl, rating, genreList, outline } = extractMediaCardMeta(first);
 
-    const versions = publishedItems.map((item) => ({
-      quality: item.quality,
-      size: item.size || (item.quality.includes('2160p') ? '4K UHD' : 'FHD WEB-DL'),
-    }));
+    const uniqueQualities = Array.from(
+      new Set(
+        publishedItems.map(i => extractQualityBadge(i.rawReleaseTitle, i.url, i.quality)).filter(Boolean)
+      )
+    );
 
     const allAudios = Array.from(new Set(publishedItems.map(i => i.audio).filter(Boolean))).join(', ') || 'Hindi, English';
 
@@ -2916,7 +2960,7 @@ CineFuel Auto-Uploader is online! Send any movie or TV series link with details 
       rating,
       genres: genreList,
       outline,
-      versions,
+      versions: uniqueQualities.length > 0 ? uniqueQualities : ['1080p FHD | WEB-DL'],
       audio: allAudios,
       uploadedBy: uploadedByTag,
       channelHandle,
@@ -2943,10 +2987,11 @@ CineFuel Auto-Uploader is online! Send any movie or TV series link with details 
       else cardTitle = `${first.title} - S${String(first.season).padStart(2, '0')}`;
     }
 
-    const versions = items.map((item) => ({
-      quality: item.quality,
-      size: item.size || 'HD',
-    }));
+    const uniqueQualities = Array.from(
+      new Set(
+        items.map(i => extractQualityBadge(i.rawReleaseTitle, i.url, i.quality)).filter(Boolean)
+      )
+    );
 
     const allAudios = Array.from(new Set(items.map(i => i.audio).filter(Boolean))).join(', ') || 'Hindi, English';
 
@@ -2959,7 +3004,7 @@ CineFuel Auto-Uploader is online! Send any movie or TV series link with details 
       rating,
       genres: genreList,
       outline,
-      versions,
+      versions: uniqueQualities.length > 0 ? uniqueQualities : ['1080p FHD | WEB-DL'],
       audio: allAudios,
       uploadedBy: uploadedByTag,
       channelHandle,

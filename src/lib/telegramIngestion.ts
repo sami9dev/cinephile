@@ -476,20 +476,25 @@ export async function processTelegramIngestion(
     ? (tmdb.poster_path.startsWith('http') ? tmdb.poster_path : `https://image.tmdb.org/t/p/w780${tmdb.poster_path.startsWith('/') ? '' : '/'}${tmdb.poster_path}`)
     : (tmdb?.backdrop_path ? (tmdb.backdrop_path.startsWith('http') ? tmdb.backdrop_path : `https://image.tmdb.org/t/p/w780${tmdb.backdrop_path.startsWith('/') ? '' : '/'}${tmdb.backdrop_path}`) : null);
 
-  const releaseLines = ingestedItems.map((item) => {
-    const p = item.parsed;
-    const tags = [
-      p.resolution !== 'Unknown' ? p.resolution : null,
-      p.ott ? p.ott.code : null,
-      p.source,
-      p.videoCodec,
-      p.hdr.length ? p.hdr.join('+') : null,
-      p.audioCodec ? `${p.audioCodec}${p.hasAtmos ? ' Atmos' : ''}` : null,
-      item.size || null,
-    ].filter(Boolean);
+  const uniqueQualities = Array.from(
+    new Set(
+      ingestedItems.map((item) => {
+        const p = item.parsed;
+        const tags = [
+          p.resolution !== 'Unknown' ? p.resolution : null,
+          p.ott ? (p.ott.code || p.ott.name).toUpperCase() : null,
+          p.source,
+          p.videoCodec,
+          p.hdr.length ? p.hdr.join('+') : null,
+        ].filter(Boolean);
+        return tags.join(' | ');
+      }).filter(Boolean)
+    )
+  );
 
-    return `• <b>${tags.join(' | ')}</b>\n  <i>Score: ${p.qualityScore}</i> — <a href="${item.url}">Direct Link</a>`;
-  }).join('\n\n');
+  const versionsText = uniqueQualities.length > 0
+    ? uniqueQualities.map((q) => `• <b>${q}</b>`).join('\n')
+    : `• <b>${newCardBadge}</b>`;
 
   const badgeNotice = isUpgrade
     ? `🚀 <b>Homepage Card Upgraded:</b> <code>${previousBadge}</code> ➡️ <b>${newCardBadge}</b>`
@@ -499,11 +504,11 @@ export async function processTelegramIngestion(
     ? tmdb.genres.map((g: any) => g.name).filter(Boolean).join(', ')
     : 'Cinema, Feature';
 
-  const overview = tmdb?.overview
+  let overview = tmdb?.overview
     ? (tmdb.overview.length > 220 ? tmdb.overview.slice(0, 217) + '...' : tmdb.overview)
     : `${officialTitle} is now streaming in high quality on CineFuel.`;
 
-  const captionHtml = `🎬 <b>${officialTitle.toUpperCase()} ${releaseYear ? `(${releaseYear})` : ''}</b>
+  let captionHtml = `🎬 <b>${officialTitle.toUpperCase()} ${releaseYear ? `(${releaseYear})` : ''}</b>
 ─────────────────────────────
 ⭐ <b>Rating:</b> ${tmdb?.vote_average ? Number(tmdb.vote_average).toFixed(1) : '8.0'}/10 | 🎭 <b>Genres:</b> ${genres}
 ─────────────────────────────
@@ -511,12 +516,31 @@ export async function processTelegramIngestion(
 📖 <b>Overview:</b>
 <blockquote>${overview}</blockquote>
 
-📦 <b>Ingested Quality Links (${ingestedItems.length}):</b>
-${releaseLines}
+📦 <b>Available Versions:</b>
+${versionsText}
 
 ${badgeNotice}
 
 🌐 <b>Live on Website:</b> <a href="${pageUrl}">${pageUrl}</a>`;
+
+  if (captionHtml.length > 1020) {
+    const maxOverview = Math.max(60, overview.length - (captionHtml.length - 1020));
+    overview = overview.slice(0, maxOverview) + '...';
+    captionHtml = `🎬 <b>${officialTitle.toUpperCase()} ${releaseYear ? `(${releaseYear})` : ''}</b>
+─────────────────────────────
+⭐ <b>Rating:</b> ${tmdb?.vote_average ? Number(tmdb.vote_average).toFixed(1) : '8.0'}/10 | 🎭 <b>Genres:</b> ${genres}
+─────────────────────────────
+
+📖 <b>Overview:</b>
+<blockquote>${overview}</blockquote>
+
+📦 <b>Available Versions:</b>
+${versionsText}
+
+${badgeNotice}
+
+🌐 <b>Live on Website:</b> <a href="${pageUrl}">${pageUrl}</a>`;
+  }
 
   return {
     success: true,
