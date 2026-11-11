@@ -161,7 +161,7 @@ export async function processTelegramIngestion(
   const siteUrl = (
     getEnv('LIVE_SITE_URL') ||
     getEnv('NEXT_PUBLIC_SITE_URL') ||
-    'https://cinephile-web.onrender.com'
+    'https://cinephile.sk6216071.workers.dev'
   ).replace(/\/+$/, '');
 
   const rawCombined = `${input.caption || ''}\n${input.text || ''}`.trim();

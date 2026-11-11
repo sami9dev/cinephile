@@ -150,8 +150,7 @@ async function run() {
   // 4. Test public Cloudflare worker & Render API catalog
   console.log('\n[4/5] Testing Public Site APIs...');
   const publicHosts = [
-    { name: 'Cloudflare Worker', url: 'https://cinephile.sk6216071.workers.dev' },
-    { name: 'Render Production', url: 'https://cinephile-web.onrender.com' },
+    { name: 'Cloudflare Worker (Primary Web Hosting)', url: 'https://cinephile.sk6216071.workers.dev' },
   ];
 
   for (const host of publicHosts) {

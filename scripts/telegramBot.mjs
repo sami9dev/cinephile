@@ -52,7 +52,7 @@ const TMDB_API_KEY = (process.env.TMDB_API_KEY || process.env.NEXT_PUBLIC_TMDB_A
 const SITE_URL = (
   process.env.LIVE_SITE_URL ||
   process.env.NEXT_PUBLIC_SITE_URL ||
-  (process.env.RENDER ? 'https://cinephile-web.onrender.com' : 'http://localhost:3001')
+  'https://cinephile.sk6216071.workers.dev'
 ).replace(/\/+$/, '');
 const DATA_FILE = path.join(rootDir, 'src', 'data', 'serverLinks.json');
 
