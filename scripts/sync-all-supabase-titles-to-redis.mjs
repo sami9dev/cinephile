@@ -27,11 +27,26 @@ async function syncAll() {
   let totalFetched = 0;
 
   while (true) {
-    const { data, error } = await supabase
-      .from('links')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .range(from, from + pageSize - 1);
+    let retries = 3;
+    let data = null;
+    let error = null;
+
+    while (retries > 0) {
+      try {
+        const res = await supabase
+          .from('links')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .range(from, from + pageSize - 1);
+        data = res.data;
+        error = res.error;
+        if (!error && data) break;
+      } catch (e) {
+        error = e;
+      }
+      retries--;
+      if (retries > 0) await new Promise(r => setTimeout(r, 1000));
+    }
 
     if (error) {
       console.error('Fetch error at', from, error.message);

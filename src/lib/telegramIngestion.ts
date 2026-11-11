@@ -7,7 +7,7 @@ import {
   HubCloudParsedResult,
 } from './hubcloudParser';
 import { getLinksFromSupabase, replaceAllLinksForTitleInSupabase } from './supabaseDb';
-import { saveMultipleLinksToDatabase, invalidateCatalogCache, getRedisClient } from './redisDb';
+import { saveMultipleLinksToDatabase, upsertTitleInAllTitlesSummary, invalidateCatalogCache, getRedisClient } from './redisDb';
 import { detectServer } from './serverDetector';
 import { getTitleDetails, searchMulti, cleanTitleString, resolveCanonicalMedia } from './tmdb';
 import { getEnv } from './env';
@@ -460,6 +460,7 @@ export async function processTelegramIngestion(
 
   try {
     await saveMultipleLinksToDatabase(movieId, allReleases, metadataPayload);
+    await upsertTitleInAllTitlesSummary(movieId, allReleases, metadataPayload);
   } catch (rdErr: any) {
     console.warn('Redis saveMultipleLinks note:', rdErr.message);
   }

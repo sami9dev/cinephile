@@ -91,6 +91,93 @@ export async function invalidateCatalogCache(): Promise<void> {
   }
 }
 
+/**
+ * Atomically updates or prepends a title in cinefuel:all_titles_summary
+ * so newly ingested or updated releases appear at the top of the homepage immediately.
+ */
+export async function upsertTitleInAllTitlesSummary(
+  movieId: string | number,
+  links: any[],
+  metadata?: any
+): Promise<void> {
+  const redisClient = getRedisClient();
+  if (!redisClient) return;
+  try {
+    const rawSummary = await redisClient.get<string | any[]>('cinefuel:all_titles_summary');
+    let summaryList: any[] = [];
+    if (typeof rawSummary === 'string') {
+      try { summaryList = JSON.parse(rawSummary); } catch {}
+    } else if (Array.isArray(rawSummary)) {
+      summaryList = rawSummary;
+    }
+
+    const mId = String(movieId);
+    const topLink = (links && links[0]) || {};
+    const movieTitle = metadata?.movieTitle || topLink.movieTitle || topLink.title || `Title #${mId}`;
+    const posterPath = metadata?.posterPath !== undefined ? metadata.posterPath : (topLink.posterPath || null);
+    const backdropPath = metadata?.backdropPath !== undefined ? metadata.backdropPath : (topLink.backdropPath || null);
+    const mediaType = metadata?.mediaType || topLink.mediaType || 'movie';
+    const releaseDate = metadata?.releaseDate || topLink.releaseDate || null;
+    const voteAverage = typeof metadata?.voteAverage === 'number' ? metadata.voteAverage : (typeof topLink.voteAverage === 'number' ? topLink.voteAverage : 7.5);
+    const sortDate = new Date().toISOString();
+
+    const newGroup = {
+      _id: mId,
+      latestDoc: {
+        movieId: mId,
+        movieTitle,
+        posterPath,
+        backdropPath,
+        mediaType,
+        quality: topLink.quality || '1080p FHD',
+        audioLanguage: topLink.audioLanguage || 'Hindi + English',
+        category: topLink.category || 'Streaming',
+        linkType: topLink.linkType || 'general',
+        createdAt: sortDate,
+        updatedAt: sortDate,
+        releaseDate,
+        voteAverage,
+        title: movieTitle,
+      },
+      linksCount: links.length,
+      sortDate,
+      groupMovieTitle: movieTitle,
+      groupPosterPath: posterPath,
+      groupBackdropPath: backdropPath,
+      groupVoteAverage: voteAverage,
+      allMediaTypes: [mediaType],
+    };
+
+    const remaining = summaryList.filter((item) => String(item._id) !== mId);
+    const updatedSummary = [newGroup, ...remaining];
+    await redisClient.set('cinefuel:all_titles_summary', JSON.stringify(updatedSummary));
+  } catch (err: any) {
+    console.warn('upsertTitleInAllTitlesSummary error:', err.message);
+  }
+}
+
+/**
+ * Removes a deleted title from cinefuel:all_titles_summary
+ */
+export async function removeTitleFromAllTitlesSummary(movieId: string | number): Promise<void> {
+  const redisClient = getRedisClient();
+  if (!redisClient) return;
+  try {
+    const rawSummary = await redisClient.get<string | any[]>('cinefuel:all_titles_summary');
+    let summaryList: any[] = [];
+    if (typeof rawSummary === 'string') {
+      try { summaryList = JSON.parse(rawSummary); } catch {}
+    } else if (Array.isArray(rawSummary)) {
+      summaryList = rawSummary;
+    }
+    const mId = String(movieId);
+    const updatedSummary = summaryList.filter((item) => String(item._id) !== mId);
+    await redisClient.set('cinefuel:all_titles_summary', JSON.stringify(updatedSummary));
+  } catch (err: any) {
+    console.warn('removeTitleFromAllTitlesSummary error:', err.message);
+  }
+}
+
 export interface CatalogCursorData {
   page: number;
   sortDate?: string;
@@ -420,6 +507,7 @@ export async function saveLinkToDatabase(movieId: number | string, link: any): P
       const updated = [link, ...current.filter((l: any) => l.id !== link.id && l.url !== link.url)];
       await redisClient.hset(REDIS_HASH_KEY, { [key]: updated });
       persisted = true;
+      await upsertTitleInAllTitlesSummary(key, updated).catch(() => {});
     } catch (err: any) {
       console.error('Upstash Redis save error:', err.message);
     }
@@ -516,6 +604,7 @@ export async function saveMultipleLinksToDatabase(movieId: number | string, link
 
       await redisClient.hset(REDIS_HASH_KEY, { [key]: updated });
       persisted = true;
+      await upsertTitleInAllTitlesSummary(key, updated, metadata).catch(() => {});
     } catch (err: any) {
       console.error('Upstash Redis batch save error:', err.message);
     }
@@ -979,8 +1068,10 @@ export async function replaceAllLinksForTitle(
     try {
       if (sanitized.length > 0) {
         await redisClient.hset(REDIS_HASH_KEY, { [key]: sanitized });
+        await upsertTitleInAllTitlesSummary(key, sanitized, metadata).catch(() => {});
       } else {
         await redisClient.hdel(REDIS_HASH_KEY, key);
+        await removeTitleFromAllTitlesSummary(key).catch(() => {});
       }
     } catch (err: any) {
       console.warn('Upstash Redis replaceAllLinksForTitle error:', err.message);
