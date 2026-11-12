@@ -63,6 +63,8 @@ const NAVIGATION_ITEMS: NavItem[] = [
       { label: 'Transformers Saga', href: '/?tab=collection&collection=transformers', badge: '🤖' },
       { label: 'Fast & Furious Saga', href: '/?tab=collection&collection=fast-furious', badge: '🏎️' },
       { label: 'Mission: Impossible', href: '/?tab=collection&collection=mission-impossible', badge: '🕶️' },
+      { label: 'The Terminator Saga', href: '/?tab=collection&collection=terminator', badge: '🦾' },
+      { label: 'Final Destination Collection', href: '/?tab=collection&collection=final-destination', badge: '💀' },
       { label: 'Spider-Man Universe', href: '/?tab=collection&collection=spider-man', badge: '🕷️' },
     ],
   },

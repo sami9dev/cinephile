@@ -200,6 +200,33 @@ export const COLLECTIONS_DATA: CollectionItem[] = [
     ],
   },
   {
+    id: 'terminator',
+    name: 'The Terminator Saga',
+    shortName: 'Terminator',
+    badge: '🦾',
+    description: 'The Terminator, Judgment Day, Rise of the Machines, Salvation, Genisys, and Dark Fate.',
+    keywords: [
+      'terminator',
+      'judgment day',
+      'rise of the machines',
+      'dark fate',
+      'genisys',
+      'sarah connor',
+    ],
+  },
+  {
+    id: 'final-destination',
+    name: 'Final Destination Collection',
+    shortName: 'Final Destination',
+    badge: '💀',
+    description: 'Death cannot be cheated: the complete Final Destination supernatural horror series.',
+    keywords: [
+      'final destination',
+      'the final destination',
+      'bloodlines',
+    ],
+  },
+  {
     id: 'spider-man',
     name: 'Spider-Man Universe',
     shortName: 'Spider-Man',
