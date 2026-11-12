@@ -55,13 +55,16 @@ export default function RootLayout({
     <html
       lang="en"
       className={`dark ${spaceGrotesk.variable} ${bebasNeue.variable} ${manrope.variable} ${hartsinger.variable}`}
+      data-theme="dark"
       suppressHydrationWarning
     >
       <head>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta name="theme-color" content="#08090c" id="theme-color-meta" />
+        {/* Early Zero-Flicker Theme Initialization Script */}
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var t=localStorage.getItem('cinefuel_theme');if(t==='light'){document.documentElement.classList.remove('dark');document.documentElement.classList.add('light');}else{document.documentElement.classList.remove('light');document.documentElement.classList.add('dark');}}catch(e){}})();`,
+            __html: `(function(){try{var k='cinephile-theme',lk='cinefuel_theme';var s=localStorage.getItem(k)||localStorage.getItem(lk);var t=s;if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}var d=t==='dark';var r=document.documentElement;r.classList.remove('dark','light');r.classList.add(d?'dark':'light');r.setAttribute('data-theme',d?'dark':'light');r.style.colorScheme=d?'dark':'light';var m=document.getElementById('theme-color-meta');if(m)m.setAttribute('content',d?'#08090c':'#f8fafc');}catch(e){document.documentElement.classList.add('dark');document.documentElement.setAttribute('data-theme','dark');}})();`,
           }}
         />
         <link rel="preconnect" href="https://image.tmdb.org" />
@@ -72,7 +75,7 @@ export default function RootLayout({
         <link rel="dns-prefetch" href="https://upload.wikimedia.org" />
       </head>
       <body
-        className="font-ui bg-[#08090c] text-zinc-100 min-h-screen w-full max-w-full overflow-x-hidden flex flex-col antialiased selection:bg-amber-500 selection:text-black"
+        className="font-ui min-h-screen w-full max-w-full overflow-x-hidden flex flex-col antialiased selection:bg-amber-500 selection:text-black transition-colors duration-200"
         suppressHydrationWarning
       >
         <AuthProvider>

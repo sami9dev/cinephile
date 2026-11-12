@@ -266,6 +266,12 @@ export const Header: React.FC = () => {
               <span>Request Movie or TV Series</span>
             </button>
 
+            {/* Mobile Theme Switcher Row */}
+            <div className="flex items-center justify-between px-3 py-2.5 rounded-xl bg-zinc-800/60 border border-zinc-750/70" data-mobile-theme-row>
+              <span className="text-xs font-semibold text-zinc-300">Theme Appearance</span>
+              <ThemeToggle showLabel={true} />
+            </div>
+
             {NAVIGATION_ITEMS.map((item) => {
               if (item.children) {
                 const isExpanded = mobileExpanded === item.label;

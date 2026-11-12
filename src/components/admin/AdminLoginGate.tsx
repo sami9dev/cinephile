@@ -13,6 +13,7 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { getBackdropURL } from '@/lib/tmdb';
+import ThemeToggle from '@/components/ThemeToggle';
 
 interface BackdropTheme {
   name: string;
@@ -158,12 +159,15 @@ export const AdminLoginGate: React.FC<AdminLoginGateProps> = ({
           ))}
         </div>
 
-        <Link
-          href="/"
-          className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-semibold text-zinc-300 hover:text-white transition-all shadow-sm"
-        >
-          <span>← Website</span>
-        </Link>
+        <div className="flex items-center gap-2">
+          <ThemeToggle />
+          <Link
+            href="/"
+            className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-semibold text-zinc-300 hover:text-white transition-all shadow-sm"
+          >
+            <span>← Website</span>
+          </Link>
+        </div>
       </header>
 
       {/* 3. Center Glassmorphic Master Control Card */}

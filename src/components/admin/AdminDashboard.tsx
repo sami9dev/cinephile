@@ -76,6 +76,7 @@ import { AdminFilmReelGraphic } from '@/components/admin/AdminFilmReelGraphic';
 import { AdminCinemaSilhouetteGraphic } from '@/components/admin/AdminCinemaSilhouetteGraphic';
 import { ServiceStatusPanel } from '@/components/admin/ServiceStatusPanel';
 import { ArchitectureStackPanel } from '@/components/admin/ArchitectureStackPanel';
+import ThemeToggle from '@/components/ThemeToggle';
 
 const DEFAULT_ADMIN_USER = 'shyam';
 
@@ -4247,6 +4248,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                   >
                     <ExternalLink className="w-4 h-4" />
                   </Link>
+                  <ThemeToggle className="w-10 h-10" />
                   <button
                     type="button"
                     onClick={handleLogout}
@@ -4271,6 +4273,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                     >
                       <ExternalLink className="w-3.5 h-3.5 text-cyan-400" /> Public Site
                     </Link>
+                    <ThemeToggle />
                     <button
                       type="button"
                       onClick={handleLogout}
@@ -4331,6 +4334,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
 
                 {/* Right Action Buttons */}
                 <div className="relative z-10 flex flex-wrap items-center gap-2 sm:gap-2.5 self-start sm:self-end md:self-center shrink-0">
+                  <ThemeToggle />
                   <Link
                     href="/"
                     className="px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-cyan-500/30 hover:border-cyan-400/60 text-slate-200 hover:text-white text-xs font-bold transition-all flex items-center gap-1.5 shadow-md cursor-pointer"
