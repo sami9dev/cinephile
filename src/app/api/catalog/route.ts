@@ -12,6 +12,8 @@ export async function GET(request: NextRequest) {
     const category = searchParams.get('category') || undefined;
     const audio = searchParams.get('audio') || undefined;
     const ott = searchParams.get('ott') || undefined;
+    const collection = searchParams.get('collection') || undefined;
+    const year = searchParams.get('year') || undefined;
     const query = searchParams.get('q') || searchParams.get('query') || undefined;
     const cursor = searchParams.get('cursor') || undefined;
     const limit = Number(searchParams.get('limit')) || 24;
@@ -24,6 +26,8 @@ export async function GET(request: NextRequest) {
       category,
       audio,
       ott,
+      collection,
+      year,
       query,
       limit,
       page,

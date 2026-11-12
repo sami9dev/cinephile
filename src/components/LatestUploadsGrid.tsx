@@ -11,12 +11,24 @@ import {
   Sparkles,
   SlidersHorizontal,
   ChevronDown,
+  Layers,
+  Calendar,
 } from 'lucide-react';
 import { TitleDetails } from '@/types';
 import MovieCard from './MovieCard';
 import Pagination from './Pagination';
+import { COLLECTIONS_DATA, YEAR_PRESETS } from '@/lib/collections';
 
-export type ActiveTabType = 'home' | 'movie' | 'tv' | 'ott' | 'top_imdb' | 'anime' | 'quality';
+export type ActiveTabType =
+  | 'home'
+  | 'movie'
+  | 'tv'
+  | 'ott'
+  | 'top_imdb'
+  | 'anime'
+  | 'quality'
+  | 'collection'
+  | 'year';
 
 interface LatestUploadsGridProps {
   items: TitleDetails[];
@@ -27,6 +39,8 @@ interface LatestUploadsGridProps {
   activeTab?: ActiveTabType;
   activeOtt?: string;
   activeQuality?: string;
+  activeCollection?: string;
+  activeYear?: string;
   basePath?: string;
 }
 
@@ -59,9 +73,11 @@ export const LatestUploadsGrid: React.FC<LatestUploadsGridProps> = ({
   activeTab = 'home',
   activeOtt = '',
   activeQuality = '',
+  activeCollection = '',
+  activeYear = '',
   basePath = '/',
 }) => {
-  const [openDropdown, setOpenDropdown] = useState<'ott' | 'quality' | null>(null);
+  const [openDropdown, setOpenDropdown] = useState<'ott' | 'quality' | 'collection' | 'year' | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   // Close dropdown on outside click
@@ -77,6 +93,9 @@ export const LatestUploadsGrid: React.FC<LatestUploadsGridProps> = ({
 
   const effectiveTab: ActiveTabType =
     activeTab || (activeType === 'movie' ? 'movie' : activeType === 'tv' ? 'tv' : 'home');
+
+  const currentCollection = COLLECTIONS_DATA.find((c) => c.id.toLowerCase() === activeCollection.toLowerCase());
+  const currentYear = YEAR_PRESETS.find((y) => y.id.toLowerCase() === activeYear.toLowerCase());
 
   return (
     <div className="space-y-6">
@@ -128,7 +147,71 @@ export const LatestUploadsGrid: React.FC<LatestUploadsGridProps> = ({
               TV Series
             </Link>
 
-            {/* 4. OTT (with Dropdown trigger) */}
+            {/* 4. Franchise Collections (with Dropdown trigger) */}
+            <div className="relative shrink-0 flex items-center">
+              <Link
+                href="/?tab=collection"
+                onClick={() => setOpenDropdown(null)}
+                className={`font-ui flex items-center gap-1.5 pl-3 sm:pl-3.5 pr-1.5 py-2 sm:py-1.5 min-h-[36px] rounded-l-lg text-xs font-semibold uppercase tracking-wider transition-all whitespace-nowrap ${
+                  effectiveTab === 'collection'
+                    ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30 font-bold'
+                    : 'text-zinc-400 hover:text-white hover:bg-zinc-800/60'
+                }`}
+              >
+                <Layers className="w-3.5 h-3.5" />
+                {effectiveTab === 'collection' && currentCollection ? currentCollection.shortName : 'Collections'}
+              </Link>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setOpenDropdown(openDropdown === 'collection' ? null : 'collection');
+                }}
+                className={`py-2 sm:py-1.5 pr-2.5 pl-1.5 min-h-[36px] flex items-center rounded-r-lg text-xs transition-all ${
+                  effectiveTab === 'collection'
+                    ? 'bg-indigo-600 text-white shadow-md'
+                    : 'text-zinc-400 hover:text-white hover:bg-zinc-800/60'
+                }`}
+                title="Select franchise collection"
+                aria-label="Toggle collection menu"
+              >
+                <ChevronDown className="w-3 h-3 opacity-80" />
+              </button>
+            </div>
+
+            {/* 5. Release Years (with Dropdown trigger) */}
+            <div className="relative shrink-0 flex items-center">
+              <Link
+                href="/?tab=year"
+                onClick={() => setOpenDropdown(null)}
+                className={`font-ui flex items-center gap-1.5 pl-3 sm:pl-3.5 pr-1.5 py-2 sm:py-1.5 min-h-[36px] rounded-l-lg text-xs font-semibold uppercase tracking-wider transition-all whitespace-nowrap ${
+                  effectiveTab === 'year'
+                    ? 'bg-teal-500 text-black shadow-md shadow-teal-500/30 font-bold'
+                    : 'text-zinc-400 hover:text-white hover:bg-zinc-800/60'
+                }`}
+              >
+                <Calendar className="w-3.5 h-3.5" />
+                {effectiveTab === 'year' && currentYear ? currentYear.shortLabel : 'Years'}
+              </Link>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setOpenDropdown(openDropdown === 'year' ? null : 'year');
+                }}
+                className={`py-2 sm:py-1.5 pr-2.5 pl-1.5 min-h-[36px] flex items-center rounded-r-lg text-xs transition-all ${
+                  effectiveTab === 'year'
+                    ? 'bg-teal-500 text-black shadow-md'
+                    : 'text-zinc-400 hover:text-white hover:bg-zinc-800/60'
+                }`}
+                title="Select release year"
+                aria-label="Toggle release year menu"
+              >
+                <ChevronDown className="w-3 h-3 opacity-80" />
+              </button>
+            </div>
+
+            {/* 6. OTT (with Dropdown trigger) */}
             <div className="relative shrink-0 flex items-center">
               <Link
                 href="/?tab=ott"
@@ -221,6 +304,71 @@ export const LatestUploadsGrid: React.FC<LatestUploadsGridProps> = ({
             </div>
           </div>
 
+          {/* Collections Dropdown Menu */}
+          {openDropdown === 'collection' && (
+            <div className="absolute left-2 sm:left-44 top-full mt-2 w-64 max-w-[calc(100vw-2rem)] max-h-[380px] overflow-y-auto no-scrollbar py-1.5 rounded-xl bg-[#14121f] border border-[#2b2542] shadow-2xl z-50 backdrop-blur-md">
+              <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-zinc-500 border-b border-zinc-800 flex items-center justify-between">
+                <span>Franchise Collections</span>
+                <span className="text-[9px] text-indigo-400 font-semibold">{COLLECTIONS_DATA.length} Series</span>
+              </div>
+              {COLLECTIONS_DATA.map((col) => {
+                const href = `/?tab=collection&collection=${col.id}`;
+                const isSelected =
+                  effectiveTab === 'collection' &&
+                  (activeCollection === col.id || (!activeCollection && col.id === 'mcu'));
+                return (
+                  <Link
+                    key={col.id}
+                    href={href}
+                    onClick={() => setOpenDropdown(null)}
+                    className={`flex items-center justify-between px-3 py-2 text-xs transition-all ${
+                      isSelected
+                        ? 'bg-indigo-600/20 text-indigo-300 font-bold border-l-2 border-indigo-500'
+                        : 'text-zinc-300 hover:bg-zinc-800/80 hover:text-white'
+                    }`}
+                  >
+                    <span className="flex items-center gap-2 truncate">
+                      <span>{col.badge}</span>
+                      <span className="truncate">{col.name}</span>
+                    </span>
+                  </Link>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Years Dropdown Menu */}
+          {openDropdown === 'year' && (
+            <div className="absolute left-6 sm:left-64 top-full mt-2 w-56 max-w-[calc(100vw-2rem)] max-h-[380px] overflow-y-auto no-scrollbar py-1.5 rounded-xl bg-[#14121f] border border-[#2b2542] shadow-2xl z-50 backdrop-blur-md">
+              <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-zinc-500 border-b border-zinc-800">
+                Select Release Year
+              </div>
+              {YEAR_PRESETS.map((yp) => {
+                const href = yp.id === 'all' ? '/?tab=year' : `/?tab=year&year=${yp.id}`;
+                const isSelected =
+                  effectiveTab === 'year' &&
+                  (yp.id === 'all' ? !activeYear || activeYear === '2026' : activeYear === yp.id);
+                return (
+                  <Link
+                    key={yp.id}
+                    href={href}
+                    onClick={() => setOpenDropdown(null)}
+                    className={`flex items-center justify-between px-3 py-2 text-xs transition-all ${
+                      isSelected
+                        ? 'bg-teal-500/20 text-teal-300 font-bold border-l-2 border-teal-400'
+                        : 'text-zinc-300 hover:bg-zinc-800/80 hover:text-white'
+                    }`}
+                  >
+                    <span className="flex items-center gap-2">
+                      <span>{yp.badge}</span>
+                      <span>{yp.label}</span>
+                    </span>
+                  </Link>
+                );
+              })}
+            </div>
+          )}
+
           {/* OTT Dropdown Menu (Rendered outside overflow-x-auto container to prevent clipping) */}
           {openDropdown === 'ott' && (
             <div className="absolute left-0 sm:left-auto sm:right-24 top-full mt-2 w-56 max-w-[calc(100vw-2rem)] py-1.5 rounded-xl bg-[#14121f] border border-[#2b2542] shadow-2xl z-50 backdrop-blur-md">
@@ -296,6 +444,60 @@ export const LatestUploadsGrid: React.FC<LatestUploadsGridProps> = ({
           )}
         </div>
       </div>
+
+      {/* Sub-Filters: Collection Bar (shown when Collection tab is active) */}
+      {effectiveTab === 'collection' && (
+        <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-1">
+          <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider shrink-0 flex items-center gap-1.5">
+            <Layers className="w-3.5 h-3.5 text-indigo-400" /> Collection:
+          </span>
+          {COLLECTIONS_DATA.map((col) => {
+            const isSelected = activeCollection === col.id || (!activeCollection && col.id === 'mcu');
+            const href = `/?tab=collection&collection=${col.id}`;
+            return (
+              <Link
+                key={col.id}
+                href={href}
+                className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-all border ${
+                  isSelected
+                    ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/50 shadow-sm font-bold'
+                    : 'bg-zinc-900/60 text-zinc-400 border-zinc-800 hover:text-white hover:border-zinc-700'
+                }`}
+              >
+                <span>{col.badge}</span>
+                <span>{col.shortName}</span>
+              </Link>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Sub-Filters: Year Bar (shown when Year tab is active) */}
+      {effectiveTab === 'year' && (
+        <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-1">
+          <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider shrink-0 flex items-center gap-1.5">
+            <Calendar className="w-3.5 h-3.5 text-teal-400" /> Year:
+          </span>
+          {YEAR_PRESETS.map((yp) => {
+            const isSelected = activeYear === yp.id || (!activeYear && yp.id === '2026');
+            const href = yp.id === 'all' ? '/?tab=year' : `/?tab=year&year=${yp.id}`;
+            return (
+              <Link
+                key={yp.id}
+                href={href}
+                className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-all border ${
+                  isSelected
+                    ? 'bg-teal-500/20 text-teal-300 border-teal-500/50 shadow-sm font-bold'
+                    : 'bg-zinc-900/60 text-zinc-400 border-zinc-800 hover:text-white hover:border-zinc-700'
+                }`}
+              >
+                <span>{yp.badge}</span>
+                <span>{yp.shortLabel}</span>
+              </Link>
+            );
+          })}
+        </div>
+      )}
 
       {/* Sub-Filters: OTT Platform Bar (shown when OTT tab is active) */}
       {effectiveTab === 'ott' && (
@@ -389,6 +591,8 @@ export const LatestUploadsGrid: React.FC<LatestUploadsGridProps> = ({
                 type: effectiveTab === 'movie' ? 'movie' : effectiveTab === 'tv' ? 'tv' : undefined,
                 ott: activeOtt || undefined,
                 quality: activeQuality || undefined,
+                collection: activeCollection || undefined,
+                year: activeYear || undefined,
               }}
             />
           )}

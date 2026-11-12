@@ -17,6 +17,7 @@ import { getTitleDetails, getLightweightTitleCard, cleanTitleString, resolveCano
 import { detectShowPlatform, stripWatermarks, detectSeasonNumber, detectEpisodeNumber } from '@/lib/seasonParser';
 
 import { getEnv } from '@/lib/env';
+import { matchesCollection, matchesYear } from '@/lib/collections';
 
 export function getRedisClient(): Redis | null {
   const url = (getEnv('UPSTASH_REDIS_REST_URL') || getEnv('KV_REST_API_URL')).replace(/^["']|["']$/g, '').trim();
@@ -1665,6 +1666,8 @@ export interface PaginatedUploadedOptions {
   ott?: string;
   query?: string;
   genre?: string | number;
+  collection?: string;
+  year?: string;
   sort?: 'latest' | 'top_rated' | 'rating' | 'popular';
   skipCount?: boolean;
 }
@@ -1831,7 +1834,7 @@ export async function getPaginatedUploadedTitles(
   const redisClient = getRedisClient();
   const env = (getEnv('APP_ENV') || getEnv('CINEFUEL_ENV') || 'staging').toLowerCase();
   const version = await getCatalogCacheVersion();
-  const filterKey = `${quality || '_'}:${audio || '_'}:${category || '_'}:${ott || '_'}:${options.genre || '_'}:${(options.sort as any) || '_'}:${query || '_'}`.toLowerCase();
+  const filterKey = `${quality || '_'}:${audio || '_'}:${category || '_'}:${ott || '_'}:${options.genre || '_'}:${options.collection || '_'}:${options.year || '_'}:${(options.sort as any) || '_'}:${query || '_'}`.toLowerCase();
   const countTag = options.skipCount ? 'fast' : 'full';
   const cacheKey = `cinefuel:${env}:catalog:v${version}:${type}:p${safePage}:l${safeLimit}:${countTag}:${filterKey}`;
   const fullCacheKey = `cinefuel:${env}:catalog:v${version}:${type}:p${safePage}:l${safeLimit}:full:${filterKey}`;
@@ -1900,6 +1903,16 @@ export async function getPaginatedUploadedTitles(
             const al = audio.toLowerCase();
             filteredGroups = filteredGroups.filter((g) =>
               g.latestDoc?.audioLanguage && g.latestDoc.audioLanguage.toLowerCase().includes(al)
+            );
+          }
+          if (options.collection) {
+            filteredGroups = filteredGroups.filter((g) =>
+              matchesCollection(g.groupMovieTitle || g.latestDoc?.title, options.collection)
+            );
+          }
+          if (options.year) {
+            filteredGroups = filteredGroups.filter((g) =>
+              matchesYear(g.latestDoc?.releaseDate, options.year)
             );
           }
 
@@ -1994,7 +2007,17 @@ export async function getPaginatedUploadedTitles(
             }
           }
 
-          const allGroups = Array.from(groupMap.values());
+          let allGroups = Array.from(groupMap.values());
+          if (options.collection) {
+            allGroups = allGroups.filter((g) =>
+              matchesCollection(g.groupMovieTitle || g.latestDoc?.title, options.collection)
+            );
+          }
+          if (options.year) {
+            allGroups = allGroups.filter((g) =>
+              matchesYear(g.latestDoc?.releaseDate, options.year)
+            );
+          }
           if (options.sort === 'top_rated') {
             allGroups.sort((a, b) => (b.groupVoteAverage || 0) - (a.groupVoteAverage || 0));
           } else {
@@ -2058,6 +2081,8 @@ export async function getPaginatedUploadedTitles(
 
       if (type === 'movie' && mediaType !== 'movie') return false;
       if (type === 'tv' && mediaType !== 'tv') return false;
+      if (options.collection && !matchesCollection(item.link?.movieTitle || item.link?.title, options.collection)) return false;
+      if (options.year && !matchesYear(item.link?.releaseDate, options.year)) return false;
       return true;
     });
 

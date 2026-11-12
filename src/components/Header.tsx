@@ -51,6 +51,37 @@ const NAVIGATION_ITEMS: NavItem[] = [
     ],
   },
   {
+    label: 'Collections',
+    children: [
+      { label: 'Marvel Cinematic Universe (MCU)', href: '/?tab=collection&collection=mcu', badge: '🛡️' },
+      { label: 'DC Universe & Batman (DCEU)', href: '/?tab=collection&collection=dceu', badge: '🦇' },
+      { label: 'X-Men Saga', href: '/?tab=collection&collection=x-men', badge: '🧬' },
+      { label: 'The Hunger Games', href: '/?tab=collection&collection=hunger-games', badge: '🏹' },
+      { label: 'Pirates of the Caribbean', href: '/?tab=collection&collection=pirates', badge: '🏴‍☠️' },
+      { label: 'Harry Potter & Wizarding World', href: '/?tab=collection&collection=harry-potter', badge: '⚡' },
+      { label: 'The Lord of the Rings & Hobbit', href: '/?tab=collection&collection=lotr', badge: '💍' },
+      { label: 'Transformers Saga', href: '/?tab=collection&collection=transformers', badge: '🤖' },
+      { label: 'Fast & Furious Saga', href: '/?tab=collection&collection=fast-furious', badge: '🏎️' },
+      { label: 'Mission: Impossible', href: '/?tab=collection&collection=mission-impossible', badge: '🕶️' },
+      { label: 'Spider-Man Universe', href: '/?tab=collection&collection=spider-man', badge: '🕷️' },
+    ],
+  },
+  {
+    label: 'Years',
+    children: [
+      { label: '2026 Releases', href: '/?tab=year&year=2026', badge: '🔥' },
+      { label: '2025 Releases', href: '/?tab=year&year=2025', badge: '✨' },
+      { label: '2024 Releases', href: '/?tab=year&year=2024', badge: '🎬' },
+      { label: '2023 Releases', href: '/?tab=year&year=2023', badge: '🍿' },
+      { label: '2022 Releases', href: '/?tab=year&year=2022', badge: '⚡' },
+      { label: '2021 Releases', href: '/?tab=year&year=2021', badge: '🎥' },
+      { label: '2020 Releases', href: '/?tab=year&year=2020', badge: '📼' },
+      { label: '2010s Decade (2010–2019)', href: '/?tab=year&year=2010s', badge: '🏆' },
+      { label: '2000s Decade (2000–2009)', href: '/?tab=year&year=2000s', badge: '💿' },
+      { label: 'Classics (Pre-2000)', href: '/?tab=year&year=classics', badge: '🎞️' },
+    ],
+  },
+  {
     label: 'OTT',
     children: [
       { label: 'Netflix', href: '/search?ott=netflix', badge: '🔴' },

@@ -12,6 +12,8 @@ interface HomePageProps {
     tab?: string;
     ott?: string;
     quality?: string;
+    collection?: string;
+    year?: string;
     sort?: string;
   }>;
 }
@@ -23,16 +25,20 @@ export default async function HomePage({ searchParams }: HomePageProps) {
   const rawType = (resolvedParams?.type || '').toLowerCase().trim();
   const rawOtt = (resolvedParams?.ott || '').toLowerCase().trim();
   const rawQuality = (resolvedParams?.quality || '').toLowerCase().trim();
+  const rawCollection = (resolvedParams?.collection || '').toLowerCase().trim();
+  const rawYear = (resolvedParams?.year || '').toLowerCase().trim();
   const rawSort = (resolvedParams?.sort || '').toLowerCase().trim();
 
   // Determine active tab
-  let activeTab: 'home' | 'movie' | 'tv' | 'ott' | 'top_imdb' | 'anime' | 'quality' = 'home';
+  let activeTab: 'home' | 'movie' | 'tv' | 'ott' | 'top_imdb' | 'anime' | 'quality' | 'collection' | 'year' = 'home';
   if (rawTab === 'movie' || rawType === 'movie') activeTab = 'movie';
   else if (rawTab === 'tv' || rawType === 'tv') activeTab = 'tv';
   else if (rawTab === 'ott' || rawOtt) activeTab = 'ott';
   else if (rawTab === 'top_imdb' || rawSort === 'top_rated') activeTab = 'top_imdb';
   else if (rawTab === 'anime') activeTab = 'anime';
   else if (rawTab === 'quality' || rawQuality) activeTab = 'quality';
+  else if (rawTab === 'collection' || rawCollection) activeTab = 'collection';
+  else if (rawTab === 'year' || rawYear) activeTab = 'year';
   else activeTab = 'home';
 
   // Map active tab to query options
@@ -48,6 +54,16 @@ export default async function HomePage({ searchParams }: HomePageProps) {
   let qualityOption: string | undefined = undefined;
   if (activeTab === 'quality') {
     qualityOption = rawQuality || '4k';
+  }
+
+  let collectionOption: string | undefined = undefined;
+  if (activeTab === 'collection') {
+    collectionOption = rawCollection || 'mcu';
+  }
+
+  let yearOption: string | undefined = undefined;
+  if (activeTab === 'year') {
+    yearOption = rawYear || '2026';
   }
 
   let genreOption: string | undefined = undefined;
@@ -66,6 +82,8 @@ export default async function HomePage({ searchParams }: HomePageProps) {
     limit: 16,
     ott: ottOption,
     quality: qualityOption,
+    collection: collectionOption,
+    year: yearOption,
     genre: genreOption,
     sort: sortOption,
   });
@@ -96,6 +114,8 @@ export default async function HomePage({ searchParams }: HomePageProps) {
           activeTab={activeTab}
           activeOtt={rawOtt}
           activeQuality={rawQuality}
+          activeCollection={rawCollection}
+          activeYear={rawYear}
           basePath="/"
         />
       </section>
