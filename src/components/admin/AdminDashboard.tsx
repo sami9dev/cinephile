@@ -282,7 +282,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
   const [linkedTitlesSearch, setLinkedTitlesSearch] = useState('');
   const [quickJumpSearch, setQuickJumpSearch] = useState('');
   const [titlesViewMode, setTitlesViewMode] = useState<'linked' | 'tmdb'>('linked');
-  const [isRawLinksTableOpen, setIsRawLinksTableOpen] = useState(false);
+  const [isRawLinksTableOpen, setIsRawLinksTableOpen] = useState(true);
 
   // Dedicated Title Manager & Whole Link Replacement Modal State
   const [titleManagerModalOpen, setTitleManagerModalOpen] = useState(false);
@@ -1564,6 +1564,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
         headers: getAdminAuthHeaders(),
         body: JSON.stringify({
           movieId: String(titleToDelete.id),
+          rawId: (titleToDelete as any).rawId || (titleToDelete as any).movieId || String(titleToDelete.id),
           title: titleToDelete.title,
           action: 'delete_entire_title',
         }),
@@ -4292,7 +4293,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
             {/* Main Content Workspace */}
             <main className="flex-1 min-w-0 w-full space-y-6">
               {/* Top Bar Header Banner with Dark Cinematic Silhouette */}
-              <header className="bg-[#090d18]/85 backdrop-blur-2xl border border-cyan-500/30 hover:border-cyan-500/50 rounded-[28px] p-4 sm:p-6 lg:p-7 flex flex-col md:flex-row gap-4 sm:gap-5 items-start md:items-center justify-between shadow-2xl relative overflow-hidden transition-all duration-300">
+              <header className="bg-[#09090b] border border-zinc-800 hover:border-zinc-700 rounded-[28px] p-4 sm:p-6 lg:p-7 flex flex-col md:flex-row gap-4 sm:gap-5 items-start md:items-center justify-between shadow-2xl relative overflow-hidden transition-all duration-300">
                 {/* 1. Ambient Lighting Bloom */}
                 <div className="absolute -top-12 -right-12 w-96 h-96 bg-gradient-to-br from-cyan-500/20 via-blue-600/15 to-transparent rounded-full blur-3xl pointer-events-none" />
                 <div className="absolute -bottom-10 right-1/4 w-80 h-80 bg-rose-600/10 rounded-full blur-2xl pointer-events-none" />
@@ -4464,168 +4465,154 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
         <div className="space-y-6">
           {/* 6 Stat Cards Grid */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 sm:gap-3.5">
-            {/* 1. Total Tracked Titles */}
-            <div className="p-3.5 sm:p-4.5 rounded-2xl sm:rounded-[22px] bg-[#090e1a]/90 backdrop-blur-xl border border-cyan-500/30 hover:border-cyan-400/60 shadow-[0_0_15px_rgba(6,182,212,0.1)] relative overflow-hidden transition-all duration-200 hover:scale-[1.02] flex flex-col justify-between min-w-0">
+            {/* 1. Total Catalog Titles */}
+            <div
+              onClick={() => setActiveTab('titles')}
+              className="p-4 rounded-2xl bg-[#09090b] border border-zinc-800 hover:border-cyan-500/50 shadow-sm transition-all duration-200 hover:scale-[1.01] flex flex-col justify-between min-w-0 cursor-pointer group"
+            >
               <div>
-                <div className="flex items-center justify-between mb-2">
-                  <div className="w-7 h-7 rounded-lg bg-cyan-500/15 text-cyan-400 border border-cyan-500/30 flex items-center justify-center">
-                    <Film className="w-3.5 h-3.5" />
+                <div className="flex items-center justify-between mb-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 flex items-center justify-center">
+                    <Film className="w-4 h-4" />
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab('titles')}
-                    className="text-[10px] font-bold text-cyan-400 hover:underline cursor-pointer"
-                  >
-                    Films →
-                  </button>
+                  <span className="text-[10px] font-bold text-cyan-400 group-hover:underline">
+                    Browse →
+                  </span>
                 </div>
-                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">
-                  Total Tracked Titles
+                <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider block">
+                  Catalog Titles
                 </span>
-                <p className="text-2xl sm:text-3xl font-black text-cyan-400 my-1 truncate" suppressHydrationWarning>
-                  {isMounted ? watchlist.length : 0}
+                <p className="text-2xl sm:text-3xl font-black text-white my-1 truncate" suppressHydrationWarning>
+                  {isMounted ? (linkedTitlesTotal > 0 ? linkedTitlesTotal.toLocaleString() : (linkedCatalogTitles.length > 0 ? linkedCatalogTitles.length.toLocaleString() : '0')) : '...'}
                 </p>
               </div>
-              <span className="text-[11px] text-slate-400 font-medium">In local/cloud storage</span>
-              {/* Bottom-right cyan wave */}
-              <svg className="absolute -bottom-1 -right-1 w-24 h-12 pointer-events-none opacity-40" viewBox="0 0 100 50" fill="none">
-                <path d="M0 35 C25 45, 50 10, 80 30 C90 38, 95 20, 100 15" stroke="#06b6d4" strokeWidth="2.5" strokeLinecap="round" />
-                <path d="M10 42 C35 50, 60 20, 85 36 C95 44, 98 25, 100 22" stroke="#06b6d4" strokeWidth="1.5" strokeLinecap="round" strokeOpacity="0.4" />
-              </svg>
+              <span className="text-[11px] text-zinc-500 font-medium truncate">
+                {linkedTitlesTotal > 0 ? `${linkedTitlesTotal.toLocaleString()} linked in database` : (linkedCatalogTitles.length > 0 ? `${linkedCatalogTitles.length} linked in database` : '0 linked in database')}
+              </span>
             </div>
 
             {/* 2. Total Custom Links */}
-            <div className="p-3.5 sm:p-4.5 rounded-2xl sm:rounded-[22px] bg-[#0d0a1c]/90 backdrop-blur-xl border border-purple-500/30 hover:border-purple-400/60 shadow-[0_0_15px_rgba(168,85,247,0.1)] relative overflow-hidden transition-all duration-200 hover:scale-[1.02] flex flex-col justify-between min-w-0">
+            <div
+              onClick={() => setActiveTab('links')}
+              className="p-4 rounded-2xl bg-[#09090b] border border-zinc-800 hover:border-purple-500/50 shadow-sm transition-all duration-200 hover:scale-[1.01] flex flex-col justify-between min-w-0 cursor-pointer group"
+            >
               <div>
-                <div className="w-7 h-7 rounded-lg bg-purple-500/15 text-purple-400 border border-purple-500/30 flex items-center justify-center mb-2">
-                  <Database className="w-3.5 h-3.5" />
+                <div className="flex items-center justify-between mb-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-purple-500/10 text-purple-400 border border-purple-500/20 flex items-center justify-center">
+                    <Database className="w-4 h-4" />
+                  </div>
+                  <span className="text-[10px] font-bold text-purple-400 group-hover:underline">
+                    Manage →
+                  </span>
                 </div>
-                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">
-                  Total Custom Links
+                <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider block">
+                  Custom Links
                 </span>
-                <p className="text-2xl sm:text-3xl font-black text-purple-400 my-1 truncate">
+                <p className="text-2xl sm:text-3xl font-black text-white my-1 truncate">
                   {effectiveTotalLinks.toLocaleString()}
                 </p>
               </div>
-              <span className="text-[11px] text-slate-400 font-medium">
-                {effectiveTotalLinks > 0 ? `${effectiveTotalLinks.toLocaleString()} in Supabase Database` : '0 in database'}
+              <span className="text-[11px] text-zinc-500 font-medium truncate">
+                {effectiveTotalLinks > 0 ? `${effectiveTotalLinks.toLocaleString()} active in database` : '0 in database'}
               </span>
-              {/* Bottom-right purple wave */}
-              <svg className="absolute -bottom-1 -right-1 w-24 h-12 pointer-events-none opacity-40" viewBox="0 0 100 50" fill="none">
-                <path d="M0 35 C25 45, 50 10, 80 30 C90 38, 95 20, 100 15" stroke="#a855f7" strokeWidth="2.5" strokeLinecap="round" />
-                <path d="M10 42 C35 50, 60 20, 85 36 C95 44, 98 25, 100 22" stroke="#a855f7" strokeWidth="1.5" strokeLinecap="round" strokeOpacity="0.4" />
-              </svg>
             </div>
 
             {/* 3. User Requests */}
             <div
               onClick={() => setActiveTab('requests')}
-              className="p-3.5 sm:p-4.5 rounded-2xl sm:rounded-[22px] bg-[#091417]/90 backdrop-blur-xl border border-teal-500/30 hover:border-teal-400/60 shadow-[0_0_15px_rgba(20,184,166,0.1)] relative overflow-hidden transition-all duration-200 hover:scale-[1.02] cursor-pointer flex flex-col justify-between group min-w-0"
+              className="p-4 rounded-2xl bg-[#09090b] border border-zinc-800 hover:border-amber-500/50 shadow-sm transition-all duration-200 hover:scale-[1.01] cursor-pointer flex flex-col justify-between group min-w-0"
             >
               <div>
-                <div className="flex items-center justify-between mb-2">
-                  <div className="w-7 h-7 rounded-lg bg-teal-500/15 text-teal-400 border border-teal-500/30 flex items-center justify-center">
-                    <User className="w-3.5 h-3.5" />
+                <div className="flex items-center justify-between mb-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/20 flex items-center justify-center">
+                    <Inbox className="w-4 h-4" />
                   </div>
-                  <span className="text-[10px] font-bold text-teal-400 group-hover:underline">View →</span>
+                  <span className="text-[10px] font-bold text-amber-400 group-hover:underline">Fulfill →</span>
                 </div>
-                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">
+                <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider block">
                   User Requests
                 </span>
-                <p className="text-2xl sm:text-3xl font-black text-teal-400 my-1 truncate">
-                  {pendingRequestsCount > 0 ? pendingRequestsCount : (requestsList.length > 0 ? requestsList.length : 1)}
+                <p className="text-2xl sm:text-3xl font-black text-amber-400 my-1 truncate">
+                  {pendingRequestsCount}
                 </p>
               </div>
-              <span className="text-[11px] text-slate-400 font-medium">
-                {requestsList.length > 0 ? requestsList.length : 1} total submitted
+              <span className="text-[11px] text-zinc-500 font-medium truncate">
+                {requestsList.length} total ({pendingRequestsCount} pending)
               </span>
-              {/* Bottom-right teal wave */}
-              <svg className="absolute -bottom-1 -right-1 w-24 h-12 pointer-events-none opacity-40" viewBox="0 0 100 50" fill="none">
-                <path d="M0 35 C25 45, 50 10, 80 30 C90 38, 95 20, 100 15" stroke="#14b8a6" strokeWidth="2.5" strokeLinecap="round" />
-                <path d="M10 42 C35 50, 60 20, 85 36 C95 44, 98 25, 100 22" stroke="#14b8a6" strokeWidth="1.5" strokeLinecap="round" strokeOpacity="0.4" />
-              </svg>
             </div>
 
             {/* 4. Defective Links */}
             <div
               onClick={() => setActiveTab('reports')}
-              className="p-3.5 sm:p-4.5 rounded-2xl sm:rounded-[22px] bg-[#170a10]/90 backdrop-blur-xl border border-rose-500/30 hover:border-rose-400/60 shadow-[0_0_15px_rgba(244,63,94,0.1)] relative overflow-hidden transition-all duration-200 hover:scale-[1.02] cursor-pointer flex flex-col justify-between group min-w-0"
+              className="p-4 rounded-2xl bg-[#09090b] border border-zinc-800 hover:border-rose-500/50 shadow-sm transition-all duration-200 hover:scale-[1.01] cursor-pointer flex flex-col justify-between group min-w-0"
             >
               <div>
-                <div className="flex items-center justify-between mb-2">
-                  <div className="w-7 h-7 rounded-lg bg-rose-500/15 text-rose-400 border border-rose-500/30 flex items-center justify-center">
-                    <AlertTriangle className="w-3.5 h-3.5" />
+                <div className="flex items-center justify-between mb-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-rose-500/10 text-rose-400 border border-rose-500/20 flex items-center justify-center">
+                    <AlertTriangle className="w-4 h-4" />
                   </div>
                   <span className="text-[10px] font-bold text-rose-400 group-hover:underline">Fix Now →</span>
                 </div>
-                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">
+                <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider block">
                   Defective Links
                 </span>
                 <p className="text-2xl sm:text-3xl font-black text-rose-400 my-1 truncate">
-                  {pendingReportsCount > 0 ? pendingReportsCount : (reportsList.length > 0 ? reportsList.length : 1)}
+                  {pendingReportsCount}
                 </p>
               </div>
-              <span className="text-[11px] text-slate-400 font-medium">
-                {reportsList.length > 0 ? reportsList.length : 1} reported links
+              <span className="text-[11px] text-zinc-500 font-medium truncate">
+                {reportsList.length} total ({pendingReportsCount} pending)
               </span>
-              {/* Bottom-right rose wave */}
-              <svg className="absolute -bottom-1 -right-1 w-24 h-12 pointer-events-none opacity-40" viewBox="0 0 100 50" fill="none">
-                <path d="M0 35 C25 45, 50 10, 80 30 C90 38, 95 20, 100 15" stroke="#f43f5e" strokeWidth="2.5" strokeLinecap="round" />
-                <path d="M10 42 C35 50, 60 20, 85 36 C95 44, 98 25, 100 22" stroke="#f43f5e" strokeWidth="1.5" strokeLinecap="round" strokeOpacity="0.4" />
-              </svg>
             </div>
 
             {/* 5. User Accounts */}
             <div
               onClick={() => setActiveTab('users')}
-              className="p-3.5 sm:p-4.5 rounded-2xl sm:rounded-[22px] bg-[#171209]/90 backdrop-blur-xl border border-amber-500/30 hover:border-amber-400/60 shadow-[0_0_15px_rgba(245,158,11,0.1)] relative overflow-hidden transition-all duration-200 hover:scale-[1.02] cursor-pointer flex flex-col justify-between group min-w-0"
+              className="p-4 rounded-2xl bg-[#09090b] border border-zinc-800 hover:border-sky-500/50 shadow-sm transition-all duration-200 hover:scale-[1.01] cursor-pointer flex flex-col justify-between group min-w-0"
             >
               <div>
-                <div className="flex items-center justify-between mb-2">
-                  <div className="w-7 h-7 rounded-lg bg-amber-500/15 text-amber-400 border border-amber-500/30 flex items-center justify-center">
-                    <Users className="w-3.5 h-3.5" />
+                <div className="flex items-center justify-between mb-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-sky-500/10 text-sky-400 border border-sky-500/20 flex items-center justify-center">
+                    <Users className="w-4 h-4" />
                   </div>
-                  <span className="text-[10px] font-bold text-amber-400 group-hover:underline">Manage →</span>
+                  <span className="text-[10px] font-bold text-sky-400 group-hover:underline">Users →</span>
                 </div>
-                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">
+                <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider block">
                   User Accounts
                 </span>
-                <p className="text-2xl sm:text-3xl font-black text-amber-400 my-1 truncate">
-                  {registeredUsers.length > 0 ? registeredUsers.length : 4}
+                <p className="text-2xl sm:text-3xl font-black text-white my-1 truncate">
+                  {registeredUsers.length}
                 </p>
               </div>
-              <span className="text-[11px] text-slate-400 font-medium">
-                {registeredUsers.filter((u) => (u.requestsCount || 0) > 0).length || 1} active requesters
+              <span className="text-[11px] text-zinc-500 font-medium truncate">
+                {registeredUsers.filter((u) => (u.requestsCount || 0) > 0).length} active requesters
               </span>
-              {/* Bottom-right amber wave */}
-              <svg className="absolute -bottom-1 -right-1 w-24 h-12 pointer-events-none opacity-40" viewBox="0 0 100 50" fill="none">
-                <path d="M0 35 C25 45, 50 10, 80 30 C90 38, 95 20, 100 15" stroke="#f59e0b" strokeWidth="2.5" strokeLinecap="round" />
-                <path d="M10 42 C35 50, 60 20, 85 36 C95 44, 98 25, 100 22" stroke="#f59e0b" strokeWidth="1.5" strokeLinecap="round" strokeOpacity="0.4" />
-              </svg>
             </div>
 
             {/* 6. Active Admin */}
-            <div className="p-3.5 sm:p-4.5 rounded-2xl sm:rounded-[22px] bg-[#100d1c]/90 backdrop-blur-xl border border-indigo-500/30 hover:border-indigo-400/60 shadow-[0_0_15px_rgba(99,102,241,0.1)] relative overflow-hidden transition-all duration-200 hover:scale-[1.02] flex flex-col justify-between min-w-0">
+            <div className="p-4 rounded-2xl bg-[#09090b] border border-zinc-800 shadow-sm flex flex-col justify-between min-w-0">
               <div>
-                <div className="w-7 h-7 rounded-lg bg-indigo-500/15 text-indigo-400 border border-indigo-500/30 flex items-center justify-center mb-2">
-                  <ShieldCheck className="w-3.5 h-3.5" />
+                <div className="flex items-center justify-between mb-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center justify-center">
+                    <ShieldCheck className="w-4 h-4" />
+                  </div>
+                  <span className="text-[10px] font-bold text-emerald-400">
+                    Live
+                  </span>
                 </div>
-                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">
+                <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider block">
                   Active Admin
                 </span>
-                <p className="text-2xl sm:text-3xl font-black text-indigo-400 my-1 truncate">Shyam</p>
+                <p className="text-2xl sm:text-3xl font-black text-white my-1 truncate">
+                  {userProfile?.displayName || 'Shyam'}
+                </p>
               </div>
-              <span className="text-[11px] text-indigo-300/80 font-medium">Master Security Level</span>
-              {/* Bottom-right indigo wave */}
-              <svg className="absolute -bottom-1 -right-1 w-24 h-12 pointer-events-none opacity-40" viewBox="0 0 100 50" fill="none">
-                <path d="M0 35 C25 45, 50 10, 80 30 C90 38, 95 20, 100 15" stroke="#6366f1" strokeWidth="2.5" strokeLinecap="round" />
-                <path d="M10 42 C35 50, 60 20, 85 36 C95 44, 98 25, 100 22" stroke="#6366f1" strokeWidth="1.5" strokeLinecap="round" strokeOpacity="0.4" />
-              </svg>
+              <span className="text-[11px] text-zinc-500 font-medium truncate">Master Security Level</span>
             </div>
           </div>
 
           {/* Quick Title Jump & Manage (Full Width, Service Status Shifted to Sidebar) */}
-          <div className="w-full p-4 sm:p-6 rounded-2xl sm:rounded-[26px] bg-[#090d18]/90 backdrop-blur-xl border border-cyan-500/30 shadow-2xl space-y-4">
+          <div className="w-full p-4 sm:p-6 rounded-2xl sm:rounded-[26px] bg-[#09090b] border border-zinc-800 shadow-2xl space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 border-b border-cyan-500/15 pb-3">
               <div>
                 <h3 className="text-sm font-black text-white uppercase tracking-wider flex flex-wrap items-center gap-2">
@@ -4723,7 +4710,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
           </div>
 
           {/* Production Architecture & Infrastructure Stack (7-Tier Ecosystem) */}
-          <div className="p-4 sm:p-6 rounded-2xl sm:rounded-[26px] bg-[#090d18]/90 backdrop-blur-xl border border-cyan-500/30 shadow-2xl space-y-4">
+          <div className="p-4 sm:p-6 rounded-2xl sm:rounded-[26px] bg-[#09090b] border border-zinc-800 shadow-2xl space-y-4">
             <ArchitectureStackPanel
               getAuthHeaders={getAdminAuthHeaders}
               title="Core Ecosystem Architecture & Infrastructure"
@@ -4733,7 +4720,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
           </div>
 
           {/* Bottom Status Bar */}
-          <footer className="mt-6 p-4 rounded-2xl bg-[#080d19]/90 border border-cyan-500/30 backdrop-blur-xl flex flex-col sm:flex-row items-center justify-between gap-4 shadow-xl">
+          <footer className="mt-6 p-4 rounded-2xl bg-[#09090b] border border-zinc-800 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-xl">
             <div className="flex items-center gap-3">
               <div className="w-9 h-9 rounded-full bg-cyan-500/15 border border-cyan-400/40 text-cyan-400 flex items-center justify-center shrink-0 shadow-[0_0_10px_rgba(6,182,212,0.3)]">
                 <Shield className="w-5 h-5 text-cyan-400" />
@@ -4780,7 +4767,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
       {activeTab === 'links' && (
         <div className="space-y-6">
           {/* Add Custom Link Box with Universal Title Search & Mode Toggle */}
-          <div className="p-6 sm:p-7 rounded-3xl bg-[#0f121a] border border-amber-500/30 space-y-5 shadow-2xl">
+          <div className="p-6 sm:p-7 rounded-3xl bg-[#09090b] border border-amber-500/30 space-y-5 shadow-2xl">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-zinc-800 pb-4">
               <div>
                 <h3 className="text-sm font-black text-white uppercase tracking-wider flex items-center gap-2">
@@ -4911,7 +4898,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
 
                 {/* Auto-suggest Search Dropdown */}
                 {isTargetDropdownOpen && (
-                  <div className="absolute left-0 right-0 top-full mt-1 z-30 bg-[#11141d] border border-zinc-700 rounded-2xl shadow-2xl overflow-hidden max-h-80 overflow-y-auto">
+                  <div className="absolute left-0 right-0 top-full mt-1 z-30 bg-[#09090b] border border-zinc-700 rounded-2xl shadow-2xl overflow-hidden max-h-80 overflow-y-auto">
                     {targetSearchResults.length > 0 ? (
                       <div>
                         <div className="divide-y divide-zinc-800">
@@ -5696,92 +5683,8 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
             )}
           </div>
 
-          {/* Quick Title Jump on Links Tab */}
-          <div className="p-5 sm:p-6 rounded-3xl bg-[#090d18]/90 backdrop-blur-xl border border-cyan-500/30 space-y-4 shadow-xl">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 border-b border-cyan-500/15 pb-3">
-              <div>
-                <h3 className="text-sm font-black text-white uppercase tracking-wider flex items-center gap-2">
-                  <LayoutGrid className="w-4 h-4 text-cyan-400" /> Manage Links by Title
-                  <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 font-mono font-bold">
-                    {linkedTitlesTotal > 0 ? `${linkedTitlesTotal} Linked` : 'Catalog'}
-                  </span>
-                </h3>
-                <p className="text-xs text-zinc-400 mt-0.5">
-                  Click any title to view all links, batch-replace URLs, or delete dead links in 1 click.
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="relative">
-                  <input
-                    type="text"
-                    placeholder="Quick title filter..."
-                    value={quickJumpSearch}
-                    onChange={(e) => setQuickJumpSearch(e.target.value)}
-                    className="w-36 sm:w-48 bg-zinc-900/90 border border-zinc-700/80 rounded-xl pl-7 pr-6 py-1.5 text-[11px] text-white placeholder-zinc-500 focus:outline-none focus:border-cyan-400"
-                  />
-                  <Search className="w-3 h-3 text-zinc-500 absolute left-2 top-1/2 -translate-y-1/2" />
-                  {quickJumpSearch && (
-                    <button
-                      type="button"
-                      onClick={() => setQuickJumpSearch('')}
-                      className="text-zinc-500 hover:text-white absolute right-2 top-1/2 -translate-y-1/2 text-xs"
-                    >
-                      ✕
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-              {displayedQuickJumpTitles.map((pt) => (
-                <button
-                  key={`links-tab-${pt.media_type}-${pt.id}`}
-                  type="button"
-                  onClick={() => openTitleManager(pt, 'view')}
-                  className="p-2.5 rounded-xl bg-slate-900/60 border border-white/5 hover:border-cyan-500/40 flex items-center gap-3 transition-all text-left group cursor-pointer hover:bg-slate-900/90"
-                  title={`Click to manage links for ${pt.title}`}
-                >
-                  <div className="w-10 h-14 rounded-lg bg-slate-800 relative overflow-hidden shrink-0 border border-white/10 shadow-sm flex items-center justify-center">
-                    <img
-                      src={getImageURL(pt.poster_path, 'w200')}
-                      alt={pt.title}
-                      onError={(e) => {
-                        e.currentTarget.onerror = null;
-                        e.currentTarget.src = '/placeholder-poster.svg';
-                      }}
-                      className="w-full h-full object-cover"
-                      loading="lazy"
-                    />
-                  </div>
-                  <div className="overflow-hidden flex-1 min-w-0 space-y-1">
-                    <span className="text-xs font-bold text-white group-hover:text-cyan-300 truncate block">
-                      {pt.title}
-                    </span>
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className={`px-1.5 py-0.2 rounded font-mono text-[9px] font-black ${
-                        pt.media_type === 'tv' ? 'bg-sky-500/20 text-sky-300' : 'bg-amber-500/20 text-amber-300'
-                      }`}>
-                        {pt.media_type.toUpperCase()}
-                      </span>
-                      {pt.year && (
-                        <span className="text-[10px] text-slate-400 font-mono">• {pt.year}</span>
-                      )}
-                      {typeof pt.linksCount === 'number' && pt.linksCount > 0 && (
-                        <span className="text-[9px] font-bold text-emerald-400 px-1.5 py-0.2 rounded bg-emerald-500/10 border border-emerald-500/20 font-mono">
-                          🔥 {pt.linksCount}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  <ChevronRight className="w-4 h-4 text-slate-600 group-hover:text-cyan-400 transition-colors shrink-0" />
-                </button>
-              ))}
-            </div>
-          </div>
-
           {/* Links Moderation Table (Collapsible Space Saver) */}
-          <div className="p-5 sm:p-6 rounded-3xl bg-[#0f121a] border border-zinc-800 space-y-4">
+          <div className="p-5 sm:p-6 rounded-3xl bg-[#09090b] border border-zinc-800 space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex items-center gap-3">
                 <h3 className="text-sm font-black text-white uppercase tracking-wider flex items-center gap-2">
@@ -6191,7 +6094,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
       {activeTab === 'titles' && (
         <div className="space-y-6">
           {/* Header & Mode Switcher */}
-          <div className="p-6 sm:p-7 rounded-3xl bg-[#0f121a] border border-zinc-800 space-y-5">
+          <div className="p-6 sm:p-7 rounded-3xl bg-[#09090b] border border-zinc-800 space-y-5">
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-zinc-800 pb-5">
               <div className="space-y-1">
                 <h3 className="text-base sm:text-lg font-black text-white uppercase tracking-wider flex items-center gap-2">
@@ -6618,7 +6521,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
       {activeTab === 'requests' && (
         <div className="space-y-6">
           {/* Header Banner */}
-          <div className="p-6 rounded-3xl bg-[#0f121a] border border-zinc-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="p-6 rounded-3xl bg-[#09090b] border border-zinc-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="space-y-1">
               <h3 className="text-sm font-black text-white uppercase tracking-wider flex items-center gap-2">
                 <Inbox className="w-4 h-4 text-amber-400" /> User Link Requests & Fulfillment Vault
@@ -6646,7 +6549,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
               className={`p-4 rounded-2xl border text-left transition-all ${
                 requestsFilter === 'all'
                   ? 'bg-blue-600/10 border-blue-500 text-white shadow-md'
-                  : 'bg-[#11141c] border-white/5 text-zinc-400 hover:border-zinc-700'
+                  : 'bg-zinc-950 border-white/5 text-zinc-400 hover:border-zinc-700'
               }`}
             >
               <span className="text-[10px] font-bold uppercase tracking-wider block mb-1">Total Requests</span>
@@ -6658,7 +6561,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
               className={`p-4 rounded-2xl border text-left transition-all ${
                 requestsFilter === 'pending'
                   ? 'bg-amber-500/15 border-amber-500 text-white shadow-md shadow-amber-500/10'
-                  : 'bg-[#11141c] border-white/5 text-zinc-400 hover:border-zinc-700'
+                  : 'bg-zinc-950 border-white/5 text-zinc-400 hover:border-zinc-700'
               }`}
             >
               <div className="flex items-center justify-between mb-1">
@@ -6675,7 +6578,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
               className={`p-4 rounded-2xl border text-left transition-all ${
                 requestsFilter === 'fulfilled'
                   ? 'bg-emerald-500/15 border-emerald-500 text-white shadow-md shadow-emerald-500/10'
-                  : 'bg-[#11141c] border-white/5 text-zinc-400 hover:border-zinc-700'
+                  : 'bg-zinc-950 border-white/5 text-zinc-400 hover:border-zinc-700'
               }`}
             >
               <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 block mb-1">Fulfilled</span>
@@ -6689,7 +6592,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
               className={`p-4 rounded-2xl border text-left transition-all ${
                 requestsFilter === 'rejected'
                   ? 'bg-rose-500/15 border-rose-500 text-white shadow-md shadow-rose-500/10'
-                  : 'bg-[#11141c] border-white/5 text-zinc-400 hover:border-zinc-700'
+                  : 'bg-zinc-950 border-white/5 text-zinc-400 hover:border-zinc-700'
               }`}
             >
               <span className="text-[10px] font-bold uppercase tracking-wider text-rose-400 block mb-1">Rejected</span>
@@ -6700,7 +6603,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
           </div>
 
           {/* Search & Filter Bar */}
-          <div className="p-4 rounded-2xl bg-[#0f121a] border border-zinc-800 flex flex-col sm:flex-row items-center gap-3">
+          <div className="p-4 rounded-2xl bg-[#09090b] border border-zinc-800 flex flex-col sm:flex-row items-center gap-3">
             <div className="relative flex-1 w-full">
               <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
               <input
@@ -6754,7 +6657,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
 
             if (filteredRequests.length === 0) {
               return (
-                <div className="p-12 rounded-3xl bg-[#0f121a] border border-zinc-800 text-center space-y-3">
+                <div className="p-12 rounded-3xl bg-[#09090b] border border-zinc-800 text-center space-y-3">
                   <div className="w-12 h-12 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-center justify-center mx-auto text-zinc-600">
                     <Inbox className="w-6 h-6" />
                   </div>
@@ -6779,7 +6682,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                   return (
                     <div
                       key={req.id}
-                      className="p-5 rounded-3xl bg-[#0f121a] border border-zinc-800/80 hover:border-zinc-700 transition-all flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-lg group"
+                      className="p-5 rounded-3xl bg-[#09090b] border border-zinc-800/80 hover:border-zinc-700 transition-all flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-lg group"
                     >
                       {/* Left: Thumbnail & Details */}
                       <div className="flex items-start gap-4 flex-1 min-w-0">
@@ -7040,7 +6943,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
       {activeTab === 'reports' && (
         <div className="space-y-6">
           {/* Header Banner */}
-          <div className="p-6 rounded-3xl bg-[#0f121a] border border-rose-500/30 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-xl relative overflow-hidden">
+          <div className="p-6 rounded-3xl bg-[#09090b] border border-rose-500/30 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-xl relative overflow-hidden">
             <div className="absolute top-0 right-0 w-80 h-80 bg-rose-500/5 rounded-full blur-3xl pointer-events-none" />
 
             <div className="flex items-start sm:items-center gap-4">
@@ -7082,7 +6985,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
               className={`p-4 rounded-2xl border text-left transition-all ${
                 reportsFilter === 'all'
                   ? 'bg-rose-500/15 border-rose-500 text-white shadow-md shadow-rose-500/10'
-                  : 'bg-[#11141c] border-white/5 text-zinc-400 hover:border-zinc-700'
+                  : 'bg-zinc-950 border-white/5 text-zinc-400 hover:border-zinc-700'
               }`}
             >
               <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 block mb-1">Total Reports</span>
@@ -7094,7 +6997,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
               className={`p-4 rounded-2xl border text-left transition-all ${
                 reportsFilter === 'pending'
                   ? 'bg-rose-500/15 border-rose-500 text-white shadow-md shadow-rose-500/10'
-                  : 'bg-[#11141c] border-white/5 text-zinc-400 hover:border-zinc-700'
+                  : 'bg-zinc-950 border-white/5 text-zinc-400 hover:border-zinc-700'
               }`}
             >
               <div className="flex items-center justify-between mb-1">
@@ -7111,7 +7014,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
               className={`p-4 rounded-2xl border text-left transition-all ${
                 reportsFilter === 'fixed'
                   ? 'bg-emerald-500/15 border-emerald-500 text-white shadow-md shadow-emerald-500/10'
-                  : 'bg-[#11141c] border-white/5 text-zinc-400 hover:border-zinc-700'
+                  : 'bg-zinc-950 border-white/5 text-zinc-400 hover:border-zinc-700'
               }`}
             >
               <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 block mb-1">Fixed / Replaced</span>
@@ -7125,7 +7028,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
               className={`p-4 rounded-2xl border text-left transition-all ${
                 reportsFilter === 'dismissed'
                   ? 'bg-zinc-700/40 border-zinc-500 text-white shadow-md'
-                  : 'bg-[#11141c] border-white/5 text-zinc-400 hover:border-zinc-700'
+                  : 'bg-zinc-950 border-white/5 text-zinc-400 hover:border-zinc-700'
               }`}
             >
               <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 block mb-1">Dismissed (Valid)</span>
@@ -7136,7 +7039,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
           </div>
 
           {/* Search & Filter Toolbar */}
-          <div className="p-4 rounded-2xl bg-[#0f121a] border border-zinc-800 flex flex-col sm:flex-row items-center gap-3">
+          <div className="p-4 rounded-2xl bg-[#09090b] border border-zinc-800 flex flex-col sm:flex-row items-center gap-3">
             <div className="relative flex-1 w-full">
               <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
               <input
@@ -7209,7 +7112,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
 
             if (filteredReports.length === 0) {
               return (
-                <div className="p-12 rounded-3xl bg-[#0f121a] border border-zinc-800 text-center space-y-3">
+                <div className="p-12 rounded-3xl bg-[#09090b] border border-zinc-800 text-center space-y-3">
                   <div className="w-12 h-12 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-center justify-center mx-auto text-zinc-600">
                     <AlertTriangle className="w-6 h-6" />
                   </div>
@@ -7250,7 +7153,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                   return (
                     <div
                       key={report.id}
-                      className="p-5 rounded-3xl bg-[#0f121a] border border-zinc-800/80 hover:border-zinc-700 flex flex-col md:flex-row items-start justify-between gap-5 transition-all shadow-md group"
+                      className="p-5 rounded-3xl bg-[#09090b] border border-zinc-800/80 hover:border-zinc-700 flex flex-col md:flex-row items-start justify-between gap-5 transition-all shadow-md group"
                     >
                       {/* Left: Poster + Details */}
                       <div className="flex items-start gap-4 overflow-hidden w-full md:w-auto">
@@ -7513,7 +7416,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
       {/* TAB 4: MANAGE USERS */}
       {/* ========================================================= */}
       {activeTab === 'users' && (
-        <div className="p-6 sm:p-8 rounded-3xl bg-[#0f121a] border border-zinc-800 space-y-6">
+        <div className="p-6 sm:p-8 rounded-3xl bg-[#09090b] border border-zinc-800 space-y-6">
           {/* Header */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-zinc-800/80">
             <div className="space-y-1">
@@ -7849,7 +7752,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
       {/* TAB 5: API KEYS & INTEGRATIONS */}
       {/* ========================================================= */}
       {activeTab === 'apis' && (
-        <div className="p-6 sm:p-8 rounded-3xl bg-[#0f121a] border border-zinc-800 space-y-6">
+        <div className="p-6 sm:p-8 rounded-3xl bg-[#09090b] border border-zinc-800 space-y-6">
           <div className="space-y-1">
             <h3 className="text-base font-black text-white flex items-center gap-2">
               <Key className="w-5 h-5 text-amber-400" /> API Keys & Configuration
@@ -7922,7 +7825,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
       {/* ========================================================= */}
       {activeTab === 'backup' && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="p-6 rounded-3xl bg-[#0f121a] border border-zinc-800 space-y-4">
+          <div className="p-6 rounded-3xl bg-[#09090b] border border-zinc-800 space-y-4">
             <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 flex items-center justify-center">
               <Download className="w-5 h-5" />
             </div>
@@ -7940,7 +7843,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
             </button>
           </div>
 
-          <div className="p-6 rounded-3xl bg-[#0f121a] border border-zinc-800 space-y-4">
+          <div className="p-6 rounded-3xl bg-[#09090b] border border-zinc-800 space-y-4">
             <div className="w-10 h-10 rounded-xl bg-sky-500/20 border border-sky-500/30 text-sky-400 flex items-center justify-center">
               <Upload className="w-5 h-5" />
             </div>
@@ -7962,7 +7865,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
       {/* TAB 7: DIAGNOSTICS & LOGS */}
       {/* ========================================================= */}
       {activeTab === 'logs' && (
-        <div className="p-6 rounded-3xl bg-[#0f121a] border border-zinc-800 space-y-4 font-mono">
+        <div className="p-6 rounded-3xl bg-[#09090b] border border-zinc-800 space-y-4 font-mono">
           <div className="flex items-center justify-between">
             <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-2">
               <Server className="w-4 h-4 text-amber-400" /> Real-time System Diagnostics & Logs
@@ -8002,7 +7905,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
       {/* ========================================================= */}
       {editingLink && (
         <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#10141d] border border-amber-500/40 rounded-3xl p-6 sm:p-8 max-w-lg w-full space-y-5 shadow-2xl animate-scaleIn">
+          <div className="bg-[#09090b] border border-amber-500/40 rounded-3xl p-6 sm:p-8 max-w-lg w-full space-y-5 shadow-2xl animate-scaleIn">
             <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
               <h3 className="text-base font-black text-white flex items-center gap-2">
                 <Edit className="w-4 h-4 text-amber-400" /> Edit Custom Link
@@ -8180,7 +8083,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
       {/* Admin Fulfill Link Request Modal (Single, Bulk Auto-Detector, & Episode Grid) */}
       {fulfillingRequest && (
         <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fade-in">
-          <div className="bg-[#0f131d] border border-blue-500/40 rounded-3xl p-5 sm:p-7 max-w-4xl w-full space-y-4 shadow-2xl animate-scaleIn my-6 max-h-[92vh] overflow-y-auto">
+          <div className="bg-[#09090b] border border-blue-500/40 rounded-3xl p-5 sm:p-7 max-w-4xl w-full space-y-4 shadow-2xl animate-scaleIn my-6 max-h-[92vh] overflow-y-auto">
             {/* Header with Title & 3 Mode Switcher Pills */}
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-zinc-800 pb-3.5">
               <div className="flex items-center gap-3">
@@ -8880,7 +8783,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
       {fixingReport && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fade-in overflow-y-auto">
           <div
-            className="relative w-full max-w-lg bg-[#0d111a] border border-rose-500/40 rounded-3xl p-6 sm:p-7 shadow-2xl space-y-4 my-8"
+            className="relative w-full max-w-lg bg-[#09090b] border border-rose-500/40 rounded-3xl p-6 sm:p-7 shadow-2xl space-y-4 my-8"
             onClick={(e) => e.stopPropagation()}
           >
             <button
@@ -9196,7 +9099,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
       {/* Admin Reply Modal (for Requests & Reports) */}
       {adminReplyTarget && (
         <div className="fixed inset-0 z-[110] bg-black/80 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fade-in">
-          <div className="bg-[#0f131d] border border-amber-500/40 rounded-3xl p-5 sm:p-7 max-w-lg w-full space-y-4 shadow-2xl animate-scaleIn my-6">
+          <div className="bg-[#09090b] border border-amber-500/40 rounded-3xl p-5 sm:p-7 max-w-lg w-full space-y-4 shadow-2xl animate-scaleIn my-6">
             <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
               <div className="flex items-center gap-2.5">
                 <div className="w-9 h-9 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-400 flex items-center justify-center font-bold">
@@ -9292,7 +9195,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
       {isManualTitleModalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fade-in">
           <div
-            className="relative w-full max-w-md bg-[#0d111a] border border-amber-500/40 rounded-3xl p-6 sm:p-7 shadow-2xl space-y-4"
+            className="relative w-full max-w-md bg-[#09090b] border border-amber-500/40 rounded-3xl p-6 sm:p-7 shadow-2xl space-y-4"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
@@ -9398,7 +9301,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
           onClick={handleCloseTitleManager}
         >
           <div
-            className="relative w-full max-w-4xl max-h-[92vh] flex flex-col bg-[#0b0e17] border border-amber-500/30 rounded-3xl shadow-2xl overflow-hidden"
+            className="relative w-full max-w-4xl max-h-[92vh] flex flex-col bg-[#09090b] border border-amber-500/30 rounded-3xl shadow-2xl overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Modal Header */}
@@ -10840,7 +10743,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
           onClick={() => setInspectingLink(null)}
         >
           <div
-            className="relative w-full max-w-2xl bg-[#0b0e17] border border-cyan-500/30 rounded-3xl shadow-2xl p-6 space-y-4 max-h-[90vh] overflow-y-auto"
+            className="relative w-full max-w-2xl bg-[#09090b] border border-cyan-500/30 rounded-3xl shadow-2xl p-6 space-y-4 max-h-[90vh] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
@@ -10970,7 +10873,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
           onClick={() => setLinkToDelete(null)}
         >
           <div
-            className="relative w-full max-w-lg bg-[#0b0e17] border border-rose-500/30 rounded-3xl shadow-2xl p-6 space-y-4"
+            className="relative w-full max-w-lg bg-[#09090b] border border-rose-500/30 rounded-3xl shadow-2xl p-6 space-y-4"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center gap-3">
@@ -11040,7 +10943,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
           }}
         >
           <div
-            className="relative w-full max-w-xl bg-[#0b0e17] border border-rose-500/40 rounded-3xl shadow-2xl p-6 space-y-4"
+            className="relative w-full max-w-xl bg-[#09090b] border border-rose-500/40 rounded-3xl shadow-2xl p-6 space-y-4"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center gap-3">
