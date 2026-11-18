@@ -60,11 +60,11 @@ export default function RootLayout({
     >
       <head>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <meta name="theme-color" content="#08090c" id="theme-color-meta" />
+        <meta name="theme-color" content="#000000" id="theme-color-meta" />
         {/* Early Zero-Flicker Theme Initialization Script */}
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var k='cinephile-theme',lk='cinefuel_theme';var s=localStorage.getItem(k)||localStorage.getItem(lk);var t=s;if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}var d=t==='dark';var r=document.documentElement;r.classList.remove('dark','light');r.classList.add(d?'dark':'light');r.setAttribute('data-theme',d?'dark':'light');r.style.colorScheme=d?'dark':'light';var m=document.getElementById('theme-color-meta');if(m)m.setAttribute('content',d?'#08090c':'#f8fafc');}catch(e){document.documentElement.classList.add('dark');document.documentElement.setAttribute('data-theme','dark');}})();`,
+            __html: `(function(){try{var k='cinephile-theme',lk='cinefuel_theme';var s=localStorage.getItem(k)||localStorage.getItem(lk);var t=s;if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}var d=t==='dark';var r=document.documentElement;r.classList.remove('dark','light');r.classList.add(d?'dark':'light');r.setAttribute('data-theme',d?'dark':'light');r.style.colorScheme=d?'dark':'light';var m=document.getElementById('theme-color-meta');if(m)m.setAttribute('content',d?'#000000':'#ffffff');}catch(e){document.documentElement.classList.add('dark');document.documentElement.setAttribute('data-theme','dark');}})();`,
           }}
         />
         <link rel="preconnect" href="https://image.tmdb.org" />

@@ -29,9 +29,9 @@ export default function GlobalError({
   }, [error]);
 
   return (
-    <html lang="en" className="dark">
-      <body className="bg-[#08090c] text-zinc-100 min-h-screen flex items-center justify-center p-4">
-        <div className="max-w-md w-full p-8 rounded-3xl bg-[#0e1118] border border-zinc-800 shadow-2xl text-center space-y-5">
+    <html lang="en" className="dark" data-theme="dark">
+      <body className="bg-black text-zinc-100 min-h-screen flex items-center justify-center p-4">
+        <div className="max-w-md w-full p-8 rounded-3xl bg-[#0a0a0d] border border-zinc-800 shadow-2xl text-center space-y-5">
           <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-400 flex items-center justify-center mx-auto shadow-lg shadow-amber-500/10">
             <svg
               xmlns="http://www.w3.org/2000/svg"

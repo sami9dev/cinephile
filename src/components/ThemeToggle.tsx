@@ -26,7 +26,7 @@ export default function ThemeToggle({ className = '', showLabel = false }: Theme
 
     const metaThemeColor = document.querySelector('meta[name="theme-color"]');
     if (metaThemeColor) {
-      metaThemeColor.setAttribute('content', isDark ? '#08090c' : '#f8fafc');
+      metaThemeColor.setAttribute('content', isDark ? '#000000' : '#ffffff');
     }
   }, []);
 
@@ -119,14 +119,14 @@ export default function ThemeToggle({ className = '', showLabel = false }: Theme
   };
 
   const isLight = theme === 'light';
-  const labelText = isLight ? 'Switch to Dark Mode' : 'Switch to Light Mode';
+  const labelText = isLight ? 'Switch to Pure Dark' : 'Switch to Pure Light';
 
   if (!mounted) {
     return (
       <button
         type="button"
         disabled
-        className={`p-2 rounded-xl bg-zinc-800/80 text-zinc-400 border border-zinc-700/60 transition-all ${className}`}
+        className={`p-2 rounded-xl bg-zinc-900 text-zinc-400 border border-zinc-800 transition-all ${className}`}
         aria-label="Toggle theme"
       >
         <span className="relative w-4 h-4 block">
@@ -146,8 +146,8 @@ export default function ThemeToggle({ className = '', showLabel = false }: Theme
       title={labelText}
       className={`relative inline-flex items-center justify-center gap-2 p-2 rounded-xl font-medium text-xs transition-all duration-300 ease-out cursor-pointer active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/70 select-none ${
         isLight
-          ? 'bg-amber-50 hover:bg-amber-100/90 text-amber-900 border border-amber-300/80 shadow-sm hover:border-amber-400'
-          : 'bg-[#151922] hover:bg-[#1c2230] text-zinc-300 hover:text-amber-400 border border-zinc-750/90 hover:border-amber-500/40 shadow-sm'
+          ? 'bg-zinc-100 hover:bg-zinc-200/90 text-zinc-900 border border-zinc-300/80 shadow-sm'
+          : 'bg-[#0f0f13] hover:bg-[#1a1a20] text-zinc-200 hover:text-amber-400 border border-white/10 hover:border-amber-500/40 shadow-sm'
       } ${className}`}
     >
       <span className="relative w-4 h-4 flex items-center justify-center shrink-0 overflow-hidden">
@@ -173,7 +173,7 @@ export default function ThemeToggle({ className = '', showLabel = false }: Theme
 
       {showLabel && (
         <span className="font-semibold text-xs tracking-wide">
-          {isLight ? 'Light Mode' : 'Dark Mode'}
+          {isLight ? 'Pure Light' : 'Pure Dark'}
         </span>
       )}
     </button>

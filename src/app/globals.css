@@ -15,39 +15,39 @@
 :root,
 html[data-theme="light"],
 html.light {
-  /* Surfaces */
-  --bg-main: #f8fafc;
+  /* Surfaces - Pure Light Clean Canvas */
+  --bg-main: #ffffff;
   --bg-surface: #ffffff;
-  --bg-surface-raised: #f1f5f9;
+  --bg-surface-raised: #f4f4f5;
   --bg-surface-elevated: #ffffff;
-  --bg-header: rgba(248, 250, 252, 0.94);
-  --bg-sidebar: #f8fafc;
+  --bg-header: rgba(255, 255, 255, 0.94);
+  --bg-sidebar: #fafafa;
   --bg-modal: #ffffff;
   --bg-popover: #ffffff;
   --bg-input: #ffffff;
-  --bg-glass: rgba(255, 255, 255, 0.92);
-  --bg-subtle: rgba(15, 23, 42, 0.04);
-  --bg-hover: rgba(15, 23, 42, 0.06);
+  --bg-glass: rgba(255, 255, 255, 0.94);
+  --bg-subtle: rgba(0, 0, 0, 0.03);
+  --bg-hover: rgba(0, 0, 0, 0.05);
 
-  /* Typography */
-  --text-primary: #0f172a;
-  --text-secondary: #334155;
-  --text-muted: #64748b;
-  --text-subtle: #94a3b8;
-  --text-headings: #090d16;
+  /* Typography - Crisp High Contrast */
+  --text-primary: #09090b;
+  --text-secondary: #27272a;
+  --text-muted: #52525b;
+  --text-subtle: #71717a;
+  --text-headings: #000000;
   --text-links: #d97706;
-  --text-disabled: #94a3b8;
+  --text-disabled: #a1a1aa;
 
   /* Borders & Dividers */
-  --border-subtle: rgba(15, 23, 42, 0.08);
-  --border-default: #e2e8f0;
-  --border-strong: #cbd5e1;
-  --border-divider: #e2e8f0;
+  --border-subtle: rgba(0, 0, 0, 0.06);
+  --border-default: #e4e4e7;
+  --border-strong: #d4d4d8;
+  --border-divider: #e4e4e7;
 
   /* Shadows & Effects */
-  --card-shadow: 0 4px 16px -2px rgba(15, 23, 42, 0.06);
-  --card-shadow-hover: 0 16px 32px -8px rgba(15, 23, 42, 0.12), 0 0 16px -4px rgba(245, 197, 24, 0.18);
-  --elevated-shadow: 0 20px 45px -10px rgba(15, 23, 42, 0.12);
+  --card-shadow: 0 4px 18px -2px rgba(0, 0, 0, 0.06);
+  --card-shadow-hover: 0 16px 36px -8px rgba(0, 0, 0, 0.12), 0 0 16px -4px rgba(245, 197, 24, 0.2);
+  --elevated-shadow: 0 20px 48px -10px rgba(0, 0, 0, 0.12);
   --focus-ring: rgba(245, 197, 24, 0.5);
 
   /* Brand & Status Accents */
@@ -64,9 +64,9 @@ html.light {
   --btn-primary-bg: #e50914;
   --btn-primary-text: #ffffff;
   --btn-primary-hover: #b91c1c;
-  --btn-secondary-bg: #f1f5f9;
-  --btn-secondary-text: #0f172a;
-  --btn-secondary-hover: #e2e8f0;
+  --btn-secondary-bg: #f4f4f5;
+  --btn-secondary-text: #09090b;
+  --btn-secondary-hover: #e4e4e7;
 
   /* Status Colors */
   --status-success: #059669;
@@ -87,40 +87,40 @@ html.light {
 
 :root[data-theme="dark"],
 html.dark {
-  /* Surfaces */
-  --bg-main: #08090c;
-  --bg-surface: #0e1117;
-  --bg-surface-raised: #151922;
-  --bg-surface-elevated: #1b212d;
-  --bg-header: rgba(8, 9, 12, 0.94);
-  --bg-sidebar: #0b0d13;
-  --bg-modal: #0e1117;
-  --bg-popover: #151922;
-  --bg-input: #14121f;
-  --bg-glass: rgba(14, 17, 23, 0.75);
+  /* Surfaces - Pure OLED True Black Cinema Canvas */
+  --bg-main: #000000;
+  --bg-surface: #0a0a0c;
+  --bg-surface-raised: #111114;
+  --bg-surface-elevated: #18181c;
+  --bg-header: rgba(0, 0, 0, 0.92);
+  --bg-sidebar: #050507;
+  --bg-modal: #0a0a0d;
+  --bg-popover: #111115;
+  --bg-input: #0d0d10;
+  --bg-glass: rgba(10, 10, 12, 0.88);
   --bg-subtle: rgba(255, 255, 255, 0.04);
   --bg-hover: rgba(255, 255, 255, 0.07);
 
-  /* Typography */
-  --text-primary: #f1f5f9;
-  --text-secondary: #cbd5e1;
-  --text-muted: #94a3b8;
-  --text-subtle: #64748b;
+  /* Typography - Ultra-Crisp OLED Contrast */
+  --text-primary: #ffffff;
+  --text-secondary: #d4d4d8;
+  --text-muted: #a1a1aa;
+  --text-subtle: #71717a;
   --text-headings: #ffffff;
   --text-links: #f5c518;
-  --text-disabled: #475569;
+  --text-disabled: #52525b;
 
-  /* Borders & Dividers */
-  --border-subtle: rgba(255, 255, 255, 0.06);
-  --border-default: #1e2433;
-  --border-strong: #333d52;
-  --border-divider: #1e2433;
+  /* Borders & Dividers - Subtle True Dark Definition */
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border-default: #1f1f24;
+  --border-strong: #2e2e36;
+  --border-divider: #1f1f24;
 
   /* Shadows & Effects */
-  --card-shadow: 0 8px 30px -4px rgba(0, 0, 0, 0.5);
-  --card-shadow-hover: 0 20px 40px -10px rgba(0, 0, 0, 0.8), 0 0 25px -5px rgba(245, 197, 24, 0.2);
-  --elevated-shadow: 0 24px 50px -12px rgba(0, 0, 0, 0.85);
-  --focus-ring: rgba(245, 197, 24, 0.4);
+  --card-shadow: 0 8px 30px -4px rgba(0, 0, 0, 0.7);
+  --card-shadow-hover: 0 20px 48px -8px rgba(0, 0, 0, 0.95), 0 0 25px -4px rgba(245, 197, 24, 0.22);
+  --elevated-shadow: 0 24px 60px -12px rgba(0, 0, 0, 0.95);
+  --focus-ring: rgba(245, 197, 24, 0.45);
 
   /* Brand & Status Accents */
   --accent-red: #e50914;
@@ -136,9 +136,9 @@ html.dark {
   --btn-primary-bg: #e50914;
   --btn-primary-text: #ffffff;
   --btn-primary-hover: #f87171;
-  --btn-secondary-bg: #151922;
-  --btn-secondary-text: #f1f5f9;
-  --btn-secondary-hover: #1e2433;
+  --btn-secondary-bg: #141418;
+  --btn-secondary-text: #f4f4f5;
+  --btn-secondary-hover: #1f1f24;
 
   /* Status Colors */
   --status-success: #10b981;
@@ -417,7 +417,73 @@ body {
 }
 
 /* ========================================================= */
-/* 2. COMPREHENSIVE LIGHT THEME ENGINE & COMPONENT COVERAGE */
+/* 2. PURE DARK (TRUE BLACK CINEMA) COMPONENT COVERAGE */
+/* ========================================================= */
+
+html.dark body {
+  background-color: var(--bg-main) !important;
+  color: var(--text-primary) !important;
+}
+
+/* Header & Navigation in Pure Dark */
+html.dark header {
+  background-color: var(--bg-header) !important;
+  border-bottom: 1px solid var(--border-subtle) !important;
+}
+
+html.dark header input {
+  background-color: var(--bg-input) !important;
+  color: var(--text-primary) !important;
+  border-color: var(--border-default) !important;
+}
+
+html.dark header input::placeholder {
+  color: var(--text-muted) !important;
+}
+
+html.dark header input:focus {
+  border-color: #a855f7 !important;
+  box-shadow: 0 0 0 2px rgba(168, 85, 247, 0.25) !important;
+}
+
+/* Pure Black Surfaces */
+html.dark .bg-\[\#08090c\],
+html.dark .bg-\[\#07090e\],
+html.dark .bg-\[\#06080b\],
+html.dark .bg-\[\#090a10\],
+html.dark .bg-\[\#0b0d13\] {
+  background-color: var(--bg-main) !important;
+}
+
+html.dark .bg-\[\#0e1117\],
+html.dark .bg-\[\#12101c\],
+html.dark .bg-\[\#10131b\],
+html.dark .bg-\[\#100e19\],
+html.dark .bg-\[\#121319\],
+html.dark .from-\[\#10131b\],
+html.dark .to-\[\#0c0f16\] {
+  background-color: var(--bg-surface) !important;
+}
+
+html.dark .bg-\[\#151922\],
+html.dark .bg-\[\#1e232b\],
+html.dark .bg-\[\#121624\] {
+  background-color: var(--bg-surface-raised) !important;
+}
+
+html.dark .bg-\[\#14121f\],
+html.dark .bg-\[\#1a1728\] {
+  background-color: var(--bg-input) !important;
+  border-color: var(--border-default) !important;
+}
+
+html.dark .glass-card {
+  background: var(--bg-surface) !important;
+  border-color: var(--border-subtle) !important;
+}
+
+/* ========================================================= */
+/* 3. COMPREHENSIVE PURE LIGHT THEME ENGINE & COMPONENT COVERAGE */
 /* ========================================================= */
 
 html.light body {
@@ -432,18 +498,27 @@ html.light header {
   box-shadow: 0 4px 20px -2px rgba(15, 23, 42, 0.05) !important;
 }
 
+html.light .font-logo {
+  color: #7c3aed !important;
+}
+
+html.light .font-logo:hover {
+  color: #6d28d9 !important;
+}
+
 html.light header input {
-  background-color: #ffffff !important;
-  color: #0f172a !important;
-  border-color: #cbd5e1 !important;
+  background-color: #f4f4f5 !important;
+  color: #09090b !important;
+  border-color: #e4e4e7 !important;
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.04) !important;
 }
 
 html.light header input::placeholder {
-  color: #94a3b8 !important;
+  color: #71717a !important;
 }
 
 html.light header input:focus {
+  background-color: #ffffff !important;
   border-color: #a855f7 !important;
   box-shadow: 0 0 0 2px rgba(168, 85, 247, 0.2) !important;
 }

@@ -150,8 +150,8 @@ export const Header: React.FC = () => {
       <header
         className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
           isScrolled
-            ? 'bg-[#08090c]/90 backdrop-blur-md border-b border-white/10 shadow-2xl py-3'
-            : 'bg-gradient-to-b from-[#08090c]/95 via-[#08090c]/60 to-transparent py-4'
+            ? 'bg-black/90 backdrop-blur-md border-b border-white/10 shadow-2xl py-3'
+            : 'bg-gradient-to-b from-black/95 via-black/60 to-transparent py-4'
         }`}
       >
         <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 flex items-center justify-between gap-2 sm:gap-4">
