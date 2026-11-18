@@ -155,6 +155,17 @@ export async function replaceAllLinksForTitleInSupabase(
     throw new Error(`Supabase replace delete failed: ${delError.message}`);
   }
 
+  // 1b. If deleting all links and a titleHint is provided, also delete by matching title
+  if (links.length === 0 && metadata?.titleHint) {
+    const hint = String(metadata.titleHint).trim();
+    if (hint) {
+      await supabase
+        .from('links')
+        .delete()
+        .ilike('movie_title', `%${hint}%`);
+    }
+  }
+
   // 2. Insert new links if any
   if (links.length > 0) {
     const rows = links.map((l) => mapLinkToSupabaseRow(mId, l, metadata));

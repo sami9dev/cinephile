@@ -1090,8 +1090,8 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
           const data = await res.json();
           if (data && Array.isArray(data.items)) {
             const formatted: LinkedCatalogTitle[] = data.items.map((it: any) => ({
-              id: it.id,
-              title: it.title || it.name || `Title #${it.id}`,
+              id: it.rawId || it.movieId || it.id,
+              title: it.title || it.name || `Title #${it.rawId || it.movieId || it.id}`,
               name: it.name,
               media_type: (it.media_type || (it.name ? 'tv' : 'movie')) as 'movie' | 'tv',
               poster_path: it.poster_path,
@@ -1282,11 +1282,12 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
         headers: getAdminAuthHeaders(),
         body: JSON.stringify({
           movieId: String(title.id),
+          title: title.title,
           action: 'delete_all_links',
         }),
       });
       if (res.ok) {
-        await deleteAllGlobalCustomLinks(Number(title.id));
+        await deleteAllGlobalCustomLinks(title.id);
         setCustomLinksMap((prev) => {
           const key = String(title.id);
           const next = { ...prev };
@@ -1563,12 +1564,13 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
         headers: getAdminAuthHeaders(),
         body: JSON.stringify({
           movieId: String(titleToDelete.id),
+          title: titleToDelete.title,
           action: 'delete_entire_title',
         }),
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        await deleteAllGlobalCustomLinks(Number(titleToDelete.id));
+        await deleteAllGlobalCustomLinks(titleToDelete.id);
         setCustomLinksMap((prev) => {
           const key = String(titleToDelete.id);
           const next = { ...prev };

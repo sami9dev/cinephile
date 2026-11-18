@@ -48,6 +48,8 @@ export interface WatchProvidersData {
 
 export interface TitleDetails {
   id: number;
+  rawId?: string | number;
+  movieId?: string | number;
   title: string;
   original_title?: string;
   name?: string; // For TV

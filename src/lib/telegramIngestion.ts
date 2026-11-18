@@ -326,6 +326,30 @@ export async function processTelegramIngestion(
   });
 
   const isDummyTmdb = !tmdb || !tmdb.title || tmdb.title.startsWith('Movie #') || tmdb.title === 'Untitled';
+
+  const cleanTitleForCheck = (searchTitle || '').replace(/[^\w\s]/g, '').trim().toLowerCase();
+  const isBoilerplateOnly =
+    !cleanTitleForCheck ||
+    cleanTitleForCheck === 'direct hubcloud' ||
+    cleanTitleForCheck === 'hubcloud' ||
+    cleanTitleForCheck === 'hubcloud links' ||
+    cleanTitleForCheck === 'download links' ||
+    cleanTitleForCheck === 'streaming links' ||
+    cleanTitleForCheck === 'join channel' ||
+    /^(?:direct\s*)?hubcloud(?:\s*links?)?$/i.test(cleanTitleForCheck);
+
+  if (isBoilerplateOnly && isDummyTmdb) {
+    return {
+      success: false,
+      error: `Skipped ingestion: extracted title "${searchTitle}" is generic HubCloud promotional boilerplate without a valid movie/series name.`,
+      releases: [],
+      allLinksCount: 0,
+      cardBadge: 'HD',
+      isUpgrade: false,
+      replySummary: `⚠️ Skipped: "${searchTitle}" is channel boilerplate, not a media release.`,
+    };
+  }
+
   const officialTitle = !isDummyTmdb
     ? (tmdb.title || tmdb.name || searchTitle)
     : (searchTitle || 'Featured Release');

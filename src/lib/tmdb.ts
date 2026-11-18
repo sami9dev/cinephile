@@ -670,6 +670,16 @@ export function cleanTitleString(raw?: string): string {
 
 export * from './canonicalMedia';
 
+function deterministicHashId(str: string): number {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = (hash << 5) - hash + str.charCodeAt(i);
+    hash |= 0;
+  }
+  const positive = Math.abs(hash);
+  return positive > 0 ? positive : 999999;
+}
+
 /**
  * Returns a lightweight, safe TitleDetails object optimized for catalog card rendering.
  * Does NOT perform expensive subrequests, and avoids serializing giant cast/crew/video trees into SSR HTML.
@@ -681,10 +691,12 @@ export function getLightweightTitleCard(
   linksCount = 1
 ): TitleDetails {
   const strId = String(id || '').trim();
-  const canonical = resolveCanonicalMedia(strId, mediaType) || (Number(id) ? resolveCanonicalMedia(Number(id), mediaType) : null);
-  const numId = canonical?.canonicalId || Number(id) || 1;
+  const parsedNum = Number(id);
+  const isValidNum = !isNaN(parsedNum) && parsedNum > 0;
+  const canonical = resolveCanonicalMedia(strId, mediaType) || (isValidNum ? resolveCanonicalMedia(parsedNum, mediaType) : null);
+  const numId: number = canonical?.canonicalId || (isValidNum ? parsedNum : (strId ? deterministicHashId(strId) : 1));
   const effectiveMediaType = canonical?.mediaType || mediaType;
-  const effectiveId = canonical?.canonicalId || numId;
+  const effectiveId = canonical?.canonicalId || (isValidNum ? parsedNum : strId || numId);
   const key = `${effectiveMediaType}-${effectiveId}`;
 
   // Helper to validate string field and reject "undefined", "null", or placeholder values
@@ -716,7 +728,9 @@ export function getLightweightTitleCard(
     const voteAverage = typeof doc.voteAverage === 'number' && doc.voteAverage > 0 ? doc.voteAverage : (canonical?.voteAverage || 7.8);
 
     return {
-      id: effectiveId,
+      id: numId,
+      rawId: strId || numId,
+      movieId: strId || numId,
       title: rawTitle,
       name: rawTitle,
       overview,
@@ -738,7 +752,9 @@ export function getLightweightTitleCard(
   const mock = MOCK_TITLES[key];
   if (mock) {
     return {
-      id: effectiveId,
+      id: numId,
+      rawId: strId || numId,
+      movieId: strId || numId,
       title: mock.title || mock.name || 'Untitled',
       name: mock.name || mock.title || 'Untitled',
       overview: mock.overview || 'Available for streaming & high-speed download on CineFuel.',
@@ -765,7 +781,9 @@ export function getLightweightTitleCard(
   const found = allCurated.find((item) => String(item.id) === String(effectiveId));
   if (found) {
     return {
-      id: effectiveId,
+      id: numId,
+      rawId: strId || numId,
+      movieId: strId || numId,
       title: found.title || found.name || 'Untitled',
       name: found.name || found.title || 'Untitled',
       overview: found.overview || 'Available for streaming & high-speed download on CineFuel.',
@@ -786,7 +804,9 @@ export function getLightweightTitleCard(
   // 4. Safe fallback placeholder (clean CineFuel placeholders, no false movie posters)
   const rawTitle = cleanTitleString(doc?.title) || 'Featured Title';
   return {
-    id: effectiveId,
+    id: numId,
+    rawId: strId || numId,
+    movieId: strId || numId,
     title: rawTitle,
     name: rawTitle,
     overview: doc?.overview || 'Available for streaming & high-speed download on CineFuel.',

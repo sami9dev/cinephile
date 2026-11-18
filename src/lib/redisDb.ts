@@ -160,7 +160,10 @@ export async function upsertTitleInAllTitlesSummary(
 /**
  * Removes a deleted title from cinefuel:all_titles_summary
  */
-export async function removeTitleFromAllTitlesSummary(movieId: string | number): Promise<void> {
+export async function removeTitleFromAllTitlesSummary(
+  movieId: string | number,
+  titleHint?: string
+): Promise<void> {
   const redisClient = getRedisClient();
   if (!redisClient) return;
   try {
@@ -171,8 +174,23 @@ export async function removeTitleFromAllTitlesSummary(movieId: string | number):
     } else if (Array.isArray(rawSummary)) {
       summaryList = rawSummary;
     }
-    const mId = String(movieId);
-    const updatedSummary = summaryList.filter((item) => String(item._id) !== mId);
+    const mId = String(movieId).trim().toLowerCase();
+    const cleanHint = titleHint ? titleHint.trim().toLowerCase() : '';
+    const updatedSummary = summaryList.filter((item) => {
+      const itemId = String(item._id || '').trim().toLowerCase();
+      const itemTitle = String(
+        item.groupMovieTitle ||
+        item.latestDoc?.movieTitle ||
+        item.latestDoc?.title ||
+        ''
+      ).trim().toLowerCase();
+
+      if (mId && itemId === mId) return false;
+      if (cleanHint && itemTitle === cleanHint) return false;
+      if (cleanHint && itemTitle.includes(cleanHint)) return false;
+      if (cleanHint && cleanHint.includes(itemTitle) && itemTitle.length > 3) return false;
+      return true;
+    });
     await redisClient.set('cinefuel:all_titles_summary', JSON.stringify(updatedSummary));
   } catch (err: any) {
     console.warn('removeTitleFromAllTitlesSummary error:', err.message);
@@ -1093,8 +1111,11 @@ export async function replaceAllLinksForTitle(
 /**
  * Deletes all links for a specific title from all database layers.
  */
-export async function deleteAllLinksForTitle(movieId: number | string): Promise<{ success: boolean }> {
-  const key = String(movieId);
+export async function deleteAllLinksForTitle(
+  movieId: number | string,
+  titleHint?: string
+): Promise<{ success: boolean }> {
+  const key = String(movieId).trim();
   const redisClient = getRedisClient();
   if (redisClient) {
     try {
@@ -1109,8 +1130,17 @@ export async function deleteAllLinksForTitle(movieId: number | string): Promise<
         await redisClient.sadd(REDIS_DELETED_KEY, ids[0], ...ids.slice(1)).catch(() => {});
       }
       await redisClient.hdel(REDIS_HASH_KEY, key).catch(() => {});
+      await removeTitleFromAllTitlesSummary(key, titleHint).catch(() => {});
     } catch {}
   }
+
+  // Also delete from Supabase with titleHint fallback
+  try {
+    await replaceAllLinksForTitleInSupabase(key, [], { titleHint });
+  } catch (err: any) {
+    console.warn('Supabase deleteAllLinksForTitle warning:', err.message);
+  }
+
   return await replaceAllLinksForTitle(movieId, []);
 }
 
@@ -1322,7 +1352,8 @@ export async function reassignLinksInDatabase(
  * while creating an audit backup log in Supabase and local storage.
  */
 export async function deleteEntireTitleWithAudit(
-  movieId: number | string
+  movieId: number | string,
+  titleHint?: string
 ): Promise<{
   success: boolean;
   deletedCount: number;
@@ -1338,11 +1369,29 @@ export async function deleteEntireTitleWithAudit(
   if (!key) throw new Error('movieId is required');
 
   const res = await getLinksFromDatabase(key);
-  const links = Array.isArray(res.links) ? res.links : [];
+  let links = Array.isArray(res.links) ? res.links : [];
+
+  // If 0 links found under key, but titleHint is supplied, check Supabase for matching links
+  if (links.length === 0 && titleHint && titleHint.trim()) {
+    const cleanHint = titleHint.trim();
+    try {
+      const supabase = getSupabaseAdminClient();
+      if (supabase) {
+        const { data: matchedRows } = await supabase
+          .from('links')
+          .select('*')
+          .or(`movie_title.ilike.%${cleanHint}%,title.ilike.%${cleanHint}%`);
+        if (matchedRows && matchedRows.length > 0) {
+          links = matchedRows.map(mapSupabaseRowToLink);
+        }
+      }
+    } catch {}
+  }
+
   const first = links[0];
   const auditBackup = {
     movieId: key,
-    title: first?.movieTitle || first?.title || `Title #${key}`,
+    title: first?.movieTitle || first?.title || titleHint || `Title #${key}`,
     mediaType: first?.mediaType || 'unknown',
     deletedCount: links.length,
     deletedAt: new Date().toISOString(),
@@ -1367,7 +1416,7 @@ export async function deleteEntireTitleWithAudit(
   }
 
   // 2. Perform deletion only after audit snapshot is durably confirmed
-  await deleteAllLinksForTitle(key);
+  await deleteAllLinksForTitle(key, titleHint);
 
   await invalidateCatalogCache().catch(() => {});
 

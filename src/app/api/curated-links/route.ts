@@ -196,14 +196,16 @@ export async function POST(request: NextRequest) {
 
     // Handle permanent deletion of an entire title with audit logging
     if (action === 'delete_entire_title') {
-      const result = await deleteEntireTitleWithAudit(movieId);
+      const titleHint = body.title || body.movieTitle;
+      const result = await deleteEntireTitleWithAudit(movieId, titleHint);
       try { revalidatePath('/'); } catch {}
       return NextResponse.json(result);
     }
 
     // Handle deleting all links for a specific title
     if (action === 'delete_all_links') {
-      const result = await deleteAllLinksForTitle(movieId);
+      const titleHint = body.title || body.movieTitle;
+      const result = await deleteAllLinksForTitle(movieId, titleHint);
       try { revalidatePath('/'); } catch {}
       return NextResponse.json(result);
     }
