@@ -18,6 +18,7 @@ import {
 } from '@/lib/redisDb';
 import { validateAdminAuth } from '@/lib/adminAuth';
 import { isValidHttpUrl } from '@/lib/security';
+import { resolveAllVerifiedAliases } from '@/lib/canonicalMedia';
 
 export const dynamic = 'force-dynamic';
 
@@ -64,6 +65,17 @@ export async function GET(request: NextRequest) {
   }
 }
 
+function getValidIdentifier(val: any): string | null {
+  if (typeof val !== 'string' && (typeof val !== 'number' || !Number.isFinite(val))) {
+    return null;
+  }
+  const s = String(val).trim();
+  if (!s || s.toLowerCase() === 'undefined' || s.toLowerCase() === 'null' || s.toLowerCase() === 'nan') {
+    return null;
+  }
+  return s;
+}
+
 export async function POST(request: NextRequest) {
   if (!(await validateAdminAuth(request))) {
     return NextResponse.json({ error: 'Unauthorized: admin access required' }, { status: 401 });
@@ -72,6 +84,32 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { movieId, link, links, action, oldDomain, newDomain } = body;
+
+    // Handle permanent deletion of an entire title with audit logging before generic movieId checks
+    if (action === 'delete_entire_title') {
+      const validRaw = getValidIdentifier(body.rawId);
+      const validMovie = getValidIdentifier(body.movieId) || getValidIdentifier(movieId);
+      if (!validRaw && !validMovie) {
+        return NextResponse.json({ error: 'Valid movieId or rawId is required for deletion' }, { status: 400 });
+      }
+
+      // If both rawId and movieId are supplied, ensure they refer to the same title
+      if (validRaw && validMovie && validRaw !== validMovie) {
+        const rawAliases = resolveAllVerifiedAliases(validRaw);
+        if (!rawAliases.includes(validMovie)) {
+          return NextResponse.json(
+            { error: 'Provided rawId and movieId refer to different titles and cannot be deleted together' },
+            { status: 400 }
+          );
+        }
+      }
+
+      const targetId = validRaw || validMovie!;
+      const titleHint = typeof body.title === 'string' ? body.title : (typeof body.movieTitle === 'string' ? body.movieTitle : undefined);
+      const result = await deleteEntireTitleWithAudit(targetId, titleHint);
+      try { revalidatePath('/'); } catch {}
+      return NextResponse.json(result);
+    }
 
     // Handle global domain migration action
     if (action === 'migrate_domain') {
@@ -194,13 +232,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(result);
     }
 
-    // Handle permanent deletion of an entire title with audit logging
-    if (action === 'delete_entire_title') {
-      const titleHint = body.title || body.movieTitle;
-      const result = await deleteEntireTitleWithAudit(movieId, titleHint);
-      try { revalidatePath('/'); } catch {}
-      return NextResponse.json(result);
-    }
 
     // Handle deleting all links for a specific title
     if (action === 'delete_all_links') {

@@ -31,26 +31,42 @@ export function extractFilenameFromUrl(url?: string): string {
     const segments = urlWithoutQuery.split('/').filter(Boolean);
     for (let i = segments.length - 1; i >= 0; i--) {
       const seg = segments[i].replace(/\+/g, ' ').trim();
-      // If segment looks like a file name or release title (has extension, resolution, or scene tags):
+      // If segment looks like a file name or release title (has extension, resolution, season, or scene tags):
       if (
         /\.(?:mkv|mp4|avi|zip|rar|7z|tar)$/i.test(seg) ||
-        /(?:2160p|1080p|720p|480p|s\d{1,2}e\d{1,2}|web-dl|webdl|bluray|remux|hevc|x265|x264|hdr)/i.test(seg)
+        /\b(?:2160p|1080p|720p|480p|s\d{1,2}(?:e\d{1,2})?|season[\s._-]*\d{1,2}|web-?dl|webdl|bluray|remux|hevc|x265|x264|hdr)\b/i.test(seg)
       ) {
         return seg;
       }
     }
-    // Fallback: if last segment is long enough and not a generic path like "drive", "file", "video", "d", "packs"
+    // Fallback: check if segment has readable release evidence before rejecting parent directory / opaque tokens
     if (segments.length > 0) {
       const prev = segments.length > 1 ? segments[segments.length - 2].toLowerCase() : '';
       const last = segments[segments.length - 1].replace(/\+/g, ' ').trim();
-      // If preceded by "packs" or "pack", this is a pack token ID, not a media filename
-      if (prev === 'packs' || prev === 'pack') {
+
+      // Check if last segment has readable release, season, or movie evidence
+      const hasReleaseEvidence =
+        /\.(?:mkv|mp4|avi|zip|rar|7z|tar)$/i.test(last) ||
+        /\b(?:2160p|1080p|720p|480p|s\d{1,2}(?:e\d{1,2})?|season[\s._-]*\d{1,2}|web-?dl|bluray|remux|hevc|x265|x264|hdr|19\d\d|20\d\d)\b/i.test(last);
+
+      if (hasReleaseEvidence) {
+        return last;
+      }
+
+      // If preceded by "packs", "pack", "drive", "d", "file" without release evidence, this is an opaque token
+      if (prev === 'packs' || prev === 'pack' || prev === 'drive' || prev === 'd' || prev === 'file') {
         return '';
       }
+
+      // Reject purely opaque alphanumeric hash tokens without spaces or dots
+      if (/^[a-zA-Z0-9_-]+$/.test(last) && !/\s+/.test(last) && !/\./.test(last)) {
+        return '';
+      }
+
       if (
-        last.length > 8 &&
+        last.length > 5 &&
         !/^(?:drive|file|video|watch|download|view|d|v|u|packs?)$/i.test(last) &&
-        !/^[a-zA-Z0-9_-]{12,}$/.test(last)
+        (/\s+/.test(last) || /\./.test(last))
       ) {
         return last;
       }

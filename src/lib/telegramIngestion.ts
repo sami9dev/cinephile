@@ -5,7 +5,9 @@ import {
   fetchHubCloudPageMetadata,
   computeCardBadge,
   HubCloudParsedResult,
+  isNonMediaUrl,
 } from './hubcloudParser';
+import { extractFilenameFromUrl } from './seasonParser';
 import { getLinksFromSupabase, replaceAllLinksForTitleInSupabase } from './supabaseDb';
 import { saveMultipleLinksToDatabase, upsertTitleInAllTitlesSummary, invalidateCatalogCache, getRedisClient } from './redisDb';
 import { detectServer } from './serverDetector';
@@ -115,37 +117,63 @@ async function resolveTmdbMedia(params: {
     } catch {}
   }
 
-  // 3. Fallback to TMDB Multi-Search
-  if (titleQuery && titleQuery.length >= 2) {
+  // 3. Fallback to TMDB Multi-Search (Strictly reject URLs and non-media domains)
+  if (
+    titleQuery &&
+    titleQuery.length >= 2 &&
+    !/^https?:\/\//i.test(titleQuery) &&
+    !titleQuery.includes('://') &&
+    !/^(?:www\.|[a-z0-9_-]+\.[a-z]{2,6}\/)/i.test(titleQuery) &&
+    !isNonMediaUrl(titleQuery)
+  ) {
     const cleanQ = cleanTitleString(titleQuery);
-    try {
-      const searchRes = await searchMulti(cleanQ);
-      if (searchRes && searchRes.results && searchRes.results.length > 0) {
-        const mediaCandidates = searchRes.results.filter(
-          (r: any) => r.media_type === 'movie' || r.media_type === 'tv'
-        ) as any[];
+    if (
+      cleanQ &&
+      cleanQ.length >= 2 &&
+      !/^https?:\/\//i.test(cleanQ) &&
+      !cleanQ.includes('://') &&
+      !/^(?:www\.|[a-z0-9_-]+\.[a-z]{2,6}\/)/i.test(cleanQ)
+    ) {
+      try {
+        const searchRes = await searchMulti(cleanQ);
+        if (searchRes && searchRes.results && searchRes.results.length > 0) {
+          // Filter valid movie / tv candidates and strictly purge troll/URL spam records (e.g. TMDB #331554)
+          const mediaCandidates = searchRes.results.filter((r: any) => {
+            if (r.media_type !== 'movie' && r.media_type !== 'tv') return false;
+            const candName = (r.title || r.name || '').trim();
+            if (
+              !candName ||
+              /^https?:\/\//i.test(candName) ||
+              candName.includes('://') ||
+              /^(?:www\.|[a-z0-9_-]+\.[a-z]{2,6}\/)/i.test(candName)
+            ) {
+              return false;
+            }
+            return true;
+          }) as any[];
 
-        if (mediaCandidates.length > 0) {
-          // If year is known, find closest match
-          if (year) {
-            const yearMatch = mediaCandidates.find((c: any) => {
-              const rel = (c.release_date || c.first_air_date || '').slice(0, 4);
-              return rel && Math.abs(parseInt(rel, 10) - year) <= 1;
-            });
-            if (yearMatch) return yearMatch;
+          if (mediaCandidates.length > 0) {
+            // If year is known, find closest match
+            if (year) {
+              const yearMatch = mediaCandidates.find((c: any) => {
+                const rel = (c.release_date || c.first_air_date || '').slice(0, 4);
+                return rel && Math.abs(parseInt(rel, 10) - year) <= 1;
+              });
+              if (yearMatch) return yearMatch;
+            }
+
+            // If mediaTypeHint is known
+            if (mediaTypeHint) {
+              const typeMatch = mediaCandidates.find((c: any) => c.media_type === mediaTypeHint);
+              if (typeMatch) return typeMatch;
+            }
+
+            return mediaCandidates[0];
           }
-
-          // If mediaTypeHint is known
-          if (mediaTypeHint) {
-            const typeMatch = mediaCandidates.find((c: any) => c.media_type === mediaTypeHint);
-            if (typeMatch) return typeMatch;
-          }
-
-          return mediaCandidates[0];
         }
+      } catch (e: any) {
+        console.warn('TMDB searchMulti error in ingestion:', e.message);
       }
-    } catch (e: any) {
-      console.warn('TMDB searchMulti error in ingestion:', e.message);
     }
   }
 
@@ -171,10 +199,10 @@ export async function processTelegramIngestion(
   // ===========================================================================
   const sanitized = cleanTelegramText(rawCombined);
 
-  // Collect candidate URLs from input + extracted
+  // Collect candidate URLs from input + extracted, strictly filtering out trailers and non-media links
   const allUrls = Array.from(
     new Set([...(input.urls || []), ...sanitized.extractedUrls])
-  ).filter((u) => /^https?:\/\//i.test(u));
+  ).filter((u) => /^https?:\/\//i.test(u) && !isNonMediaUrl(u));
 
   // ===========================================================================
   // STAGE 2: Solve Telegram's 64-Character Filename Truncation Bug
@@ -204,22 +232,71 @@ export async function processTelegramIngestion(
   if (allUrls.length > 0) {
     // Process each URL
     for (const url of allUrls) {
-      // Find line in text associated with this URL
-      let associatedLine = '';
+      let candidateTitle = '';
+      let candidateSize = authoritativeDocSize || null;
+
+      // 1. Check if a line in sanitized cleanLines was directly associated with this URL
       for (let i = 0; i < sanitized.cleanLines.length; i++) {
         if (sanitized.cleanLines[i].includes(url)) {
-          // Take text on that line without the URL, or preceding line
-          const lineWithoutUrl = sanitized.cleanLines[i].replace(url, '').trim();
-          associatedLine = lineWithoutUrl || (i > 0 ? sanitized.cleanLines[i - 1] : '');
+          const lineWithoutUrl = sanitized.cleanLines[i]
+            .replace(url, '')
+            .replace(/^(?:Name|Title|Release|File(?:\s*Name)?)\s*[:=-]+\s*/i, '')
+            .replace(/HUBCLOUD\s*[:=-]+\s*/gi, '')
+            .trim();
+          if (lineWithoutUrl.length >= 3 && !lineWithoutUrl.includes('://') && !isNonMediaUrl(lineWithoutUrl)) {
+            candidateTitle = lineWithoutUrl;
+          }
           break;
         }
       }
 
-      // Check if we need to auto-fetch HubCloud landing page HTML
-      let candidateTitle = associatedLine;
-      let candidateSize = authoritativeDocSize || null;
+      // 2. If URL is on its own line, find preceding release name line in sanitized lines
+      if (!candidateTitle) {
+        // Find index of URL in cleanLines or look backwards through sanitized lines
+        let urlCleanIndex = sanitized.cleanLines.findIndex((l) => l.includes(url));
+        if (urlCleanIndex === -1) {
+          // If URL was stripped from cleanLines, find position in rawCombined to locate previous clean line
+          const urlPos = rawCombined.indexOf(url);
+          if (urlPos > 0) {
+            const rawPrefix = rawCombined.slice(0, urlPos);
+            // Find the last clean line that appears before this URL in the raw message
+            for (let k = sanitized.cleanLines.length - 1; k >= 0; k--) {
+              const cl = sanitized.cleanLines[k];
+              if (rawPrefix.includes(cl)) {
+                urlCleanIndex = k + 1;
+                break;
+              }
+            }
+          }
+        }
 
-      // If candidate title is too short or bare, fetch landing page metadata
+        const scanStartIndex = urlCleanIndex > 0 ? urlCleanIndex - 1 : sanitized.cleanLines.length - 1;
+        for (let j = scanStartIndex; j >= 0; j--) {
+          const stripped = sanitized.cleanLines[j]
+            .replace(/^(?:Name|Title|Release|File(?:\s*Name)?)\s*[:=-]+\s*/i, '')
+            .replace(/HUBCLOUD\s*[:=-]+\s*/gi, '')
+            .trim();
+          if (
+            stripped.length >= 3 &&
+            !stripped.includes('://') &&
+            !isNonMediaUrl(stripped) &&
+            !/^(?:https?:\/\/|www\.)/i.test(stripped)
+          ) {
+            candidateTitle = stripped;
+            break;
+          }
+        }
+      }
+
+      // 3. Fallback to extracting authentic scene filename from URL path
+      if (!candidateTitle) {
+        const urlFn = extractFilenameFromUrl(url);
+        if (urlFn && urlFn.length >= 5 && !urlFn.includes('://') && !isNonMediaUrl(urlFn)) {
+          candidateTitle = urlFn;
+        }
+      }
+
+      // 4. If candidate title is too short or bare, try fetching landing page metadata
       const isBare =
         !candidateTitle ||
         candidateTitle.length < 15 ||
@@ -227,7 +304,7 @@ export async function processTelegramIngestion(
 
       if (isBare) {
         const fetched = await fetchHubCloudPageMetadata(url, 6000);
-        if (fetched.filename) {
+        if (fetched.filename && !fetched.filename.includes('://') && !isNonMediaUrl(fetched.filename)) {
           candidateTitle = fetched.filename;
         }
         if (!candidateSize && fetched.fileSize) {
@@ -235,21 +312,25 @@ export async function processTelegramIngestion(
         }
       }
 
-      // If document was provided and this is the only link, use authoritative doc string
+      // 5. If document was provided and this is the only link, use authoritative doc string
       if (authoritativeDocString && allUrls.length === 1) {
         candidateTitle = authoritativeDocString;
       }
 
-      // Final fallback to raw sanitized text
-      if (!candidateTitle || candidateTitle.length < 5) {
-        candidateTitle = sanitized.cleanLines[0] || url;
+      // 6. Fallback to cleanest non-URL line from post
+      if (!candidateTitle || candidateTitle.length < 3 || candidateTitle.includes('://') || isNonMediaUrl(candidateTitle)) {
+        const validLine = sanitized.cleanLines.find(
+          (l) => l.length >= 3 && !l.includes('://') && !isNonMediaUrl(l) && !/^(?:https?:\/\/|www\.)/i.test(l)
+        );
+        candidateTitle = validLine || '';
       }
 
       // If candidate title is specs-only without movie name, prepend post title header
       const headerLine = sanitized.cleanLines.find(
         (l) =>
           l.length >= 2 &&
-          !l.includes('http') &&
+          !l.includes('://') &&
+          !isNonMediaUrl(l) &&
           !/^(?:download|links?|direct|stream|quality|servers?|click|here|•|-)\b/i.test(l)
       );
 
@@ -261,6 +342,11 @@ export async function processTelegramIngestion(
 
       if (candidateSize) {
         parsed.extractedSize = candidateSize;
+      }
+
+      // If we still cannot resolve any title, do not register a corrupt empty release
+      if (!candidateTitle || !parsed.cleanMovieTitle || candidateTitle.includes('://')) {
+        continue;
       }
 
       preparedReleases.push({
@@ -284,13 +370,20 @@ export async function processTelegramIngestion(
     });
   } else if (sanitized.cleanLines.length > 0) {
     // Plain text title without links
-    const parsed = parseHubCloudTitle(sanitized.cleanLines[0]);
-    preparedReleases.push({
-      url: `tg-text://${Date.now()}`,
-      releaseTitle: sanitized.cleanLines[0],
-      extractedSize: parsed.extractedSize,
-      parsed,
-    });
+    const firstNonUrlLine = sanitized.cleanLines.find(
+      (l) => !l.includes('://') && !isNonMediaUrl(l) && !/^(?:https?:\/\/|www\.)/i.test(l)
+    );
+    if (firstNonUrlLine) {
+      const parsed = parseHubCloudTitle(firstNonUrlLine);
+      if (parsed.cleanMovieTitle) {
+        preparedReleases.push({
+          url: `tg-text://${Date.now()}`,
+          releaseTitle: firstNonUrlLine,
+          extractedSize: parsed.extractedSize,
+          parsed,
+        });
+      }
+    }
   }
 
   if (preparedReleases.length === 0) {
@@ -313,7 +406,25 @@ export async function processTelegramIngestion(
     (a, b) => b.parsed.qualityScore - a.parsed.qualityScore
   )[0];
 
-  const searchTitle = primaryRelease.parsed.cleanMovieTitle;
+  const searchTitle = primaryRelease?.parsed?.cleanMovieTitle || '';
+  if (
+    !searchTitle ||
+    searchTitle.length < 2 ||
+    /^https?:\/\//i.test(searchTitle) ||
+    searchTitle.includes('://') ||
+    /^(?:www\.|[a-z0-9_-]+\.[a-z]{2,6}\/)/i.test(searchTitle)
+  ) {
+    return {
+      success: false,
+      error: 'Skipped ingestion: Extracted title is blank, invalid, or a URL instead of a movie or series title.',
+      releases: [],
+      allLinksCount: 0,
+      cardBadge: 'HD',
+      isUpgrade: false,
+      replySummary: '⚠️ Skipped: Message contains no recognizable media title.',
+    };
+  }
+
   const searchYear = primaryRelease.parsed.year;
   const isTvHint = primaryRelease.parsed.isZipPack || !!primaryRelease.parsed.seasonEpisode;
 
@@ -350,9 +461,29 @@ export async function processTelegramIngestion(
     };
   }
 
-  const officialTitle = !isDummyTmdb
+  const candidateOfficialTitle = !isDummyTmdb
     ? (tmdb.title || tmdb.name || searchTitle)
     : (searchTitle || 'Featured Release');
+
+  // Strict check on officialTitle: must never be a URL or web address
+  if (
+    !candidateOfficialTitle ||
+    /^https?:\/\//i.test(candidateOfficialTitle) ||
+    candidateOfficialTitle.includes('://') ||
+    /^(?:www\.|[a-z0-9_-]+\.[a-z]{2,6}\/)/i.test(candidateOfficialTitle)
+  ) {
+    return {
+      success: false,
+      error: `Skipped ingestion: Refused invalid media title "${candidateOfficialTitle}".`,
+      releases: [],
+      allLinksCount: 0,
+      cardBadge: 'HD',
+      isUpgrade: false,
+      replySummary: `⚠️ Skipped: "${candidateOfficialTitle}" is a web address, not a media release title.`,
+    };
+  }
+
+  const officialTitle = candidateOfficialTitle;
 
   const releaseDate = (!isDummyTmdb && (tmdb?.release_date || tmdb?.first_air_date))
     ? (tmdb.release_date || tmdb.first_air_date)

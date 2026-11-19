@@ -521,7 +521,8 @@ function extractReleaseProfile(
     part,
     cleanDisplayTitle: (showName: string, seasonNum: number) => {
       const sTag = `S${String(seasonNum).padStart(2, '0')}`;
-      const cleanShow = (showName || 'Series').replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '.');
+      const safeShow = (showName && !/^https?:\/\//i.test(showName) && !showName.includes('://') && !/^(?:www\.|[a-z0-9_-]+\.[a-z]{2,6}\/)/i.test(showName)) ? showName : 'Series';
+      const cleanShow = safeShow.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '.');
       const partSeg = part ? `.${part.replace(/-/g, '.')}` : '';
       const dynSeg = dynamicRange && dynamicRange !== 'Conflict' ? `.${dynamicRange.replace(/\s+/g, '.')}` : '';
       const codecSeg = verifiedCodec || (resTag === '2160p' ? 'H.265' : 'H.264');
@@ -576,7 +577,8 @@ function parseOptionTitleAndTags(
   if (!baseTitle.includes('.') || baseTitle.includes('(')) {
     const prof = extractReleaseProfile(rawTitle, undefined, titleDetails);
     const sTag = `S${String(seasonNum).padStart(2, '0')}`;
-    const cleanShow = showName.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '.');
+    const safeShow = (showName && !/^https?:\/\//i.test(showName) && !showName.includes('://') && !/^(?:www\.|[a-z0-9_-]+\.[a-z]{2,6}\/)/i.test(showName)) ? showName : 'Series';
+    const cleanShow = safeShow.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '.');
     const partSeg = partTag ? `.${partTag.replace(/-/g, '.')}` : '';
     const dynSeg = prof.dynamicRange ? `.${prof.dynamicRange.replace(/\s+/g, '.')}` : '';
     const resSeg = groupRes.replace(/\s*\/\s*/g, '.');

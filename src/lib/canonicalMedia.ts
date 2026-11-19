@@ -10,6 +10,15 @@ export interface CanonicalMediaInfo {
 
 export const CANONICAL_MEDIA_MAP: Record<string, CanonicalMediaInfo> = {
   // The 100: IMDb numeric 2661044 <-> TMDB TV 48866
+  'tt2661044': {
+    canonicalId: 48866,
+    mediaType: 'tv',
+    title: 'The 100',
+    posterPath: '/wHIMMLFsk32wIzDmawWkYVbxFCS.jpg',
+    backdropPath: '/8ZerYKvIaNUJZvAHXYTQu4qTwFw.jpg',
+    releaseDate: '2014-03-19',
+    voteAverage: 7.9,
+  },
   '2661044': {
     canonicalId: 48866,
     mediaType: 'tv',
@@ -78,6 +87,34 @@ export const CANONICAL_MEDIA_MAP: Record<string, CanonicalMediaInfo> = {
     releaseDate: '2024-03-01',
     voteAverage: 7.8,
   },
+  // The Altruists (2026 TV Series): TMDB 308007
+  '308007': {
+    canonicalId: 308007,
+    mediaType: 'tv',
+    title: 'The Altruists',
+    posterPath: '/foTyGlJ1jJh8QID5KwjsMytsJTV.jpg',
+    backdropPath: '/m8JTMj7jDMJFZAPP1ASmSi4gMWi.jpg',
+    releaseDate: '2026-11-19',
+    voteAverage: 8.0,
+  },
+  'the-altruists': {
+    canonicalId: 308007,
+    mediaType: 'tv',
+    title: 'The Altruists',
+    posterPath: '/foTyGlJ1jJh8QID5KwjsMytsJTV.jpg',
+    backdropPath: '/m8JTMj7jDMJFZAPP1ASmSi4gMWi.jpg',
+    releaseDate: '2026-11-19',
+    voteAverage: 8.0,
+  },
+  'the altruists': {
+    canonicalId: 308007,
+    mediaType: 'tv',
+    title: 'The Altruists',
+    posterPath: '/foTyGlJ1jJh8QID5KwjsMytsJTV.jpg',
+    backdropPath: '/m8JTMj7jDMJFZAPP1ASmSi4gMWi.jpg',
+    releaseDate: '2026-11-19',
+    voteAverage: 8.0,
+  },
   // Carrie (2026 Prime Video Series): TMDB 288673
   '288673': {
     canonicalId: 288673,
@@ -89,6 +126,15 @@ export const CANONICAL_MEDIA_MAP: Record<string, CanonicalMediaInfo> = {
     voteAverage: 7.8,
   },
   // Wardriver: 5095076 -> 938150
+  'tt5095076': {
+    canonicalId: 938150,
+    mediaType: 'movie',
+    title: 'Wardriver',
+    posterPath: '/rBZA12Hf4yZZgud6iPuFU49L7zk.jpg',
+    backdropPath: '/rBZA12Hf4yZZgud6iPuFU49L7zk.jpg',
+    releaseDate: '2025-01-01',
+    voteAverage: 7.5,
+  },
   '5095076': {
     canonicalId: 938150,
     mediaType: 'movie',
@@ -108,6 +154,15 @@ export const CANONICAL_MEDIA_MAP: Record<string, CanonicalMediaInfo> = {
     voteAverage: 7.5,
   },
   // The Tank: 31495504 -> 1252037
+  'tt31495504': {
+    canonicalId: 1252037,
+    mediaType: 'movie',
+    title: 'The Tank',
+    posterPath: '/65Jr1JAgWlu9em8zHhAfrNJJQBt.jpg',
+    backdropPath: '/65Jr1JAgWlu9em8zHhAfrNJJQBt.jpg',
+    releaseDate: '2023-04-21',
+    voteAverage: 6.8,
+  },
   '31495504': {
     canonicalId: 1252037,
     mediaType: 'movie',
@@ -183,6 +238,24 @@ export const CANONICAL_MEDIA_MAP: Record<string, CanonicalMediaInfo> = {
     releaseDate: '2014-11-05',
     voteAverage: 8.4,
   },
+  '0816692': {
+    canonicalId: 157336,
+    mediaType: 'movie',
+    title: 'Interstellar',
+    posterPath: '/gEU2QniE6E77NI6lCU6MxlNBvIx.jpg',
+    backdropPath: '/rAiYTsqBkRefbitUDBhApLbhQnl.jpg',
+    releaseDate: '2014-11-05',
+    voteAverage: 8.4,
+  },
+  'tt816692': {
+    canonicalId: 157336,
+    mediaType: 'movie',
+    title: 'Interstellar',
+    posterPath: '/gEU2QniE6E77NI6lCU6MxlNBvIx.jpg',
+    backdropPath: '/rAiYTsqBkRefbitUDBhApLbhQnl.jpg',
+    releaseDate: '2014-11-05',
+    voteAverage: 8.4,
+  },
   'tt0816692': {
     canonicalId: 157336,
     mediaType: 'movie',
@@ -197,15 +270,32 @@ export const CANONICAL_MEDIA_MAP: Record<string, CanonicalMediaInfo> = {
 export function resolveCanonicalMedia(id: string | number, _currentMediaType?: string): CanonicalMediaInfo | null {
   const strId = String(id || '').trim();
   if (!strId) return null;
-  const normalizedKey = strId.startsWith('tt') ? strId.replace(/^tt0*/, '') : strId;
-  if (CANONICAL_MEDIA_MAP[normalizedKey]) {
-    return CANONICAL_MEDIA_MAP[normalizedKey];
-  }
-  if (CANONICAL_MEDIA_MAP[strId]) {
-    return CANONICAL_MEDIA_MAP[strId];
-  }
-  if (CANONICAL_MEDIA_MAP[strId.toLowerCase()]) {
-    return CANONICAL_MEDIA_MAP[strId.toLowerCase()];
-  }
+  const lower = strId.toLowerCase();
+  if (CANONICAL_MEDIA_MAP[strId]) return CANONICAL_MEDIA_MAP[strId];
+  if (CANONICAL_MEDIA_MAP[lower]) return CANONICAL_MEDIA_MAP[lower];
   return null;
+}
+
+/**
+ * Returns all verified aliases for a given title identifier without inferring false relationships
+ * between arbitrary TMDB numbers and IMDb IDs. Unmapped titles remain strictly scoped to their exact key.
+ */
+export function resolveAllVerifiedAliases(id: string | number): string[] {
+  const strId = String(id || '').trim();
+  if (!strId) return [];
+  const results = new Set<string>();
+  results.add(strId);
+
+  const canon = resolveCanonicalMedia(strId);
+  if (canon) {
+    results.add(String(canon.canonicalId));
+    // Collect all explicit keys in CANONICAL_MEDIA_MAP mapped to this canonical media entity
+    for (const [key, info] of Object.entries(CANONICAL_MEDIA_MAP)) {
+      if (info.canonicalId === canon.canonicalId) {
+        results.add(key);
+      }
+    }
+  }
+
+  return Array.from(results);
 }

@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { parseFullMediaTitle, isPackMedia } from './seasonParser';
+import { isNonMediaUrl } from './hubcloudParser';
 import { saveLinkToDatabase, isLinkAlreadyInDatabase } from './redisDb';
 
 const recentMessagesCache = new Map<string, number>();
@@ -99,11 +100,31 @@ export function cleanTitleForSearch(text: string): { query: string; year?: numbe
   s = s.replace(/\s+/g, ' ').trim();
   s = s.replace(/^[\s(\[]*\d{1,3}[\s)\]]*[\s._\-:]+/i, '').replace(/^(?:Name|Title|Movie|Series|Show|Film|File|Release)\s*:\s*/gi, '').trim();
 
+  // If query is blank or looks like a URL/protocol/domain, reject it immediately
+  if (
+    !s ||
+    /^https?:\/\//i.test(s) ||
+    s.includes('://') ||
+    /^(?:www\.|[a-z0-9_-]+\.[a-z]{2,6}\/)/i.test(s) ||
+    isNonMediaUrl(s)
+  ) {
+    return { query: '', year: undefined };
+  }
+
   return { query: s, year };
 }
 
 export async function searchTmdbMedia(query: string, year?: number, forcedType?: 'movie' | 'tv') {
-  if (!query || query.length < 2) return null;
+  if (
+    !query ||
+    query.length < 2 ||
+    /^https?:\/\//i.test(query) ||
+    query.includes('://') ||
+    /^(?:www\.|[a-z0-9_-]+\.[a-z]{2,6}\/)/i.test(query) ||
+    isNonMediaUrl(query)
+  ) {
+    return null;
+  }
 
   try {
     const url = `https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(query)}&include_adult=false`;
@@ -112,9 +133,20 @@ export async function searchTmdbMedia(query: string, year?: number, forcedType?:
     const data = await res.json();
 
     if (data.results && data.results.length > 0) {
-      const filtered = data.results.filter(
-        (r: any) => r.media_type === 'movie' || r.media_type === 'tv'
-      );
+      // Purge non-media candidates and troll records with URL names (e.g. TMDB #331554)
+      const filtered = data.results.filter((r: any) => {
+        if (r.media_type !== 'movie' && r.media_type !== 'tv') return false;
+        const candName = (r.title || r.name || '').trim();
+        if (
+          !candName ||
+          /^https?:\/\//i.test(candName) ||
+          candName.includes('://') ||
+          /^(?:www\.|[a-z0-9_-]+\.[a-z]{2,6}\/)/i.test(candName)
+        ) {
+          return false;
+        }
+        return true;
+      });
 
       if (forcedType) {
         const typeMatch = filtered.filter((r: any) => r.media_type === forcedType);
@@ -311,9 +343,14 @@ Send your full season zip pack or batch archive!
     textToProcess = commandArgs;
   }
 
-  // 2. Extract Link(s)
+  // 2. Extract Link(s), strictly excluding trailers & social links
   const matches = textToProcess.match(new RegExp(STRICT_URL_REGEX.source, 'gi'));
-  const urls = matches ? matches.map(u => u.replace(/[),.;\]]+$/, '')).map(u => u.startsWith('http') ? u : 'https://' + u) : [];
+  const urls = matches
+    ? matches
+        .map((u) => u.replace(/[),.;\]]+$/, ''))
+        .map((u) => (u.startsWith('http') ? u : 'https://' + u))
+        .filter((u) => !isNonMediaUrl(u))
+    : [];
 
   if (!urls || urls.length === 0) {
     return {

@@ -656,7 +656,16 @@ export async function getPersonDetails(id: number | string): Promise<PersonDetai
 
 export function cleanTitleString(raw?: string): string {
   if (!raw) return 'Featured Title';
-  return raw
+  const trimmed = raw.trim();
+  // If the string starts with a URL protocol, domain, or contains ://, it is NEVER a title
+  if (
+    /^https?:\/\//i.test(trimmed) ||
+    trimmed.includes('://') ||
+    /^(?:www\.|[a-z0-9_-]+\.[a-z]{2,6}\/)/i.test(trimmed)
+  ) {
+    return '';
+  }
+  return trimmed
     .replace(/^Name\s*:\s*/i, '')
     .replace(/\.S\d{1,2}(?:E\d{1,2})?.*$/i, '')
     .replace(/\s+S\d{1,2}(?:E\d{1,2})?.*$/i, '')
@@ -710,8 +719,11 @@ export function getLightweightTitleCard(
   // 1. Authoritative metadata from stored custom link document or canonical map
   if (doc?.movieTitle || doc?.posterPath || doc?.poster_path || doc?.backdropPath || doc?.backdrop_path || doc?.title || canonical) {
     const rawDocTitle = cleanStr(doc.movieTitle);
-    const cleanDocTitle = rawDocTitle || cleanTitleString(doc.title);
-    const rawTitle = cleanDocTitle && cleanDocTitle !== 'Featured Title' ? cleanDocTitle : (canonical?.title || 'Featured Title');
+    const validRawDocTitle = rawDocTitle && !/^https?:\/\//i.test(rawDocTitle) && !rawDocTitle.includes('://') && !/^(?:www\.|[a-z0-9_-]+\.[a-z]{2,6}\/)/i.test(rawDocTitle)
+      ? rawDocTitle
+      : '';
+    const cleanDocTitle = validRawDocTitle || cleanTitleString(doc.title);
+    const rawTitle = cleanDocTitle && cleanDocTitle !== 'Featured Title' && !cleanDocTitle.includes('://') ? cleanDocTitle : (canonical?.title || 'Featured Title');
 
     const cleanPosterPath = cleanStr(doc.posterPath) || cleanStr(doc.poster_path);
     const cleanBackdropPath = cleanStr(doc.backdropPath) || cleanStr(doc.backdrop_path);
@@ -863,6 +875,6 @@ export async function getSeasonEpisodes(
   return null;
 }
 
-export { resolveCanonicalMedia, CANONICAL_MEDIA_MAP } from './canonicalMedia';
+export { resolveCanonicalMedia, CANONICAL_MEDIA_MAP, resolveAllVerifiedAliases } from './canonicalMedia';
 export type { CanonicalMediaInfo } from './canonicalMedia';
 

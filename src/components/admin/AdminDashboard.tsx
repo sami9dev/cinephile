@@ -82,6 +82,8 @@ const DEFAULT_ADMIN_USER = 'shyam';
 
 export interface LinkedCatalogTitle {
   id: number | string;
+  rawId?: number | string;
+  movieId?: number | string;
   title: string;
   name?: string;
   media_type: 'movie' | 'tv';
@@ -276,6 +278,14 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
   const [linkedCatalogTitles, setLinkedCatalogTitles] = useState<LinkedCatalogTitle[]>([]);
   const [isLoadingLinkedTitles, setIsLoadingLinkedTitles] = useState(false);
   const [linkedTitlesTotal, setLinkedTitlesTotal] = useState(0);
+  const [globalCatalogTotal, setGlobalCatalogTotal] = useState<number | null>(null);
+  const [isPartialCatalogTotal, setIsPartialCatalogTotal] = useState(false);
+  const [isLoadingGlobalCatalog, setIsLoadingGlobalCatalog] = useState(false);
+  const [globalCatalogError, setGlobalCatalogError] = useState(false);
+  const globalCatalogSequenceRef = useRef<number>(0);
+  const latestSuccessfulCatalogSeqRef = useRef<number>(0);
+  const activeRefreshSeqRef = useRef<number>(0);
+  const latestStatusSeqRef = useRef<number>(0);
   const [linkedTitlesPage, setLinkedTitlesPage] = useState(1);
   const [linkedTitlesTotalPages, setLinkedTitlesTotalPages] = useState(1);
   const [linkedTitlesFilter, setLinkedTitlesFilter] = useState<'all' | 'movie' | 'tv'>('all');
@@ -648,9 +658,11 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
 
       fetchAllAdminLinks(1, 50, '', 'All', false);
       fetchLinkedCatalogTitles(1, 'all', '', 48);
+      refreshGlobalCatalogTotal();
       const adminSyncInterval = setInterval(() => {
         fetchAllAdminLinks(1, 50, '', 'All', false);
         fetchLinkedCatalogTitles(1, 'all', '', 48);
+        refreshGlobalCatalogTotal();
       }, 30000);
 
       const storedLists = localStorage.getItem('cinefuel_custom_lists');
@@ -1073,9 +1085,50 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
     return headers;
   }, []);
 
+  // Dedicated fetcher for unfiltered global catalog total count with sequence ordering
+  const refreshGlobalCatalogTotal = useCallback(async (bypassCache = false) => {
+    const seq = ++globalCatalogSequenceRef.current;
+    activeRefreshSeqRef.current = seq;
+    setIsLoadingGlobalCatalog(true);
+    try {
+      const freshParam = bypassCache ? "&fresh=1" : "";
+      const res = await fetch(`/api/catalog?page=1&limit=1${freshParam}&_t=${Date.now()}`, {
+        headers: getAdminAuthHeaders(),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (typeof data.total === "number" && seq >= latestSuccessfulCatalogSeqRef.current) {
+          latestSuccessfulCatalogSeqRef.current = seq;
+          setGlobalCatalogTotal(data.total);
+          setIsPartialCatalogTotal(Boolean(data.isPartialCount));
+        }
+        if (seq >= latestStatusSeqRef.current) {
+          latestStatusSeqRef.current = seq;
+          setGlobalCatalogError(false);
+        }
+      } else {
+        if (seq >= latestStatusSeqRef.current) {
+          latestStatusSeqRef.current = seq;
+          setGlobalCatalogError(true);
+        }
+      }
+    } catch {
+      if (seq >= latestStatusSeqRef.current) {
+        latestStatusSeqRef.current = seq;
+        setGlobalCatalogError(true);
+      }
+    } finally {
+      if (activeRefreshSeqRef.current === seq) {
+        setIsLoadingGlobalCatalog(false);
+      }
+    }
+  }, []);
+
   // Fetch real titles that have custom links in database
   const fetchLinkedCatalogTitles = useCallback(
     async (page = 1, type: 'all' | 'movie' | 'tv' = 'all', query = '', limit = 48) => {
+      const isUnfilteredFirstPage = page === 1 && (!type || type === 'all') && !query.trim();
+      const globalSeq = isUnfilteredFirstPage ? ++globalCatalogSequenceRef.current : 0;
       try {
         setIsLoadingLinkedTitles(true);
         const params = new URLSearchParams();
@@ -1083,7 +1136,8 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
         params.set('limit', String(limit));
         if (type && type !== 'all') params.set('type', type);
         if (query.trim()) params.set('q', query.trim());
-        params.set('_t', String(Date.now()));
+        const reqTimestamp = Date.now();
+        params.set('_t', String(reqTimestamp));
 
         const res = await fetch(`/api/catalog?${params.toString()}`);
         if (res.ok) {
@@ -1091,6 +1145,8 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
           if (data && Array.isArray(data.items)) {
             const formatted: LinkedCatalogTitle[] = data.items.map((it: any) => ({
               id: it.rawId || it.movieId || it.id,
+              rawId: it.rawId,
+              movieId: it.movieId,
               title: it.title || it.name || `Title #${it.rawId || it.movieId || it.id}`,
               name: it.name,
               media_type: (it.media_type || (it.name ? 'tv' : 'movie')) as 'movie' | 'tv',
@@ -1103,7 +1159,20 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
               uploadMeta: it.uploadMeta,
             }));
             setLinkedCatalogTitles(formatted);
-            if (typeof data.total === 'number') setLinkedTitlesTotal(data.total);
+            if (typeof data.total === 'number') {
+              setLinkedTitlesTotal(data.total);
+              if (globalSeq > 0) {
+                if (globalSeq >= latestSuccessfulCatalogSeqRef.current) {
+                  latestSuccessfulCatalogSeqRef.current = globalSeq;
+                  setGlobalCatalogTotal(data.total);
+                  setIsPartialCatalogTotal(Boolean(data.isPartialCount));
+                }
+                if (globalSeq >= latestStatusSeqRef.current) {
+                  latestStatusSeqRef.current = globalSeq;
+                  setGlobalCatalogError(false);
+                }
+              }
+            }
             if (typeof data.totalPages === 'number') setLinkedTitlesTotalPages(data.totalPages);
             setLinkedTitlesPage(page);
 
@@ -1124,8 +1193,17 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
               return updated;
             });
           }
+        } else {
+          if (globalSeq > 0 && globalSeq >= latestStatusSeqRef.current) {
+            latestStatusSeqRef.current = globalSeq;
+            setGlobalCatalogError(true);
+          }
         }
       } catch (err) {
+        if (globalSeq > 0 && globalSeq >= latestStatusSeqRef.current) {
+          latestStatusSeqRef.current = globalSeq;
+          setGlobalCatalogError(true);
+        }
         console.error('Failed to fetch linked catalog titles:', err);
       } finally {
         setIsLoadingLinkedTitles(false);
@@ -1398,9 +1476,11 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
       if (res.ok && data.success) {
         setTitleMetaMsg('✅ Title details updated successfully!');
         addLog(`Admin updated title details for "${editTitleName.trim()}" (ID: ${editTitleId.trim()})`, 'success');
+        const newIdVal = isNaN(Number(editTitleId.trim())) ? editTitleId.trim() : Number(editTitleId.trim());
         const updatedTitleObj: LinkedCatalogTitle = {
           ...managingTitle,
-          id: isNaN(Number(editTitleId.trim())) ? editTitleId.trim() : Number(editTitleId.trim()),
+          id: newIdVal,
+          rawId: editTitleId.trim(),
           title: editTitleName.trim(),
           year: editTitleYear.trim(),
           media_type: editTitleMediaType,
@@ -1501,6 +1581,8 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
           const updatedTitleObj: LinkedCatalogTitle = {
             ...managingTitle,
             id: proposedTmdbCandidate.id,
+            rawId: proposedTmdbCandidate.id,
+            movieId: proposedTmdbCandidate.id,
             title: editTitleName.trim(),
             year: editTitleYear.trim(),
             media_type: editTitleMediaType,
@@ -1559,31 +1641,48 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
     if (!titleToDelete) return;
     try {
       setIsDeletingAllLinks(true);
+      const canonicalId = String(titleToDelete.id);
+      const canonicalRawId = String(titleToDelete.rawId || canonicalId);
+      const canonicalMovieId = canonicalId;
       const res = await fetch('/api/curated-links', {
         method: 'POST',
         headers: getAdminAuthHeaders(),
         body: JSON.stringify({
-          movieId: String(titleToDelete.id),
-          rawId: (titleToDelete as any).rawId || (titleToDelete as any).movieId || String(titleToDelete.id),
+          movieId: canonicalMovieId,
+          rawId: canonicalRawId,
           title: titleToDelete.title,
           action: 'delete_entire_title',
         }),
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        await deleteAllGlobalCustomLinks(titleToDelete.id);
         setCustomLinksMap((prev) => {
-          const key = String(titleToDelete.id);
           const next = { ...prev };
-          delete next[key];
+          delete next[canonicalMovieId];
+          delete next[canonicalRawId];
+          delete next[String(titleToDelete.id)];
           return next;
         });
+        if (typeof window !== 'undefined') {
+          try {
+            const stored = localStorage.getItem('cinefuel_custom_links');
+            if (stored) {
+              const parsed = JSON.parse(stored);
+              delete parsed[canonicalMovieId];
+              delete parsed[canonicalRawId];
+              delete parsed[String(titleToDelete.id)];
+              localStorage.setItem('cinefuel_custom_links', JSON.stringify(parsed));
+            }
+            window.dispatchEvent(new Event('cinefuel_links_updated'));
+          } catch {}
+        }
         setManagingTitleLinks([]);
-        addLog(`Permanently deleted entire title "${titleToDelete.title}" (ID: ${titleToDelete.id}) and created audit backup`, 'success');
+        addLog(`Permanently deleted entire title "${titleToDelete.title}" (ID: ${canonicalMovieId}) and created audit backup`, 'success');
         setTitleManagerModalOpen(false);
         setTitleToDelete(null);
         setDeleteTitleConfirmChecked(false);
         fetchLinkedCatalogTitles(linkedTitlesPage, linkedTitlesFilter, linkedTitlesSearch);
+        refreshGlobalCatalogTotal(true);
         refreshAdminLinks();
       } else {
         alert(`Failed to delete title: ${data.error || 'Server error'}`);
@@ -4466,9 +4565,10 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
           {/* 6 Stat Cards Grid */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 sm:gap-3.5">
             {/* 1. Total Catalog Titles */}
-            <div
+            <button
+              type="button"
               onClick={() => setActiveTab('titles')}
-              className="p-4 rounded-2xl bg-[#09090b] border border-zinc-800 hover:border-cyan-500/50 shadow-sm transition-all duration-200 hover:scale-[1.01] flex flex-col justify-between min-w-0 cursor-pointer group"
+              className="p-4 rounded-2xl bg-[#09090b] border border-zinc-800 hover:border-cyan-500/50 shadow-sm transition-all duration-200 hover:scale-[1.01] flex flex-col justify-between min-w-0 cursor-pointer group text-left focus:outline-none focus:ring-1 focus:ring-cyan-500/50"
             >
               <div>
                 <div className="flex items-center justify-between mb-2.5">
@@ -4483,18 +4583,27 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
                   Catalog Titles
                 </span>
                 <p className="text-2xl sm:text-3xl font-black text-white my-1 truncate" suppressHydrationWarning>
-                  {isMounted ? (linkedTitlesTotal > 0 ? linkedTitlesTotal.toLocaleString() : (linkedCatalogTitles.length > 0 ? linkedCatalogTitles.length.toLocaleString() : '0')) : '...'}
+                  {isMounted ? (globalCatalogTotal !== null ? `${globalCatalogTotal.toLocaleString()}${isPartialCatalogTotal ? '+' : ''}` : (isLoadingGlobalCatalog ? '...' : '—')) : '...'}
                 </p>
               </div>
               <span className="text-[11px] text-zinc-500 font-medium truncate">
-                {linkedTitlesTotal > 0 ? `${linkedTitlesTotal.toLocaleString()} linked in database` : (linkedCatalogTitles.length > 0 ? `${linkedCatalogTitles.length} linked in database` : '0 linked in database')}
+                {isLoadingGlobalCatalog && globalCatalogTotal === null
+                  ? 'Connecting to catalog...'
+                  : globalCatalogError && globalCatalogTotal !== null
+                  ? `Refresh failed · Last known: ${globalCatalogTotal.toLocaleString()}${isPartialCatalogTotal ? '+' : ''} titles`
+                  : globalCatalogError && globalCatalogTotal === null
+                  ? 'Failed to load catalog total'
+                  : globalCatalogTotal !== null
+                  ? `${globalCatalogTotal.toLocaleString()}${isPartialCatalogTotal ? '+' : ''} catalog titles in database${isPartialCatalogTotal ? ' (partial)' : ''}`
+                  : 'Catalog live in database'}
               </span>
-            </div>
+            </button>
 
             {/* 2. Total Custom Links */}
-            <div
+            <button
+              type="button"
               onClick={() => setActiveTab('links')}
-              className="p-4 rounded-2xl bg-[#09090b] border border-zinc-800 hover:border-purple-500/50 shadow-sm transition-all duration-200 hover:scale-[1.01] flex flex-col justify-between min-w-0 cursor-pointer group"
+              className="p-4 rounded-2xl bg-[#09090b] border border-zinc-800 hover:border-purple-500/50 shadow-sm transition-all duration-200 hover:scale-[1.01] flex flex-col justify-between min-w-0 cursor-pointer group text-left focus:outline-none focus:ring-1 focus:ring-purple-500/50"
             >
               <div>
                 <div className="flex items-center justify-between mb-2.5">
@@ -4515,12 +4624,13 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
               <span className="text-[11px] text-zinc-500 font-medium truncate">
                 {effectiveTotalLinks > 0 ? `${effectiveTotalLinks.toLocaleString()} active in database` : '0 in database'}
               </span>
-            </div>
+            </button>
 
             {/* 3. User Requests */}
-            <div
+            <button
+              type="button"
               onClick={() => setActiveTab('requests')}
-              className="p-4 rounded-2xl bg-[#09090b] border border-zinc-800 hover:border-amber-500/50 shadow-sm transition-all duration-200 hover:scale-[1.01] cursor-pointer flex flex-col justify-between group min-w-0"
+              className="p-4 rounded-2xl bg-[#09090b] border border-zinc-800 hover:border-amber-500/50 shadow-sm transition-all duration-200 hover:scale-[1.01] cursor-pointer flex flex-col justify-between group min-w-0 text-left focus:outline-none focus:ring-1 focus:ring-amber-500/50"
             >
               <div>
                 <div className="flex items-center justify-between mb-2.5">
@@ -4539,12 +4649,13 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
               <span className="text-[11px] text-zinc-500 font-medium truncate">
                 {requestsList.length} total ({pendingRequestsCount} pending)
               </span>
-            </div>
+            </button>
 
             {/* 4. Defective Links */}
-            <div
+            <button
+              type="button"
               onClick={() => setActiveTab('reports')}
-              className="p-4 rounded-2xl bg-[#09090b] border border-zinc-800 hover:border-rose-500/50 shadow-sm transition-all duration-200 hover:scale-[1.01] cursor-pointer flex flex-col justify-between group min-w-0"
+              className="p-4 rounded-2xl bg-[#09090b] border border-zinc-800 hover:border-rose-500/50 shadow-sm transition-all duration-200 hover:scale-[1.01] cursor-pointer flex flex-col justify-between group min-w-0 text-left focus:outline-none focus:ring-1 focus:ring-rose-500/50"
             >
               <div>
                 <div className="flex items-center justify-between mb-2.5">
@@ -4563,12 +4674,13 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
               <span className="text-[11px] text-zinc-500 font-medium truncate">
                 {reportsList.length} total ({pendingReportsCount} pending)
               </span>
-            </div>
+            </button>
 
             {/* 5. User Accounts */}
-            <div
+            <button
+              type="button"
               onClick={() => setActiveTab('users')}
-              className="p-4 rounded-2xl bg-[#09090b] border border-zinc-800 hover:border-sky-500/50 shadow-sm transition-all duration-200 hover:scale-[1.01] cursor-pointer flex flex-col justify-between group min-w-0"
+              className="p-4 rounded-2xl bg-[#09090b] border border-zinc-800 hover:border-sky-500/50 shadow-sm transition-all duration-200 hover:scale-[1.01] cursor-pointer flex flex-col justify-between group min-w-0 text-left focus:outline-none focus:ring-1 focus:ring-sky-500/50"
             >
               <div>
                 <div className="flex items-center justify-between mb-2.5">
@@ -4587,7 +4699,7 @@ export default function AdminDashboard({ onLogout }: { onLogout?: () => void } =
               <span className="text-[11px] text-zinc-500 font-medium truncate">
                 {registeredUsers.filter((u) => (u.requestsCount || 0) > 0).length} active requesters
               </span>
-            </div>
+            </button>
 
             {/* 6. Active Admin */}
             <div className="p-4 rounded-2xl bg-[#09090b] border border-zinc-800 shadow-sm flex flex-col justify-between min-w-0">

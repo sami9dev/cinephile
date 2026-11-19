@@ -14,6 +14,7 @@ import {
   mapSupabaseRowToLink,
 } from '@/lib/supabaseDb';
 import { getTitleDetails, getLightweightTitleCard, cleanTitleString, resolveCanonicalMedia } from '@/lib/tmdb';
+import { resolveAllVerifiedAliases } from '@/lib/canonicalMedia';
 import { detectShowPlatform, stripWatermarks, detectSeasonNumber, detectEpisodeNumber } from '@/lib/seasonParser';
 
 import { getEnv } from '@/lib/env';
@@ -187,13 +188,12 @@ export async function removeTitleFromAllTitlesSummary(
 
       if (mId && itemId === mId) return false;
       if (cleanHint && itemTitle === cleanHint) return false;
-      if (cleanHint && itemTitle.includes(cleanHint)) return false;
-      if (cleanHint && cleanHint.includes(itemTitle) && itemTitle.length > 3) return false;
       return true;
     });
     await redisClient.set('cinefuel:all_titles_summary', JSON.stringify(updatedSummary));
   } catch (err: any) {
     console.warn('removeTitleFromAllTitlesSummary error:', err.message);
+    throw err;
   }
 }
 
@@ -1116,29 +1116,34 @@ export async function deleteAllLinksForTitle(
   titleHint?: string
 ): Promise<{ success: boolean }> {
   const key = String(movieId).trim();
+  const allAliases = resolveAllVerifiedAliases(key);
   const redisClient = getRedisClient();
   if (redisClient) {
     try {
-      const fetched = await redisClient.hget<any>(REDIS_HASH_KEY, key);
-      let list: any[] = [];
-      if (Array.isArray(fetched)) list = fetched;
-      else if (typeof fetched === 'string') {
-        try { list = JSON.parse(fetched); } catch {}
+      for (const aliasKey of allAliases) {
+        const fetched = await redisClient.hget<any>(REDIS_HASH_KEY, aliasKey);
+        let list: any[] = [];
+        if (Array.isArray(fetched)) list = fetched;
+        else if (typeof fetched === 'string') {
+          try { list = JSON.parse(fetched); } catch {}
+        }
+        const ids = list.map((l: any) => l.id).filter(Boolean);
+        if (ids.length > 0) {
+          await redisClient.sadd(REDIS_DELETED_KEY, ids[0], ...ids.slice(1)).catch(() => {});
+        }
+        await redisClient.hdel(REDIS_HASH_KEY, aliasKey).catch(() => {});
+        await removeTitleFromAllTitlesSummary(aliasKey).catch(() => {});
       }
-      const ids = list.map((l: any) => l.id).filter(Boolean);
-      if (ids.length > 0) {
-        await redisClient.sadd(REDIS_DELETED_KEY, ids[0], ...ids.slice(1)).catch(() => {});
-      }
-      await redisClient.hdel(REDIS_HASH_KEY, key).catch(() => {});
-      await removeTitleFromAllTitlesSummary(key, titleHint).catch(() => {});
     } catch {}
   }
 
-  // Also delete from Supabase with titleHint fallback
-  try {
-    await replaceAllLinksForTitleInSupabase(key, [], { titleHint });
-  } catch (err: any) {
-    console.warn('Supabase deleteAllLinksForTitle warning:', err.message);
+  // Also delete from Supabase for all verified aliases
+  for (const aliasKey of allAliases) {
+    try {
+      await replaceAllLinksForTitleInSupabase(aliasKey, []);
+    } catch (err: any) {
+      console.warn('Supabase deleteAllLinksForTitle warning:', err.message);
+    }
   }
 
   return await replaceAllLinksForTitle(movieId, []);
@@ -1349,10 +1354,11 @@ export async function reassignLinksInDatabase(
 
 /**
  * Permanently deletes an entire title and all its associated links,
- * while creating an audit backup log in Supabase and local storage.
+ * while creating a durable audit backup log in Supabase table audit_title_deletions.
+ * Strictly scopes lookup, multi-tier audit snapshot, and deletion to verified title IDs & aliases.
  */
 export async function deleteEntireTitleWithAudit(
-  movieId: number | string,
+  movieId: number | string | (number | string)[],
   titleHint?: string
 ): Promise<{
   success: boolean;
@@ -1365,58 +1371,207 @@ export async function deleteEntireTitleWithAudit(
     deletedAt: string;
   };
 }> {
-  const key = String(movieId).trim();
-  if (!key) throw new Error('movieId is required');
-
-  const res = await getLinksFromDatabase(key);
-  let links = Array.isArray(res.links) ? res.links : [];
-
-  // If 0 links found under key, but titleHint is supplied, check Supabase for matching links
-  if (links.length === 0 && titleHint && titleHint.trim()) {
-    const cleanHint = titleHint.trim();
-    try {
-      const supabase = getSupabaseAdminClient();
-      if (supabase) {
-        const { data: matchedRows } = await supabase
-          .from('links')
-          .select('*')
-          .or(`movie_title.ilike.%${cleanHint}%,title.ilike.%${cleanHint}%`);
-        if (matchedRows && matchedRows.length > 0) {
-          links = matchedRows.map(mapSupabaseRowToLink);
-        }
+  // 1. Resolve verified target IDs and their canonical aliases
+  const rawList = Array.isArray(movieId) ? movieId : [movieId];
+  const allVerifiedIds = new Set<string>();
+  for (const item of rawList) {
+    if (typeof item === 'string' || (typeof item === 'number' && Number.isFinite(item))) {
+      const s = String(item).trim();
+      if (s && s.toLowerCase() !== 'undefined' && s.toLowerCase() !== 'null' && s.toLowerCase() !== 'nan') {
+        allVerifiedIds.add(s);
+        const aliases = resolveAllVerifiedAliases(s);
+        aliases.forEach((a) => allVerifiedIds.add(a));
       }
-    } catch {}
+    }
+  }
+  const verifiedIds = Array.from(allVerifiedIds);
+  if (verifiedIds.length === 0) {
+    throw new Error('Valid movieId is required for deletion');
   }
 
+  const primaryKey = verifiedIds[0];
+
+  // 2. Snapshot all links across Supabase, Redis, and local fallback for all verified IDs
+  const linkMap = new Map<string, any>();
+
+  // A. Directly snapshot from Supabase (paged to handle any row count)
+  const supabase = getSupabaseAdminClient();
+  const hasServiceKey = Boolean((getEnv('SUPABASE_SERVICE_ROLE_KEY') || getEnv('SUPABASE_SERVICE_KEY'))?.trim());
+  const isCloudflare = typeof (globalThis as any).WebSocketPair !== 'undefined' || getEnv('WORKER_NAME');
+
+  if (isCloudflare && !hasServiceKey && getEnv('UPSTREAM_API_URL')) {
+    // If running in Worker without local service-role credentials, forward mutation to upstream API
+    const proxyOk = await proxyMutationToUpstream('POST', '/api/curated-links', {
+      action: 'delete_entire_title',
+      movieId: primaryKey,
+      rawId: primaryKey,
+      title: titleHint,
+    });
+    if (!proxyOk) {
+      throw new Error('Upstream audit and deletion proxy failed. Deletion aborted for safety.');
+    }
+  } else if (supabase) {
+    let sbPage = 0;
+    const sbPageSize = 1000;
+    let hasMoreSb = true;
+    while (hasMoreSb) {
+      const { data: sbRows, error: sbSelectErr } = await supabase
+        .from('links')
+        .select('*')
+        .in('movie_id', verifiedIds)
+        .order('id', { ascending: true })
+        .range(sbPage * sbPageSize, (sbPage + 1) * sbPageSize - 1);
+
+      if (sbSelectErr) {
+        throw new Error(`Failed to query existing links from Supabase for audit snapshot: ${sbSelectErr.message}. Deletion aborted for safety.`);
+      }
+      if (sbRows && sbRows.length > 0) {
+        for (const row of sbRows) {
+          const l = mapSupabaseRowToLink(row);
+          if (l?.id) linkMap.set(l.id, l);
+        }
+        if (sbRows.length < sbPageSize) hasMoreSb = false;
+        else sbPage++;
+      } else {
+        hasMoreSb = false;
+      }
+    }
+  } else {
+    throw new Error('Supabase service role client unavailable for audit backup. Deletion aborted for safety.');
+  }
+
+  // B. Directly snapshot from Redis (reads each ID directly)
+  const redisClient = getRedisClient();
+  if (redisClient) {
+    for (const id of verifiedIds) {
+      try {
+        const raw = await redisClient.hget<any>(REDIS_HASH_KEY, id);
+        let list: any[] = [];
+        if (Array.isArray(raw)) list = raw;
+        else if (typeof raw === 'string') {
+          try { list = JSON.parse(raw); } catch {
+            throw new Error(`Corrupted link data in Redis for ID ${id}; aborting deletion to protect audit trail.`);
+          }
+        }
+        for (const item of list) {
+          if (item?.id && !linkMap.has(item.id)) {
+            linkMap.set(item.id, item);
+          }
+        }
+      } catch (redisReadErr: any) {
+        console.error(`Redis snapshot read error for ID ${id}:`, redisReadErr?.message);
+        throw new Error(`Failed to read Redis links for audit before deletion: ${redisReadErr?.message || 'Connection error'}. Deletion aborted.`);
+      }
+    }
+  }
+
+  // C. Directly snapshot from Local Storage fallback
+  try {
+    const local = getLocalFallbackLinks();
+    for (const id of verifiedIds) {
+      const list = local[id];
+      if (Array.isArray(list)) {
+        for (const item of list) {
+          if (item?.id && !linkMap.has(item.id)) {
+            linkMap.set(item.id, item);
+          }
+        }
+      }
+    }
+  } catch {}
+
+  const links = Array.from(linkMap.values());
   const first = links[0];
   const auditBackup = {
-    movieId: key,
-    title: first?.movieTitle || first?.title || titleHint || `Title #${key}`,
+    movieId: primaryKey,
+    title: first?.movieTitle || first?.title || titleHint || `Title #${primaryKey}`,
     mediaType: first?.mediaType || 'unknown',
     deletedCount: links.length,
     deletedAt: new Date().toISOString(),
     linksSnapshot: links,
   };
 
-  // 1. Durably save audit backup in Supabase before proceeding with any deletion
-  try {
-    const supabase = getSupabaseAdminClient();
-    if (supabase) {
-      await supabase.from('audit_title_deletions').insert({
-        movie_id: auditBackup.movieId,
-        title: auditBackup.title,
-        media_type: auditBackup.mediaType,
-        deleted_count: auditBackup.deletedCount,
-        deleted_at: auditBackup.deletedAt,
-        links_snapshot: auditBackup.linksSnapshot,
-      });
+  // 3. Durably save audit backup in Supabase before proceeding with ANY deletion
+  if (supabase) {
+    const { error: auditError } = await supabase.from('audit_title_deletions').insert({
+      movie_id: auditBackup.movieId,
+      title: auditBackup.title,
+      media_type: auditBackup.mediaType,
+      deleted_count: auditBackup.deletedCount,
+      deleted_at: auditBackup.deletedAt,
+      links_snapshot: auditBackup.linksSnapshot,
+    });
+
+    if (auditError) {
+      console.error('Supabase audit backup write error:', auditError.message);
+      throw new Error(`Audit backup write failed: ${auditError.message}. Deletion aborted for safety.`);
     }
-  } catch (auditErr: any) {
-    console.warn('Audit backup write warning:', auditErr?.message);
   }
 
-  // 2. Perform deletion only after audit snapshot is durably confirmed
-  await deleteAllLinksForTitle(key, titleHint);
+  // 4. Perform atomic deletion strictly scoped to verifiedIds across all database tiers
+  // A. Supabase delete
+  if (supabase) {
+    const snapshotIds = links.map((l: any) => l.id).filter(Boolean);
+    if (snapshotIds.length > 0) {
+      for (let i = 0; i < snapshotIds.length; i += 1000) {
+        const batch = snapshotIds.slice(i, i + 1000);
+        const { error: delByIdErr } = await supabase
+          .from('links')
+          .delete()
+          .in('id', batch)
+          .in('movie_id', verifiedIds);
+        if (delByIdErr) {
+          throw new Error(`Supabase deletion failed: ${delByIdErr.message}`);
+        }
+      }
+    }
+  }
+
+  // B. Redis delete
+  if (redisClient) {
+    const linkIdsToTombstone = links.map((l: any) => l.id).filter(Boolean);
+    if (linkIdsToTombstone.length > 0) {
+      await redisClient.sadd(REDIS_DELETED_KEY, linkIdsToTombstone[0], ...linkIdsToTombstone.slice(1)).catch(() => {});
+    }
+    const redisCleanupErrors: string[] = [];
+    for (const id of verifiedIds) {
+      try {
+        await redisClient.hdel(REDIS_HASH_KEY, id);
+      } catch (e: any) {
+        redisCleanupErrors.push(`hdel(${id}): ${e.message}`);
+      }
+      try {
+        await removeTitleFromAllTitlesSummary(id);
+      } catch (e: any) {
+        redisCleanupErrors.push(`removeSummary(${id}): ${e.message}`);
+      }
+    }
+    await invalidateCatalogCache().catch(() => {});
+    if (redisCleanupErrors.length > 0) {
+      console.error('Incomplete Redis cleanup:', redisCleanupErrors.join('; '));
+      throw new Error(`Title deleted in Supabase with audit backup, but Redis cleanup failed: ${redisCleanupErrors.join('; ')}. Please retry cleanup.`);
+    }
+  }
+
+  // C. Local storage cleanup
+  try {
+    const local = getLocalFallbackLinks();
+    let hasLocalChanges = false;
+    for (const id of verifiedIds) {
+      if (local[id]) {
+        delete local[id];
+        hasLocalChanges = true;
+      }
+    }
+    if (hasLocalChanges) {
+      const ok = saveLocalFallbackLinks(local);
+      if (!ok) {
+        throw new Error('Local file cleanup failed to persist to disk.');
+      }
+    }
+  } catch (localErr: any) {
+    console.warn('Local storage cleanup warning:', localErr?.message);
+  }
 
   await invalidateCatalogCache().catch(() => {});
 
@@ -1719,6 +1874,7 @@ export interface PaginatedUploadedOptions {
   year?: string;
   sort?: 'latest' | 'top_rated' | 'rating' | 'popular';
   skipCount?: boolean;
+  fresh?: boolean;
 }
 
 export interface PaginatedUploadedResult {
@@ -1730,6 +1886,7 @@ export interface PaginatedUploadedResult {
   nextCursor?: string | null;
   prevCursor?: string | null;
   hasMore?: boolean;
+  isPartialCount?: boolean;
   source?: 'cache' | 'database';
 }
 
@@ -1888,7 +2045,7 @@ export async function getPaginatedUploadedTitles(
   const cacheKey = `cinefuel:${env}:catalog:v${version}:${type}:p${safePage}:l${safeLimit}:${countTag}:${filterKey}`;
   const fullCacheKey = `cinefuel:${env}:catalog:v${version}:${type}:p${safePage}:l${safeLimit}:full:${filterKey}`;
 
-  if (redisClient) {
+  if (!options.fresh && redisClient) {
     try {
       let cached: any = null;
       if (options.skipCount) {
@@ -1917,7 +2074,7 @@ export async function getPaginatedUploadedTitles(
 
   const queryPromise = (async (): Promise<PaginatedUploadedResult> => {
     // 1. High-Performance Full Catalog from Redis Summary (All 486 Titles)
-    if (redisClient) {
+    if (!options.fresh && redisClient) {
       try {
         const rawSummary = await redisClient.get<string | any[]>('cinefuel:all_titles_summary');
         let summaryList: any[] | null = null;
@@ -2077,10 +2234,12 @@ export async function getPaginatedUploadedTitles(
           const totalPages = Math.max(1, Math.ceil(total / safeLimit));
           const aggResults = allGroups.slice((safePage - 1) * safeLimit, safePage * safeLimit);
 
-          const resultPayload = buildCatalogCardsPayload(aggResults, safePage, safeLimit, total, totalPages);
+          const isPartialCount = rawLinks.length >= 2000;
+          const basePayload = buildCatalogCardsPayload(aggResults, safePage, safeLimit, total, totalPages);
+          const resultPayload = { ...basePayload, isPartialCount };
 
           // Cache in Redis with 300s TTL
-          if (redisClient && resultPayload.items.length > 0) {
+          if (!options.fresh && redisClient && resultPayload.items.length > 0) {
             await redisClient.set(cacheKey, JSON.stringify(resultPayload), { ex: CATALOG_CACHE_TTL_SECONDS }).catch(() => {});
           }
 

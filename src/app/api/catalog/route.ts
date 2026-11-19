@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getPaginatedUploadedTitles } from '@/lib/redisDb';
+import { validateAdminAuth } from '@/lib/adminAuth';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,6 +19,8 @@ export async function GET(request: NextRequest) {
     const cursor = searchParams.get('cursor') || undefined;
     const limit = Number(searchParams.get('limit')) || 24;
     const page = Number(searchParams.get('page')) || 1;
+    const wantsFresh = searchParams.get('fresh') === '1' || searchParams.get('nocache') === '1';
+    const fresh = wantsFresh && (await validateAdminAuth(request));
 
     const result = await getPaginatedUploadedTitles({
       cursor,
@@ -31,6 +34,7 @@ export async function GET(request: NextRequest) {
       query,
       limit,
       page,
+      fresh,
     });
 
     const isCacheHit = (result as any).source === 'cache';

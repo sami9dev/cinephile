@@ -82,10 +82,90 @@ export const LANGUAGE_MAP: Array<{ regex: RegExp; name: string }> = [
 ];
 
 /**
+ * URLs that represent trailers, promos, social media, or metadata portals rather than media download links.
+ */
+export const NON_MEDIA_HOSTS = [
+  'youtube.com',
+  'youtu.be',
+  'vimeo.com',
+  'dailymotion.com',
+  'twitter.com',
+  'x.com',
+  'instagram.com',
+  'facebook.com',
+  'tiktok.com',
+  'imdb.com',
+  'themoviedb.org',
+  'tmdb.org',
+  't.me',
+  'telegram.me',
+];
+
+export function isNonMediaUrl(url?: string): boolean {
+  if (!url) return false;
+  try {
+    const raw = url.trim();
+    const candidate = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+    const parsed = new URL(candidate);
+    const host = parsed.hostname.toLowerCase();
+    return NON_MEDIA_HOSTS.some((d) => host === d || host.endsWith(`.${d}`));
+  } catch {
+    return /(?:^|[\s@/:])(?:youtube\.com|youtu\.be|vimeo\.com|dailymotion\.com|twitter\.com|\bx\.com|instagram\.com|facebook\.com|tiktok\.com|imdb\.com|themoviedb\.org|tmdb\.org|(?:t|telegram)\.me)(?:[:/?#]|$)/i.test(url);
+  }
+}
+
+export const NON_MEDIA_URL_REGEX = /(?:https?:\/\/)?(?:www\.)?(?:youtube\.com|youtu\.be|vimeo\.com|dailymotion\.com|twitter\.com|(?:^|\.)x\.com|instagram\.com|facebook\.com|tiktok\.com|imdb\.com|themoviedb\.org|tmdb\.org|(?:t|telegram)\.me)\b[^\s<>'"`]*/i;
+
+/**
  * Authoritative HubCloud and scene title parsing implementation.
  */
 export function parseHubCloudTitle(rawInput: string): HubCloudParsedResult {
   let working = (rawInput || '').trim();
+
+  // Strip any inline URLs from the title string first so release titles containing inline URLs are preserved
+  const withoutUrls = working.replace(/https?:\/\/[^\s]+/gi, '').replace(/\bwww\.[^\s]+/gi, '').trim();
+  if (withoutUrls.length > 0) {
+    working = withoutUrls;
+  }
+
+  // Media files with recognizable extensions (.mkv, .mp4, .zip, etc.) are authentic media titles, never domain URLs
+  const isMediaFile = /\.(?:mkv|mp4|avi|zip|rar|7z|tar|iso|webm|ts|m4v)$/i.test(working);
+
+  // Strict URL guard: If the input is purely a URL, web protocol, or domain path without media extensions, reject it
+  if (
+    !working ||
+    working.includes('://') ||
+    (/^https?:\/\//i.test(working) && !isMediaFile) ||
+    (!isMediaFile && /^(?:www\.|[a-z0-9_-]+\.(?:com|org|net|io|mov|me|tv|app|to|co|in|cc|xyz|vip|site|online|is|pm|ms|ru|info|biz)(?:\/|$))/i.test(working))
+  ) {
+    return {
+      rawTitle: rawInput,
+      cleanMovieTitle: '',
+      year: null,
+      seasonEpisode: null,
+      isZipPack: false,
+      extractedSize: null,
+      resolution: 'Unknown',
+      source: 'WEB',
+      ott: null,
+      hdr: [],
+      videoCodec: null,
+      is10Bit: false,
+      audioCodec: null,
+      audioChannels: null,
+      hasAtmos: false,
+      isLosslessAudio: false,
+      audioConfiguration: 'Single Audio',
+      languages: [],
+      isOrgAudio: false,
+      isLineAudio: false,
+      hasSubtitles: false,
+      modifiers: [],
+      releaseGroup: null,
+      qualityScore: 0,
+      uiSummaryLabel: '',
+    };
+  }
 
   // 1. Detect ZIP / Pack & Strip file extension
   const isZipPack = /\.(zip|rar|7z)(\s*\[.*?\])?$/i.test(working) || /\b(COMPLETE\s*PACK|SEASON\s*PACK|ZIP)\b/i.test(working);
@@ -301,6 +381,7 @@ export function cleanTelegramText(rawText: string): {
   imdbId: string | null;
   tmdbId: string | null;
   extractedUrls: string[];
+  trailerUrl: string | null;
 } {
   const text = (rawText || '').trim();
 
@@ -312,13 +393,17 @@ export function cleanTelegramText(rawText: string): {
   const tmdbMatch = text.match(/themoviedb\.org\/(?:movie|tv)\/(\d+)/i);
   const tmdbId = tmdbMatch ? tmdbMatch[1] : null;
 
-  // Extract all download / streaming URLs (excluding IMDb, TMDB metadata links and Telegram invite links)
+  // Extract Trailer URL if present (e.g. YouTube trailer or Vimeo)
+  const trailerMatch = text.match(/(https?:\/\/(?:www\.)?(?:youtube\.com|youtu\.be|vimeo\.com)\/[^\s<>'"`]+)/i);
+  const trailerUrl = trailerMatch ? trailerMatch[1].trim() : null;
+
+  // Extract all download / streaming URLs (excluding IMDb, TMDB metadata links, trailers, and Telegram invite links)
   const urlRegex = /(https?:\/\/[^\s<>'"`]+)/gi;
   const extractedUrls: string[] = [];
   let uMatch: RegExpExecArray | null;
   while ((uMatch = urlRegex.exec(text)) !== null) {
     const u = uMatch[1].trim();
-    if (!/imdb\.com|themoviedb\.org|tmdb\.org|(?:t|telegram)\.me/i.test(u)) {
+    if (!isNonMediaUrl(u)) {
       extractedUrls.push(u);
     }
   }
@@ -353,8 +438,8 @@ export function cleanTelegramText(rawText: string): {
     // Strip @handles e.g. @MyChannel or @cinflue
     line = line.replace(/@[A-Za-z0-9_]+/g, ' ');
 
-    // Strip t.me / telegram.me invite links
-    line = line.replace(/https?:\/\/(?:t|telegram)\.me\/[^\s]+/gi, ' ');
+    // Strip trailers, social media links, and t.me invite links from lines
+    line = line.replace(/https?:\/\/(?:www\.)?(?:youtube\.com|youtu\.be|vimeo\.com|twitter\.com|x\.com|instagram\.com|facebook\.com|tiktok\.com|t\.me|telegram\.me)\/[^\s]+/gi, ' ');
     line = line.replace(/(?:t|telegram)\.me\/[^\s]+/gi, ' ');
 
     // Strip zero-width spaces & control characters
@@ -363,8 +448,19 @@ export function cleanTelegramText(rawText: string): {
     // Strip markdown formatting symbols (**, __, ~~, `, #)
     line = line.replace(/(\*\*|__|\~\~|`+|#+)/g, '');
 
+    // Strip common line prefixes like "Name : ", "Title : ", "Release : ", "HUBCLOUD = "
+    line = line.replace(/^(?:Name|Title|Release|File(?:\s*Name)?)\s*[:=-]+\s*/i, '');
+    line = line.replace(/HUBCLOUD\s*[:=-]+\s*/gi, '');
+
     // Strip leading decorative emojis / bullet symbols e.g. ⚡, 🌟, 🎬, •, ▶
     line = line.replace(/^[\s•\-\*\>▶►⚡🌟🎬🔥]+/, '').trim();
+
+    // Strip URLs from line text while preserving any adjacent release titles
+    const strippedLine = line.replace(/https?:\/\/[^\s]+/gi, '').replace(/\bwww\.[a-z0-9_-]+\.[a-z]{2,}[^\s]*/gi, '').trim();
+    if (!strippedLine) {
+      continue;
+    }
+    line = strippedLine;
 
     if (line.length > 0) {
       cleanLines.push(line);
@@ -377,6 +473,7 @@ export function cleanTelegramText(rawText: string): {
     imdbId,
     tmdbId,
     extractedUrls,
+    trailerUrl,
   };
 }
 
