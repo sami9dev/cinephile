@@ -128,15 +128,28 @@ export function parseHubCloudTitle(rawInput: string): HubCloudParsedResult {
     working = withoutUrls;
   }
 
+  // If input is a full URL with a protocol, extract direct media filename if present
+  if (working.includes('://')) {
+    try {
+      const u = new URL(working);
+      const pathname = decodeURIComponent(u.pathname);
+      const filename = pathname.split('/').filter(Boolean).pop() || '';
+      if (/\.(?:mkv|mp4|avi|zip|rar|7z|tar|iso|webm|ts|m4v)$/i.test(filename)) {
+        working = filename;
+      }
+    } catch {}
+  }
+
   // Media files with recognizable extensions (.mkv, .mp4, .zip, etc.) are authentic media titles, never domain URLs
   const isMediaFile = /\.(?:mkv|mp4|avi|zip|rar|7z|tar|iso|webm|ts|m4v)$/i.test(working);
 
   // Strict URL guard: If the input is purely a URL, web protocol, or domain path without media extensions, reject it
+  const isDomainPath = !isMediaFile && /^(?:www\.|[a-z0-9_.-]+\.(?:com|org|net|io|mov|me|tv|app|to|co|in|cc|xyz|vip|site|online|is|pm|ms|ru|info|biz)(?:\/|$))/i.test(working);
   if (
     !working ||
     working.includes('://') ||
-    (/^https?:\/\//i.test(working) && !isMediaFile) ||
-    (!isMediaFile && /^(?:www\.|[a-z0-9_-]+\.(?:com|org|net|io|mov|me|tv|app|to|co|in|cc|xyz|vip|site|online|is|pm|ms|ru|info|biz)(?:\/|$))/i.test(working))
+    (!isMediaFile && /^https?:\/\//i.test(working)) ||
+    isDomainPath
   ) {
     return {
       rawTitle: rawInput,
@@ -394,7 +407,7 @@ export function cleanTelegramText(rawText: string): {
   const tmdbId = tmdbMatch ? tmdbMatch[1] : null;
 
   // Extract Trailer URL if present (e.g. YouTube trailer or Vimeo)
-  const trailerMatch = text.match(/(https?:\/\/(?:www\.)?(?:youtube\.com|youtu\.be|vimeo\.com)\/[^\s<>'"`]+)/i);
+  const trailerMatch = text.match(/(https?:\/\/(?:[a-z0-9_-]+\.)?(?:youtube\.com|youtu\.be|vimeo\.com)\/[^\s<>'"`]+)/i);
   const trailerUrl = trailerMatch ? trailerMatch[1].trim() : null;
 
   // Extract all download / streaming URLs (excluding IMDb, TMDB metadata links, trailers, and Telegram invite links)
@@ -448,12 +461,12 @@ export function cleanTelegramText(rawText: string): {
     // Strip markdown formatting symbols (**, __, ~~, `, #)
     line = line.replace(/(\*\*|__|\~\~|`+|#+)/g, '');
 
+    // Strip leading decorative emojis / bullet symbols e.g. ⚡, 🌟, 🎬, •, ▶
+    line = line.replace(/^[\s•\-\*\>▶►⚡🌟🎬🔥]+/, '').trim();
+
     // Strip common line prefixes like "Name : ", "Title : ", "Release : ", "HUBCLOUD = "
     line = line.replace(/^(?:Name|Title|Release|File(?:\s*Name)?)\s*[:=-]+\s*/i, '');
     line = line.replace(/HUBCLOUD\s*[:=-]+\s*/gi, '');
-
-    // Strip leading decorative emojis / bullet symbols e.g. ⚡, 🌟, 🎬, •, ▶
-    line = line.replace(/^[\s•\-\*\>▶►⚡🌟🎬🔥]+/, '').trim();
 
     // Strip URLs from line text while preserving any adjacent release titles
     const strippedLine = line.replace(/https?:\/\/[^\s]+/gi, '').replace(/\bwww\.[a-z0-9_-]+\.[a-z]{2,}[^\s]*/gi, '').trim();

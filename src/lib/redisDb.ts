@@ -1146,7 +1146,14 @@ export async function deleteAllLinksForTitle(
     }
   }
 
-  return await replaceAllLinksForTitle(movieId, []);
+  // Also clear local fallback storage for all verified aliases
+  for (const aliasKey of allAliases) {
+    try {
+      await replaceAllLinksForTitle(aliasKey, []);
+    } catch {}
+  }
+
+  return { success: true };
 }
 
 /**
