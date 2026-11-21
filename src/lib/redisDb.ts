@@ -2127,11 +2127,17 @@ export async function getPaginatedUploadedTitles(
           }
           if (query && query.trim()) {
             const q = query.trim().toLowerCase();
-            filteredGroups = filteredGroups.filter((g) =>
-              (g.groupMovieTitle && g.groupMovieTitle.toLowerCase().includes(q)) ||
-              (g.latestDoc?.title && g.latestDoc.title.toLowerCase().includes(q)) ||
-              (String(g._id) === q)
-            );
+            const cleanQ = q.replace(/^(the|a|an)\s+/i, '').trim();
+            const qWords = cleanQ.split(/\s+/).filter((w) => w.length >= 2);
+            filteredGroups = filteredGroups.filter((g) => {
+              if (String(g._id) === q) return true;
+              const titleA = (g.groupMovieTitle || '').toLowerCase();
+              const titleB = (g.latestDoc?.title || '').toLowerCase();
+              if (titleA.includes(q) || titleB.includes(q)) return true;
+              if (cleanQ && (titleA.includes(cleanQ) || titleB.includes(cleanQ))) return true;
+              if (qWords.length > 1 && qWords.every((w) => titleA.includes(w) || titleB.includes(w))) return true;
+              return false;
+            });
           }
           if (quality) {
             const ql = quality.toLowerCase();
