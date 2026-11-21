@@ -392,10 +392,14 @@ export function parseReleaseDetails(
   }
 
   // 11. PART SENSING
+  // If it's an individual episode, "Part 1" or "Part 2" in the title is the episode's title (e.g. "Islands Part 1"),
+  // never a file split! Only multi-part movie releases or multi-part season packs can have split parts.
   let part: string | undefined = undefined;
-  const partMatch = normText.match(/\b(?:Part|Pt)\s*0*(\d+)\b/i);
-  if (partMatch) {
-    part = `Part-${parseInt(partMatch[1], 10)}`;
+  if (!isEpisode && packType !== 'individual_episode' && !episodeNumber) {
+    const partMatch = normText.match(/\b(?:Part|Pt)\s*0*(\d+)\b/i);
+    if (partMatch) {
+      part = `Part-${parseInt(partMatch[1], 10)}`;
+    }
   }
 
   // ==========================================

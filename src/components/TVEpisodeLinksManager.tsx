@@ -549,14 +549,13 @@ function parseOptionTitleAndTags(
   const showName = titleDetails.name || titleDetails.title || 'Series';
   const rawTitle = option.title || '';
 
-  // 1. Part tag
+  // 1. Part tag (only for multi-part packs/archives, NEVER for individual episodes)
   let partTag = '';
-  const partMatch =
-    rawTitle.match(/(?:^|[\s._\-[\]()])(?:part|pt)[\s._-]?0*(\d+)(?:[\s._\-[\]()]|$)/i) ||
-    (option.episodes[0]?.title || '').match(/(?:^|[\s._\-[\]()])(?:part|pt)[\s._-]?0*(\d+)(?:[\s._\-[\]()]|$)/i) ||
-    (option.packs[0]?.title || '').match(/(?:^|[\s._\-[\]()])(?:part|pt)[\s._-]?0*(\d+)(?:[\s._\-[\]()]|$)/i);
-  if (partMatch && partMatch[1]) {
-    partTag = `Part-${parseInt(partMatch[1], 10)}`;
+  if (option.episodes.length === 0 && option.packs.length > 0) {
+    const partMatch = (option.packs[0]?.title || '').match(/(?:^|[\s._\-[\]()])(?:part|pt)[\s._-]?0*(\d+)(?:[\s._\-[\]()]|$)/i);
+    if (partMatch && partMatch[1]) {
+      partTag = `Part-${parseInt(partMatch[1], 10)}`;
+    }
   }
 
   // 2. Base release title
@@ -957,7 +956,9 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
 
         fVal.links.forEach((link) => {
           const prof = extractReleaseProfile(link.title, link.quality, titleDetails, link.url, link.manualOverrides);
-          const partSuffix = prof.part ? `_${prof.part}` : '';
+          // Individual episodes must NEVER be split by part (e.g. "Islands Part 1") into separate tiers!
+          const isEp = link.episodeNumber !== undefined || prof.isEpisode || link.linkType === 'single_episode';
+          const partSuffix = (!isEp && prof.part) ? `_${prof.part}` : '';
           const optKey = `s${s}_${fKey}_${prof.dynamicRange || 'std'}_${prof.codec || 'codec'}${partSuffix}`;
 
           if (!optionsMap.has(optKey)) {
@@ -1377,14 +1378,17 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
           codecBadge = 'AV1';
         }
 
-        const partMatch = combined.match(/\bpart[-.\s]*(\d+)\b/i);
-        const partSuffix = partMatch ? ` Part ${partMatch[1]}` : '';
-
         const tierBadge =
           dynBadge || bitBadge || (codecBadge && cleanRes !== '2160p' ? codecBadge : 'SDR');
-        const tierLabel = `${cleanRes} ${tierBadge}${partSuffix}`;
+        const tierLabel = `${cleanRes} ${tierBadge}`;
 
-        const tierEpisodes = opt.episodes.map((ep) => {
+        const sortedEpisodes = [...opt.episodes].sort((a, b) => {
+          const epA = a.episodeNumber || detectEpisodeNumber(a) || 1;
+          const epB = b.episodeNumber || detectEpisodeNumber(b) || 1;
+          return epA - epB;
+        });
+
+        const tierEpisodes = sortedEpisodes.map((ep) => {
           const filename = formatEpisodeTitle(
             ep,
             opt,
@@ -1440,25 +1444,19 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
     return sortedResolutions.map((res) => {
       const tiers = resMap.get(res) || [];
       tiers.sort((a, b) => {
-        const orderA = a.tierLabel.includes('DV')
-          ? 4
-          : a.tierLabel.includes('HDR')
-          ? 3
-          : a.tierLabel.includes('Hybrid')
-          ? 2
-          : a.tierLabel.includes('SDR')
-          ? 1
-          : 0;
-        const orderB = b.tierLabel.includes('DV')
-          ? 4
-          : b.tierLabel.includes('HDR')
-          ? 3
-          : b.tierLabel.includes('Hybrid')
-          ? 2
-          : b.tierLabel.includes('SDR')
-          ? 1
-          : 0;
-        return orderB - orderA;
+        const getTierWeight = (label: string) => {
+          if (label.includes('DV')) return 60;
+          if (label.includes('HDR')) return 50;
+          if (label.includes('Hybrid')) return 40;
+          if (label.includes('10Bit')) return 35;
+          if (label.includes('HEVC')) return 30;
+          if (label.includes('AV1')) return 25;
+          if (label.includes('SDR')) return 10;
+          return 5;
+        };
+        const weightDiff = getTierWeight(b.tierLabel) - getTierWeight(a.tierLabel);
+        if (weightDiff !== 0) return weightDiff;
+        return b.episodes.length - a.episodes.length;
       });
       return {
         resolution: res,
