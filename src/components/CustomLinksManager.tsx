@@ -30,7 +30,7 @@ import {
   deleteGlobalCustomLink,
   getDeletedLinkIds,
 } from '@/lib/curatedLinks';
-import { parseFullMediaTitle, detectSize, stripWatermarks, getQualityWeight, extractFilenameFromUrl } from '@/lib/seasonParser';
+import { parseFullMediaTitle, detectSize, stripWatermarks, getQualityWeight, extractFilenameFromUrl, isPackMedia, detectEpisodeNumber } from '@/lib/seasonParser';
 import { parseReleaseDetails } from '@/lib/releaseParser';
 import { detectServer } from '@/lib/serverDetector';
 import { safeGetLocalStorage, safeSetLocalStorage, pruneCustomLinksCache } from '@/lib/safeStorage';
@@ -57,20 +57,8 @@ function detectResolution(quality?: string, title?: string, url?: string): strin
   const urlFn = extractFilenameFromUrl(url);
   const cleanTitle = stripWatermarks(title || urlFn || '');
   const cleanQuality = stripWatermarks(quality || '');
-
-  // 1. Check title first (title is the true source of truth for the media file)
-  if (/(?:^|[\s._\-[\]()])(?:1080p|1080i|fhd)(?:[\s._\-[\]()]|$)/i.test(cleanTitle)) return '1080p';
-  if (/(?:^|[\s._\-[\]()])(?:720p|720i|hd)(?:[\s._\-[\]()]|$)/i.test(cleanTitle)) return '720p';
-  if (/(?:^|[\s._\-[\]()])(?:480p|480i|sd)(?:[\s._\-[\]()]|$)/i.test(cleanTitle)) return '480p';
-  if (/(?:^|[\s._\-[\]()])(?:2160p|2160i|\buhd\b|\b4k\b)(?:[\s._\-[\]()]|$)/i.test(cleanTitle)) return '2160p';
-
-  // 2. Fallback to quality hint if title had no resolution tag
-  if (/(?:^|[\s._\-[\]()])(?:1080p|1080i|fhd)(?:[\s._\-[\]()]|$)/i.test(cleanQuality)) return '1080p';
-  if (/(?:^|[\s._\-[\]()])(?:720p|720i|hd)(?:[\s._\-[\]()]|$)/i.test(cleanQuality)) return '720p';
-  if (/(?:^|[\s._\-[\]()])(?:480p|480i|sd)(?:[\s._\-[\]()]|$)/i.test(cleanQuality)) return '480p';
-  if (/(?:^|[\s._\-[\]()])(?:2160p|2160i|\buhd\b|\b4k\b)(?:[\s._\-[\]()]|$)/i.test(cleanQuality)) return '2160p';
-
-  return '1080p';
+  const parsed = parseReleaseDetails(cleanTitle || cleanQuality, url);
+  return parsed.resolution || '1080p';
 }
 
 
@@ -599,9 +587,18 @@ export const CustomLinksManager: React.FC<CustomLinksManagerProps> = ({ titleDet
   // Filter links: for TV shows, episode links are already organized in TVEpisodeLinksManager
   const nonEpisodeLinks = useMemo(() => {
     if (mediaType !== 'tv') return userCustomLinks;
-    return userCustomLinks.filter(
-      (l) => l.category !== 'SingleEpisode' && l.category !== 'ZipPack' && l.linkType !== 'single_episode' && l.linkType !== 'zip_pack'
-    );
+    return userCustomLinks.filter((l) => {
+      if (l.category === 'SingleEpisode' || l.category === 'ZipPack' || l.linkType === 'single_episode' || l.linkType === 'zip_pack') {
+        return false;
+      }
+      if (isPackMedia(l.title, l.url)) return false;
+      if (detectEpisodeNumber(l) !== undefined) return false;
+      const combined = `${l.title || ''} ${l.url || ''}`.toLowerCase();
+      if (/(?:s\d{1,2}(?:e\d{1,3})?|season\s*\d+|pack|\.zip\b|\.rar\b)/i.test(combined)) {
+        return false;
+      }
+      return true;
+    });
   }, [userCustomLinks, mediaType]);
 
   const displayLinks = mediaType === 'tv' ? nonEpisodeLinks : userCustomLinks;
@@ -990,44 +987,46 @@ export const CustomLinksManager: React.FC<CustomLinksManagerProps> = ({ titleDet
           </div>
         )}
 
-        {/* Can't find the link you want? Request custom quality or report card */}
-        <div className="mt-5 p-4 sm:p-6 rounded-2xl bg-[#0b0e17] border border-blue-500/25 shadow-xl text-center space-y-3.5 relative overflow-hidden">
-          <div className="absolute top-0 right-0 w-36 h-36 bg-blue-500/10 rounded-full blur-3xl pointer-events-none" />
-          <div className="w-10 h-10 rounded-full bg-blue-500/15 border border-blue-500/40 flex items-center justify-center mx-auto text-blue-400 shadow-md shadow-blue-500/10">
-            <Info className="w-5 h-5" />
+        {/* Can't find the link you want? Request custom quality or report card (Only shown for movies; TV series have dedicated format/episode request in TVEpisodeLinksManager) */}
+        {mediaType !== 'tv' && (
+          <div className="mt-5 p-4 sm:p-6 rounded-2xl bg-[#0b0e17] border border-blue-500/25 shadow-xl text-center space-y-3.5 relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-36 h-36 bg-blue-500/10 rounded-full blur-3xl pointer-events-none" />
+            <div className="w-10 h-10 rounded-full bg-blue-500/15 border border-blue-500/40 flex items-center justify-center mx-auto text-blue-400 shadow-md shadow-blue-500/10">
+              <Info className="w-5 h-5" />
+            </div>
+            <p className="text-xs sm:text-sm text-zinc-200 font-medium max-w-md mx-auto leading-relaxed">
+              Can&apos;t find the link you want? Request custom quality or report a broken link and we&apos;ll fix it for you.
+            </p>
+            <div className="flex flex-wrap items-center justify-center gap-2.5 sm:gap-3">
+              <button
+                type="button"
+                onClick={() => setIsRequestModalOpen(true)}
+                className="w-full sm:w-auto px-6 sm:px-8 py-3 min-h-[44px] rounded-2xl bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-500 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs uppercase tracking-wider shadow-lg shadow-blue-600/30 transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
+              >
+                REQUEST LINK
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const currentUrl = typeof window !== 'undefined' ? window.location.href : '';
+                  setReportingLink({
+                    movieId: titleDetails.id,
+                    mediaTitle: titleDetails.title || titleDetails.name || 'Movie',
+                    mediaType: 'movie',
+                    posterPath: titleDetails.poster_path,
+                    linkTitle: `${titleDetails.title || titleDetails.name} (Broken Link Report)`,
+                    reportedUrl: currentUrl,
+                  });
+                }}
+                className="w-full sm:w-auto justify-center px-6 py-3 min-h-[44px] rounded-2xl bg-[#141824] hover:bg-[#1d2335] text-zinc-300 hover:text-rose-400 border border-white/10 hover:border-rose-500/40 font-bold text-xs uppercase tracking-wider shadow-lg transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer inline-flex items-center gap-2"
+                title="Report broken or defective link"
+              >
+                <Flag className="w-4 h-4 text-zinc-400 group-hover:text-rose-400" />
+                <span>REPORT LINK</span>
+              </button>
+            </div>
           </div>
-          <p className="text-xs sm:text-sm text-zinc-200 font-medium max-w-md mx-auto leading-relaxed">
-            Can&apos;t find the link you want? Request custom quality or report a broken link and we&apos;ll fix it for you.
-          </p>
-          <div className="flex flex-wrap items-center justify-center gap-2.5 sm:gap-3">
-            <button
-              type="button"
-              onClick={() => setIsRequestModalOpen(true)}
-              className="w-full sm:w-auto px-6 sm:px-8 py-3 min-h-[44px] rounded-2xl bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-500 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs uppercase tracking-wider shadow-lg shadow-blue-600/30 transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
-            >
-              REQUEST LINK
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                const currentUrl = typeof window !== 'undefined' ? window.location.href : '';
-                setReportingLink({
-                  movieId: titleDetails.id,
-                  mediaTitle: titleDetails.title || titleDetails.name || 'Movie',
-                  mediaType: mediaType === 'tv' ? 'tv' : 'movie',
-                  posterPath: titleDetails.poster_path,
-                  linkTitle: `${titleDetails.title || titleDetails.name} (Broken Link Report)`,
-                  reportedUrl: currentUrl,
-                });
-              }}
-              className="w-full sm:w-auto justify-center px-6 py-3 min-h-[44px] rounded-2xl bg-[#141824] hover:bg-[#1d2335] text-zinc-300 hover:text-rose-400 border border-white/10 hover:border-rose-500/40 font-bold text-xs uppercase tracking-wider shadow-lg transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer inline-flex items-center gap-2"
-              title="Report broken or defective link"
-            >
-              <Flag className="w-4 h-4 text-zinc-400 group-hover:text-rose-400" />
-              <span>REPORT LINK</span>
-            </button>
-          </div>
-        </div>
+        )}
       </div>
     )}
 

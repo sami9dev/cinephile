@@ -157,11 +157,16 @@ export function parseReleaseDetails(
   }
 
   // Text representation with normalized token separators for regex inspection
-  // We protect audio channel numbers (e.g. 5.1, 7.1, 2.0) and video codecs (x264, x265, x266)
-  // so audio channels like '5.1] x265' are never misparsed as Season 1, Episode 265!
+  // We protect audio channel numbers (e.g. 5.1, 7.1, 2.0), HD audio codecs (DTS-HD, TrueHD),
+  // and video codecs (x264, x265, x266) so audio channels like '5.1] x265' are never misparsed as Season 1, Episode 265,
+  // and 'DTS-HD' is never misparsed as 720p HD video resolution!
   const textWithProtectedTokens = ` ${cleanInput} ${cleanUrlFilename} `
+    .replace(/\bdts[\s._-]*hd[\s._-]*(?:ma)?\b/gi, ' audio_dtshdma ')
+    .replace(/\btrue[\s._-]*hd\b/gi, ' audio_truehd ')
+    .replace(/\bhd[\s._-]*audio\b/gi, ' audio_hdaudio ')
     .replace(/\b([1-9])\.([0-2])\b/g, ' audio_$1_$2 ')
-    .replace(/\bx(264|265|266)\b/gi, ' codec_x$1 ');
+    .replace(/\bx(264|265|266)\b/gi, ' codec_x$1 ')
+    .replace(/\b(4khdhub|hdhub4u|katmoviehd|uhdmovies|olamovies)\b/gi, ' ');
 
   const normText = textWithProtectedTokens
     .replace(/[\.\_\-\[\]\(\)\{\}\\\/]/g, ' ')
@@ -186,12 +191,15 @@ export function parseReleaseDetails(
     }
   }
 
-  // B. Standalone Episode: E05, Episode 05, Ep 5 (ensuring it's not a resolution like 1080p or part)
+  // B. Standalone Episode: E05, Episode 05, Ep 5 (ensuring it's not a year or resolution like 1080p)
   if (episodeNumber === undefined) {
-    const epMatch = normText.match(/\b(?:Episode|Ep)\s*0*(\d{1,4})\b/i) ||
-                    normText.match(/\bE\s*0*(\d{1,4})\b(?!\s*p\b)/i);
+    const epMatch = normText.match(/\b(?:Episode|Ep)\s*0*(\d{1,3})\b/i) ||
+                    normText.match(/\bE0*([1-9]\d{0,2})\b(?!\s*p\b)/i);
     if (epMatch) {
-      episodeNumber = parseInt(epMatch[1], 10);
+      const candidate = parseInt(epMatch[1], 10);
+      if (candidate < 1900 || candidate > 2099) {
+        episodeNumber = candidate;
+      }
     }
   }
 
@@ -247,7 +255,7 @@ export function parseReleaseDetails(
   } else if (/\bfhd\b/i.test(normText)) {
     resolution = '1080p';
     resolutionLabel = '1080p';
-  } else if (/\bhd\b/i.test(normText)) {
+  } else if (/\b(?:hd|hdrip|hdcam)\b/i.test(normText) && !/\baudio_/i.test(normText)) {
     resolution = '720p';
     resolutionLabel = '720p';
   } else if (/\bsd\b/i.test(normText)) {

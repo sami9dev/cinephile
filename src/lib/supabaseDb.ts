@@ -1,60 +1,110 @@
 import { getSupabaseAdminClient } from '@/lib/supabase';
 import { CustomLink } from '@/types';
+import { detectSeasonNumber, detectEpisodeNumber, isPackMedia } from './seasonParser';
+
+const parseNumOrNull = (val: any): number | null => {
+  if (val === null || val === undefined) return null;
+  const n = Number(val);
+  return Number.isFinite(n) ? n : null;
+};
 
 // Map CustomLink from Cinephile application schema to Supabase snake_case row
 export function mapLinkToSupabaseRow(movieId: string | number, link: CustomLink, metadata?: any) {
   const mId = String(movieId).trim();
   const nowIso = new Date().toISOString();
+  const isTv = metadata?.mediaType === 'tv' || link.mediaType === 'tv' || /(?:s\d{1,2}(?:e\d{1,3})?|season\s*\d+)/i.test(link.title || '');
+  const isPack = link.category === 'ZipPack' || link.linkType === 'zip_pack' || isPackMedia(link.title, link.url);
+
+  let seasonNum = parseNumOrNull(link.seasonNumber);
+  if (seasonNum === null && isTv) {
+    const s = detectSeasonNumber({ title: link.title, url: link.url, seasonNumber: link.seasonNumber });
+    if (s > 0) seasonNum = s;
+  }
+
+  let epNum = parseNumOrNull(link.episodeNumber);
+  if (epNum === null && isTv && !isPack) {
+    const ep = detectEpisodeNumber({ title: link.title, url: link.url, episodeNumber: link.episodeNumber });
+    if (ep !== undefined) epNum = ep;
+  }
+
+  const effectiveLinkType = isTv ? (isPack ? 'zip_pack' : (epNum !== null ? 'single_episode' : (link.linkType || 'general'))) : (link.linkType || 'general');
+  const effectiveCategory = isTv ? (isPack ? 'ZipPack' : (epNum !== null ? 'SingleEpisode' : (link.category || 'Download'))) : (link.category || 'Download');
+
   return {
     id: link.id,
     movie_id: mId,
     title: link.title,
     movie_title: metadata?.movieTitle || link.movieTitle || null,
     url: link.url,
-    category: link.category || 'Download',
+    category: effectiveCategory,
     quality: link.quality || null,
     codec: link.codec || null,
     audio_language: link.audioLanguage || null,
     size: link.size || null,
-    link_type: link.linkType || 'general',
-    season_number: link.seasonNumber !== undefined ? Number(link.seasonNumber) : null,
-    episode_number: link.episodeNumber !== undefined ? Number(link.episodeNumber) : null,
+    link_type: effectiveLinkType,
+    season_number: seasonNum,
+    episode_number: epNum,
     episode_title: link.episodeTitle || null,
     manual_title_verified: Boolean(link.manualTitleVerified),
     server_name: link.serverName || null,
     server_badge: link.serverBadge || null,
-    media_type: metadata?.mediaType || link.mediaType || 'movie',
+    media_type: isTv ? 'tv' : (metadata?.mediaType || link.mediaType || 'movie'),
     release_date: metadata?.releaseDate || link.releaseDate || null,
     poster_path: metadata?.posterPath || link.posterPath || null,
     backdrop_path: metadata?.backdropPath || link.backdropPath || null,
     overview: metadata?.overview || link.overview || null,
-    vote_average: metadata?.voteAverage !== undefined ? Number(metadata.voteAverage) : (link.voteAverage !== undefined ? Number(link.voteAverage) : null),
+    vote_average: parseNumOrNull(metadata?.voteAverage) ?? parseNumOrNull(link.voteAverage),
     created_at: link.createdAt || nowIso,
     updated_at: nowIso,
   };
 }
 
-// Map Supabase snake_case row to Cinephile CustomLink
+// Map Supabase snake_case row to Cinephile CustomLink with resilient self-healing
 export function mapSupabaseRowToLink(row: any): CustomLink {
+  const isTv = row.media_type === 'tv' || /(?:s\d{1,2}(?:e\d{1,3})?|season\s*\d+)/i.test(row.title || '');
+  const isPack = row.category === 'ZipPack' || row.link_type === 'zip_pack' || isPackMedia(row.title, row.url);
+  
+  let seasonNumber = (row.season_number !== null && row.season_number !== undefined && Number.isFinite(Number(row.season_number))) ? Number(row.season_number) : undefined;
+  if ((seasonNumber === undefined || seasonNumber <= 0) && isTv) {
+    const s = detectSeasonNumber({ title: row.title, url: row.url });
+    if (s > 0) seasonNumber = s;
+  }
+
+  let episodeNumber = (row.episode_number !== null && row.episode_number !== undefined && Number.isFinite(Number(row.episode_number))) ? Number(row.episode_number) : undefined;
+  if (episodeNumber === undefined && isTv && !isPack) {
+    episodeNumber = detectEpisodeNumber({ title: row.title, url: row.url });
+  }
+
+  let linkType = row.link_type || 'general';
+  if (isTv) {
+    linkType = isPack ? 'zip_pack' : (episodeNumber !== undefined ? 'single_episode' : linkType);
+  }
+
+  let category = row.category || 'Download';
+  if (isTv) {
+    if (isPack) category = 'ZipPack';
+    else if (episodeNumber !== undefined) category = 'SingleEpisode';
+  }
+
   return {
     id: row.id,
     movieId: row.movie_id,
     title: row.title,
     movieTitle: row.movie_title || undefined,
     url: row.url,
-    category: row.category || 'Download',
+    category,
     quality: row.quality || undefined,
     codec: row.codec || undefined,
     audioLanguage: row.audio_language || undefined,
     size: row.size || undefined,
-    linkType: row.link_type || 'general',
-    seasonNumber: row.season_number !== null ? Number(row.season_number) : undefined,
-    episodeNumber: row.episode_number !== null ? Number(row.episode_number) : undefined,
+    linkType,
+    seasonNumber,
+    episodeNumber,
     episodeTitle: row.episode_title || undefined,
     manualTitleVerified: row.manual_title_verified || false,
     serverName: row.server_name || undefined,
     serverBadge: row.server_badge || undefined,
-    mediaType: row.media_type || 'movie',
+    mediaType: isTv ? 'tv' : (row.media_type || 'movie'),
     releaseDate: row.release_date || undefined,
     posterPath: row.poster_path || undefined,
     backdropPath: row.backdrop_path || undefined,

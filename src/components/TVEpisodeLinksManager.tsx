@@ -207,8 +207,7 @@ export function getVerifiedReleaseAttributes(
       hasDV ||
       hasHDR ||
       hasSDR ||
-      codec === 'H.265' ||
-      codec === 'H.264'
+      Boolean(codec)
   );
 
   return {
@@ -423,7 +422,7 @@ export function resolveDeterministicRelease<T extends Partial<EnrichedLink>>(
   const validReleases = matchingReleases.filter((r) => isValidDestinationUrl(r.url));
   if (validReleases.length === 0) return null;
 
-  const sorted = validReleases.toSorted((a, b) => {
+  const sorted = [...validReleases].sort((a, b) => {
     // 1. Specificity: closest match with lowest extraneous attribute penalty comes first
     if (combo) {
       const penaltyA = getComboSpecificityPenalty(a, combo);
@@ -574,7 +573,8 @@ function parseOptionTitleAndTags(
 
   const correctPlat = detectShowPlatform(baseTitle, titleDetails);
 
-  if (!baseTitle.includes('.') || baseTitle.includes('(')) {
+  const hasSceneEvidence = /(?:s\d{1,2}(?:e\d{1,3})?|season\s*\d+|2160p|1080p|720p|480p|bluray|remux|web-?dl|webrip|hevc|x264|x265)/i.test(baseTitle);
+  if (!hasSceneEvidence && (!baseTitle.includes('.') || !baseTitle.includes(' '))) {
     const prof = extractReleaseProfile(rawTitle, undefined, titleDetails);
     const sTag = `S${String(seasonNum).padStart(2, '0')}`;
     const safeShow = (showName && !/^https?:\/\//i.test(showName) && !showName.includes('://') && !/^(?:www\.|[a-z0-9_-]+\.[a-z]{2,6}\/)/i.test(showName)) ? showName : 'Series';
@@ -961,8 +961,8 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
           const optKey = `s${s}_${fKey}_${prof.dynamicRange || 'std'}_${prof.codec || 'codec'}${partSuffix}`;
 
           if (!optionsMap.has(optKey)) {
-            let optTitle = link.title;
-            if (optTitle.includes('.mkv') || optTitle.includes('.zip') || !optTitle.includes('(')) {
+            let optTitle = stripWatermarks(link.title || '');
+            if (!optTitle || optTitle.length < 10 || /^https?:\/\//i.test(optTitle) || /^p[0-9a-z]{8,}$/i.test(optTitle)) {
               optTitle = prof.cleanDisplayTitle(showName, s);
             }
 
@@ -1473,8 +1473,21 @@ export const TVEpisodeLinksManager: React.FC<TVEpisodeLinksManagerProps> = ({
   const isEpisodesOpen =
     episodesAccordionOpen ?? (resolutionGroups.length > 0);
 
-  // Default to opening the first tier of highest resolution unless manually toggled
-  const defaultTierId = resolutionGroups[0]?.tiers[0]?.id;
+  // Default to opening the tier with the most verified episodes, or the first tier
+  const defaultTierId = useMemo(() => {
+    let bestId = '';
+    let maxCount = -1;
+    resolutionGroups.forEach((rg) => {
+      rg.tiers.forEach((t) => {
+        if (t.episodes.length > maxCount) {
+          maxCount = t.episodes.length;
+          bestId = t.id;
+        }
+      });
+    });
+    return bestId || resolutionGroups[0]?.tiers[0]?.id;
+  }, [resolutionGroups]);
+
   const isTierOpen = (tierId: string) => {
     if (tierId in manuallyToggledTiers) {
       return Boolean(manuallyToggledTiers[tierId]);

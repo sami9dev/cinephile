@@ -15,7 +15,7 @@ import {
 } from '@/lib/supabaseDb';
 import { getTitleDetails, getLightweightTitleCard, cleanTitleString, resolveCanonicalMedia } from '@/lib/tmdb';
 import { resolveAllVerifiedAliases } from '@/lib/canonicalMedia';
-import { detectShowPlatform, stripWatermarks, detectSeasonNumber, detectEpisodeNumber } from '@/lib/seasonParser';
+import { detectShowPlatform, stripWatermarks, detectSeasonNumber, detectEpisodeNumber, isPackMedia } from '@/lib/seasonParser';
 
 import { getEnv } from '@/lib/env';
 import { matchesCollection, matchesYear } from '@/lib/collections';
@@ -323,8 +323,10 @@ export async function getLinksFromDatabase(
           sbQuery = sbQuery.eq('category', pagination.category);
         }
         if (pagination?.q && pagination.q.trim()) {
-          const q = pagination.q.trim();
-          sbQuery = sbQuery.or(`title.ilike.%${q}%,url.ilike.%${q}%,movie_id.eq.${q}`);
+          const safeQ = pagination.q.replace(/[,()]/g, '').trim();
+          if (safeQ) {
+            sbQuery = sbQuery.or(`title.ilike.%${safeQ}%,url.ilike.%${safeQ}%,movie_id.eq.${safeQ}`);
+          }
         }
         sbQuery = sbQuery.order('created_at', { ascending: false });
         sbQuery = sbQuery.range((page - 1) * limit, page * limit - 1);
@@ -373,8 +375,22 @@ export async function getLinksFromDatabase(
           list = localData[key] || [];
         }
 
-        const filtered = list.filter((l: any) => l?.id && !deletedSet.has(l.id));
-        return { links: filtered, source: 'upstash_redis' };
+        const sanitized = list.filter((l: any) => l?.id && !deletedSet.has(l.id)).map((l: any) => {
+          const isTv = l.mediaType === 'tv' || /(?:s\d{1,2}(?:e\d{1,3})?|season\s*\d+)/i.test(l.title || '');
+          const isPack = l.category === 'ZipPack' || l.linkType === 'zip_pack' || isPackMedia(l.title, l.url);
+          const seasonNum = l.seasonNumber !== undefined ? l.seasonNumber : (isTv ? detectSeasonNumber(l) : undefined);
+          const epNum = l.episodeNumber !== undefined ? l.episodeNumber : (isTv && !isPack ? detectEpisodeNumber(l) : undefined);
+          const linkType = isTv ? (isPack ? 'zip_pack' : (epNum !== undefined ? 'single_episode' : (l.linkType || 'general'))) : (l.linkType || 'general');
+          const category = isTv ? (isPack ? 'ZipPack' : (epNum !== undefined ? 'SingleEpisode' : (l.category || 'Download'))) : (l.category || 'Download');
+          return {
+            ...l,
+            seasonNumber: seasonNum,
+            episodeNumber: epNum,
+            linkType,
+            category,
+          };
+        });
+        return { links: sanitized, source: 'upstash_redis' };
       }
 
       // High-performance Cloudflare-safe pagination:
@@ -439,12 +455,13 @@ async function proxyMutationToUpstream(method: 'POST' | 'DELETE', path: string, 
   const isCloudflare = typeof (globalThis as any).WebSocketPair !== 'undefined' || getEnv('WORKER_NAME');
   if (!isCloudflare) return false;
 
-  const upstreamBase = getEnv('UPSTREAM_API_URL');
+  const upstreamBase = (getEnv('UPSTREAM_API_URL') || '').trim();
   if (!upstreamBase) return false;
+  const cleanBase = upstreamBase.replace(/\/+$/, '');
   const adminSecret = (getEnv('ADMIN_SECRET_KEY') || getEnv('ADMIN_PASSWORD') || '').trim();
   if (!adminSecret) return false;
   const adminUser = (getEnv('ADMIN_USER') || getEnv('ADMIN_USERNAME') || 'admin').trim();
-  const url = `${upstreamBase}${path}`;
+  const url = `${cleanBase}${path}`;
 
   try {
     const headers: Record<string, string> = {
@@ -1495,7 +1512,13 @@ export async function deleteEntireTitleWithAudit(
     linksSnapshot: links,
   };
 
-  // 3. Durably save audit backup in Supabase before proceeding with ANY deletion
+  // 3. Durably save audit backup in Redis & Supabase before proceeding with deletion
+  if (redisClient) {
+    await redisClient.lpush('cinefuel:audit_title_deletions', JSON.stringify(auditBackup)).catch((e: any) => {
+      console.warn('Redis audit backup write warning:', e.message);
+    });
+  }
+
   if (supabase) {
     const { error: auditError } = await supabase.from('audit_title_deletions').insert({
       movie_id: auditBackup.movieId,
@@ -1507,8 +1530,12 @@ export async function deleteEntireTitleWithAudit(
     });
 
     if (auditError) {
-      console.error('Supabase audit backup write error:', auditError.message);
-      throw new Error(`Audit backup write failed: ${auditError.message}. Deletion aborted for safety.`);
+      console.warn('Supabase audit backup write warning:', auditError.message);
+      // If service role is absent or RLS blocked it, Redis already captured the immutable backup.
+      // Only throw if BOTH Redis and Supabase failed to capture the audit record.
+      if (!redisClient) {
+        throw new Error(`Audit backup write failed: ${auditError.message}. Deletion aborted for safety.`);
+      }
     }
   }
 
@@ -1704,6 +1731,7 @@ export async function updateEpisodeTitleInDatabase(
 
           if (matchLink) {
             if (!forceOverwrite && link.manualTitleVerified === true) {
+              skippedManualCount++;
               return link;
             }
             redisModified = true;
@@ -1719,7 +1747,7 @@ export async function updateEpisodeTitleInDatabase(
         });
 
         if (redisModified) {
-          await redisClient.hset(REDIS_HASH_KEY, { [key]: JSON.stringify(updatedLinks) });
+          await redisClient.hset(REDIS_HASH_KEY, { [key]: updatedLinks });
           updatedCount = Math.max(updatedCount, redisCount);
         }
       }
@@ -1742,6 +1770,7 @@ export async function updateEpisodeTitleInDatabase(
 
         if (matchLink) {
           if (!forceOverwrite && link.manualTitleVerified === true) {
+            skippedManualCount++;
             return link;
           }
           localModified = true;

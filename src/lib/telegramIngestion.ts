@@ -7,7 +7,7 @@ import {
   HubCloudParsedResult,
   isNonMediaUrl,
 } from './hubcloudParser';
-import { extractFilenameFromUrl } from './seasonParser';
+import { extractFilenameFromUrl, detectSeasonNumber, detectEpisodeNumber, isPackMedia } from './seasonParser';
 import { getLinksFromSupabase, replaceAllLinksForTitleInSupabase } from './supabaseDb';
 import { saveMultipleLinksToDatabase, upsertTitleInAllTitlesSummary, invalidateCatalogCache, getRedisClient } from './redisDb';
 import { detectServer } from './serverDetector';
@@ -303,7 +303,7 @@ export async function processTelegramIngestion(
 
         const scanStartIndex = urlCleanIndex !== -1 ? urlCleanIndex - 1 : sanitized.cleanLines.length - 1;
         for (let j = scanStartIndex; j >= 0; j--) {
-          const stripped = sanitized.cleanLines[j]
+          let stripped = sanitized.cleanLines[j]
             .replace(/^(?:Name|Title|Release|File(?:\s*Name)?)\s*[:=-]+\s*/i, '')
             .replace(/HUBCLOUD\s*[:=-]+\s*/gi, '')
             .trim();
@@ -313,6 +313,16 @@ export async function processTelegramIngestion(
             !isNonMediaUrl(stripped) &&
             !/^(?:https?:\/\/|www\.)/i.test(stripped)
           ) {
+            // Check if stripped is an orphan specs fragment split from the line above (e.g. "DDP 5.1 + ... x264 (Group).mkv")
+            if (j > 0 && /^(?:\]|\+|DDP|AAC|AC3|DTS|TrueHD|x264|x265|HEVC|AVC|\([a-zA-Z0-9_-]+\)\.mkv)/i.test(stripped)) {
+              const prevLine = sanitized.cleanLines[j - 1]
+                .replace(/^(?:Name|Title|Release|File(?:\s*Name)?)\s*[:=-]+\s*/i, '')
+                .replace(/HUBCLOUD\s*[:=-]+\s*/gi, '')
+                .trim();
+              if (prevLine && !prevLine.includes('://') && !isNonMediaUrl(prevLine)) {
+                stripped = `${prevLine} ${stripped}`;
+              }
+            }
             candidateTitle = stripped;
             break;
           }
@@ -433,7 +443,7 @@ export async function processTelegramIngestion(
   // STAGE 5: Database Deduplication & Quality Auto-Upgrade (Upsert)
   // ===========================================================================
   // Use the cleanest title and year from the highest-scoring release to match TMDB
-  const primaryRelease = preparedReleases.toSorted(
+  const primaryRelease = [...preparedReleases].sort(
     (a, b) => b.parsed.qualityScore - a.parsed.qualityScore
   )[0];
 
@@ -572,6 +582,12 @@ export async function processTelegramIngestion(
     const serverInfo = detectServer(item.url);
     const qualityBadge = computeCardBadge(item.parsed);
 
+    const isZip = Boolean(item.parsed.isZipPack || isPackMedia(item.releaseTitle, item.url));
+    const detectedSeason = detectSeasonNumber({ title: item.releaseTitle, url: item.url });
+    const detectedEpisode = isZip ? undefined : detectEpisodeNumber({ title: item.releaseTitle, url: item.url });
+    const linkType = isZip ? 'zip_pack' : (detectedEpisode !== undefined ? 'single_episode' : 'general');
+    const category = isZip ? 'ZipPack' : (detectedEpisode !== undefined ? 'SingleEpisode' : 'Streaming');
+
     const linkObj: any = {
       id: `tg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       movieId,
@@ -583,12 +599,13 @@ export async function processTelegramIngestion(
       releaseDate,
       voteAverage: tmdb?.vote_average || 7.8,
       url: item.url,
-      category: item.parsed.isZipPack
-        ? 'ZipPack'
-        : item.parsed.seasonEpisode
-        ? 'SingleEpisode'
-        : 'Streaming',
+      category,
+      seasonNumber: mediaType === 'tv' ? detectedSeason : undefined,
+      episodeNumber: mediaType === 'tv' ? detectedEpisode : undefined,
+      linkType: mediaType === 'tv' ? linkType : 'general',
       quality: item.parsed.resolution !== 'Unknown' ? item.parsed.resolution : '1080p FHD',
+      codec: item.parsed.videoCodec || undefined,
+      resolution: item.parsed.resolution !== 'Unknown' ? item.parsed.resolution : undefined,
       audioLanguage: item.parsed.languages.join(', ') || (item.parsed.isOrgAudio ? 'Original' : 'Hindi'),
       size: item.extractedSize || item.parsed.extractedSize || '',
       serverName: serverInfo.name,
@@ -629,8 +646,8 @@ export async function processTelegramIngestion(
   // 4. Save to database: Replace all links atomically in Supabase & Upstash Redis
   const metadataPayload = {
     movieTitle: officialTitle,
-    posterPath: tmdb?.poster_path || null,
-    backdropPath: tmdb?.backdrop_path || null,
+    posterPath: resolvedPoster,
+    backdropPath: resolvedBackdrop,
     mediaType,
     releaseDate,
     voteAverage: tmdb?.vote_average || 7.8,
@@ -690,17 +707,24 @@ export async function processTelegramIngestion(
     ? tmdb.genres.map((g: any) => g.name).filter(Boolean).join(', ')
     : 'Cinema, Feature';
 
+  const escapeHtml = (str: string) =>
+    str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
   let overview = tmdb?.overview
     ? (tmdb.overview.length > 220 ? tmdb.overview.slice(0, 217) + '...' : tmdb.overview)
     : `${officialTitle} is now streaming in high quality on CineFuel.`;
 
-  let captionHtml = `🎬 <b>${officialTitle.toUpperCase()} ${releaseYear ? `(${releaseYear})` : ''}</b>
+  const safeTitle = escapeHtml(officialTitle.toUpperCase());
+  const safeGenres = escapeHtml(genres);
+  let safeOverview = escapeHtml(overview);
+
+  let captionHtml = `🎬 <b>${safeTitle} ${releaseYear ? `(${releaseYear})` : ''}</b>
 ─────────────────────────────
-⭐ <b>Rating:</b> ${tmdb?.vote_average ? Number(tmdb.vote_average).toFixed(1) : '8.0'}/10 | 🎭 <b>Genres:</b> ${genres}
+⭐ <b>Rating:</b> ${tmdb?.vote_average ? Number(tmdb.vote_average).toFixed(1) : '8.0'}/10 | 🎭 <b>Genres:</b> ${safeGenres}
 ─────────────────────────────
 
 📖 <b>Overview:</b>
-<blockquote>${overview}</blockquote>
+<blockquote>${safeOverview}</blockquote>
 
 📦 <b>Available Versions:</b>
 ${versionsText}
@@ -712,13 +736,14 @@ ${badgeNotice}
   if (captionHtml.length > 1020) {
     const maxOverview = Math.max(60, overview.length - (captionHtml.length - 1020));
     overview = overview.slice(0, maxOverview) + '...';
-    captionHtml = `🎬 <b>${officialTitle.toUpperCase()} ${releaseYear ? `(${releaseYear})` : ''}</b>
+    safeOverview = escapeHtml(overview);
+    captionHtml = `🎬 <b>${safeTitle} ${releaseYear ? `(${releaseYear})` : ''}</b>
 ─────────────────────────────
-⭐ <b>Rating:</b> ${tmdb?.vote_average ? Number(tmdb.vote_average).toFixed(1) : '8.0'}/10 | 🎭 <b>Genres:</b> ${genres}
+⭐ <b>Rating:</b> ${tmdb?.vote_average ? Number(tmdb.vote_average).toFixed(1) : '8.0'}/10 | 🎭 <b>Genres:</b> ${safeGenres}
 ─────────────────────────────
 
 📖 <b>Overview:</b>
-<blockquote>${overview}</blockquote>
+<blockquote>${safeOverview}</blockquote>
 
 📦 <b>Available Versions:</b>
 ${versionsText}
