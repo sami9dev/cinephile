@@ -3,6 +3,14 @@ import path from 'path';
 import { parseFullMediaTitle, isPackMedia } from './seasonParser';
 import { isNonMediaUrl } from './hubcloudParser';
 import { saveLinkToDatabase, isLinkAlreadyInDatabase } from './redisDb';
+import {
+  matchTmdbCascading,
+  stagePendingIngestionJob,
+  createCustomFallbackEntry,
+  TmdbCandidate,
+} from './tmdbMatcher';
+import { dualWriteSaveLink, dualWriteSaveMultipleLinks } from './dualWrite';
+import { CustomLink } from '@/types';
 
 const recentMessagesCache = new Map<string, number>();
 
@@ -15,8 +23,9 @@ const DATA_FILE = path.join(process.cwd(), 'src', 'data', 'serverLinks.json');
 export const STRICT_URL_REGEX = /(?:https?:\/\/[^\s<>'"`]+|www\.[^\s<>'"`]+|(?:[a-zA-Z0-9-]+\.)+(?:com|org|net|io|cx|in|co|cc|me|app|dev|to|is|pw|club|vip|link|xyz|live|pro|site|online|top|info|stream|ws|download|tech|click|cloud|movie|nz)\/[^\s<>'"`]*)/gi;
 
 // Authorized Admin IDs (Shyam's Telegram ID is 930928310)
+export const AUTHORIZED_ADMIN_TELEGRAM_ID = 930928310;
 export const AUTHORIZED_TELEGRAM_IDS = [
-  930928310, // Shyam
+  AUTHORIZED_ADMIN_TELEGRAM_ID, // Shyam
 ];
 
 export const TMDB_GENRES: Record<number, string> = {
@@ -52,6 +61,7 @@ export const TMDB_GENRES: Record<number, string> = {
 export interface ProcessResult {
   replyText: string;
   success: boolean;
+  replyMarkup?: any;
   movie?: any;
   link?: any;
   card?: {
@@ -106,7 +116,7 @@ export function cleanTitleForSearch(text: string): { query: string; year?: numbe
     /^https?:\/\//i.test(s) ||
     s.includes('://') ||
     /^(?:www\.|[a-z0-9_-]+\.[a-z]{2,6}\/)/i.test(s) ||
-    isNonMediaUrl(s)
+    (s.includes('/') && isNonMediaUrl(s))
   ) {
     return { query: '', year: undefined };
   }
@@ -121,7 +131,7 @@ export async function searchTmdbMedia(query: string, year?: number, forcedType?:
     /^https?:\/\//i.test(query) ||
     query.includes('://') ||
     /^(?:www\.|[a-z0-9_-]+\.[a-z]{2,6}\/)/i.test(query) ||
-    isNonMediaUrl(query)
+    (query.includes('/') && isNonMediaUrl(query))
   ) {
     return null;
   }
@@ -170,7 +180,7 @@ export async function searchTmdbMedia(query: string, year?: number, forcedType?:
         if (yearMatch) return yearMatch;
       }
 
-      return filtered[0] || data.results[0];
+      return filtered[0] || null;
     }
   } catch (err) {
     console.error('TMDB Search error:', err);
@@ -178,12 +188,15 @@ export async function searchTmdbMedia(query: string, year?: number, forcedType?:
   return null;
 }
 
-export async function saveLinkToServerDatabase(movieId: number, link: any) {
+export async function saveLinkToServerDatabase(movieId: number | string, link: any) {
   try {
-    await saveLinkToDatabase(movieId, link);
-    return true;
+    const res = await dualWriteSaveLink({
+      ...link,
+      movieId: String(movieId),
+    });
+    return res.success;
   } catch (err) {
-    console.error('Failed to save link to database:', err);
+    console.error('Failed to dual-write link to database:', err);
     return false;
   }
 }
@@ -388,14 +401,83 @@ Please provide the title along with the link!`,
     }
   }
 
-  // Search TMDB
-  const tmdbItem = await searchTmdbMedia(query, year, sensedType);
-  if (!tmdbItem) {
+  // 4-Stage Zero-Loss TMDB Matcher (Cascading Multi-Pass + Cinemeta Bridge + Telegram Inline Recovery + Custom Fallback)
+  const matchResult = await matchTmdbCascading(textToProcess, query, year, sensedType === 'tv');
+
+  let tmdbItem: any = null;
+  let isCustomFallback = false;
+
+  if (matchResult.matched && matchResult.candidate) {
+    const cand = matchResult.candidate;
+    tmdbItem = {
+      id: cand.id,
+      title: cand.title,
+      name: cand.title,
+      media_type: cand.mediaType,
+      poster_path: cand.posterPath,
+      backdrop_path: cand.backdropPath,
+      release_date: cand.year ? `${cand.year}-01-01` : '',
+      first_air_date: cand.year ? `${cand.year}-01-01` : '',
+      vote_average: cand.voteAverage || 7.5,
+      overview: cand.overview,
+      confidenceScore: cand.confidenceScore,
+      stage: cand.stage,
+    };
+  } else if (matchResult.candidates && matchResult.candidates.length > 0) {
+    // Stage 3: Multiple candidates or moderate confidence -> Stage job in Redis & send inline keyboard for confirmation
+    const preliminaryMeta = parseFullMediaTitle(textToProcess, primaryUrl);
+    const stagedLink: CustomLink = {
+      id: `tg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      movieId: 'pending',
+      title: preliminaryMeta.rawReleaseTitle || `${query} ${preliminaryMeta.quality || ''}`.trim(),
+      url: primaryUrl,
+      category: preliminaryMeta.linkType === 'zip_pack' ? 'ZipPack' : 'Streaming',
+      quality: preliminaryMeta.quality,
+      audioLanguage: preliminaryMeta.audioLanguage,
+      size: preliminaryMeta.size,
+      seasonNumber: preliminaryMeta.seasonNumber,
+      episodeNumber: preliminaryMeta.episodeNumber,
+      createdAt: new Date().toISOString(),
+    };
+
+    const jobId = await stagePendingIngestionJob(query, [stagedLink], matchResult.candidates);
+
+    const inlineKeyboard = matchResult.candidates.slice(0, 3).map((cand) => [
+      {
+        text: `🎬 ${cand.title} (${cand.year || 'N/A'}) [${cand.mediaType.toUpperCase()}]`,
+        callback_data: `ingest_confirm:${jobId}:${cand.id}`,
+      },
+    ]);
+
+    inlineKeyboard.push([
+      {
+        text: `📝 Publish as Custom Fallback (${query})`,
+        callback_data: `ingest_custom:${jobId}`,
+      },
+    ]);
+
     return {
-      success: false,
-      replyText: `🔍 *Could Not Find Title on TMDB*
-Searched for: \`${query}\` ${year ? `(${year})` : ''}
-Please check the spelling and try again.`,
+      success: true,
+      replyText: `🔍 *Ambiguous TMDB Match for:* \`${query}\` ${year ? `(${year})` : ''}\n\nPlease confirm the exact title by tapping below:`,
+      replyMarkup: {
+        inline_keyboard: inlineKeyboard,
+      },
+    };
+  } else {
+    // Stage 4: Zero candidates found -> Auto-create custom fallback entry so links are NEVER lost!
+    isCustomFallback = true;
+    const fallbackId = `custom_${Date.now()}`;
+    tmdbItem = {
+      id: fallbackId,
+      title: query,
+      name: query,
+      media_type: sensedType || 'movie',
+      poster_path: null,
+      backdrop_path: null,
+      release_date: year ? `${year}-01-01` : '',
+      vote_average: 7.0,
+      overview: `${query} uploaded via @CineFlue_bot (pending TMDB assignment).`,
+      isCustomFallback: true,
     };
   }
 
@@ -528,6 +610,9 @@ Failed to write link to the CineFuel database. Please check server logs.`,
     uploadedBy: process.env.TELEGRAM_UPLOADED_BY || 'Shyam',
     channelHandle: process.env.TELEGRAM_CHANNEL_HANDLE || '@cinflue',
     pageUrl: websiteUrl,
+    autoMigrationNotice: isCustomFallback
+      ? '⚠️ Published as Custom Unmatched Title. Reassign in /admin Title Manager.'
+      : undefined,
   };
 
   return {

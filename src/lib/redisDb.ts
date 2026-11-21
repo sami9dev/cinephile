@@ -447,8 +447,6 @@ async function proxyMutationToUpstream(method: 'POST' | 'DELETE', path: string, 
   const url = `${upstreamBase}${path}`;
 
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 6000);
     const headers: Record<string, string> = {
       'x-admin-key': adminSecret,
       'authorization': `Bearer ${adminSecret}`,
@@ -463,9 +461,8 @@ async function proxyMutationToUpstream(method: 'POST' | 'DELETE', path: string, 
       method,
       headers,
       body: body ? JSON.stringify(body) : undefined,
-      signal: controller.signal,
+      signal: AbortSignal.timeout(6000),
     });
-    clearTimeout(timeoutId);
     return res.ok;
   } catch (err: any) {
     console.warn(`Upstream mutation proxy warning (${method} ${path}):`, err.message);
@@ -1303,7 +1300,7 @@ export async function reassignLinksInDatabase(
     await reassignLinksInSupabase(oldKey, newKey, Array.from(linkIdSet), newMetadata);
   } catch (dbErr: any) {
     console.error('Supabase reassignLinksInDatabase error:', dbErr.message);
-    throw new Error(`Database write failed during reassignLinksInDatabase: ${dbErr.message}`);
+    throw new Error(`Database write failed during reassignLinksInDatabase: ${dbErr.message}`, { cause: dbErr });
   }
 
   // 5. Update Upstash Redis
@@ -1467,7 +1464,7 @@ export async function deleteEntireTitleWithAudit(
         }
       } catch (redisReadErr: any) {
         console.error(`Redis snapshot read error for ID ${id}:`, redisReadErr?.message);
-        throw new Error(`Failed to read Redis links for audit before deletion: ${redisReadErr?.message || 'Connection error'}. Deletion aborted.`);
+        throw new Error(`Failed to read Redis links for audit before deletion: ${redisReadErr?.message || 'Connection error'}. Deletion aborted.`, { cause: redisReadErr });
       }
     }
   }
@@ -2074,9 +2071,10 @@ export async function getPaginatedUploadedTitles(
     }
   }
 
-  // 2. Prevent Cache Stampedes via In-Flight Single-Flight Promise
-  if (inFlightCatalogRequests.has(cacheKey)) {
-    return await inFlightCatalogRequests.get(cacheKey)!;
+  // 2. Prevent Cache Stampedes via In-Flight Single-Flight Promise (differentiated by fresh mode)
+  const inFlightKey = options.fresh ? `${cacheKey}:fresh` : cacheKey;
+  if (inFlightCatalogRequests.has(inFlightKey)) {
+    return await inFlightCatalogRequests.get(inFlightKey)!;
   }
 
   const queryPromise = (async (): Promise<PaginatedUploadedResult> => {
@@ -2337,11 +2335,11 @@ export async function getPaginatedUploadedTitles(
     };
   })();
 
-  inFlightCatalogRequests.set(cacheKey, queryPromise);
+  inFlightCatalogRequests.set(inFlightKey, queryPromise);
   try {
     return await queryPromise;
   } finally {
-    inFlightCatalogRequests.delete(cacheKey);
+    inFlightCatalogRequests.delete(inFlightKey);
   }
 }
 

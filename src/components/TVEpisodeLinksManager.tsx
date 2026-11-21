@@ -423,7 +423,7 @@ export function resolveDeterministicRelease<T extends Partial<EnrichedLink>>(
   const validReleases = matchingReleases.filter((r) => isValidDestinationUrl(r.url));
   if (validReleases.length === 0) return null;
 
-  const sorted = [...validReleases].sort((a, b) => {
+  const sorted = validReleases.toSorted((a, b) => {
     // 1. Specificity: closest match with lowest extraneous attribute penalty comes first
     if (combo) {
       const penaltyA = getComboSpecificityPenalty(a, combo);

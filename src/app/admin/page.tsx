@@ -1,17 +1,17 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import dynamic from 'next/dynamic';
-import AdminLoginGate from '@/components/admin/AdminLoginGate';
+import AdminLoginShell from '@/components/admin/AdminLoginShell';
 
-// Lazy-load the heavy authenticated dashboard so unauthenticated visitors (and PageSpeed Insights)
-// download ONLY the lightweight login screen (< 15 KB JS instead of 485 KB!).
+// Lazy-load the heavy authenticated dashboard so unauthenticated visitors
+// download ONLY the lightweight login shell (< 15 KB JS!).
 const AdminDashboard = dynamic(
   () => import('@/components/admin/AdminDashboard'),
   {
     ssr: false,
     loading: () => (
-      <div className="min-h-screen bg-[#08090c] flex flex-col items-center justify-center gap-3 text-amber-400">
+      <div className="min-h-screen bg-[#090A0F] flex flex-col items-center justify-center gap-3 text-amber-400">
         <div className="w-8 h-8 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
         <span className="text-xs font-mono text-zinc-400">Loading Master Control Panel...</span>
       </div>
@@ -20,18 +20,14 @@ const AdminDashboard = dynamic(
 );
 
 export default function AdminPage() {
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(() => {
-    if (typeof window === 'undefined') return false;
-    const sessionToken =
-      sessionStorage.getItem('cinefuel_admin_token') ||
-      localStorage.getItem('cinefuel_admin_token') ||
-      localStorage.getItem('cinefuel_id_token');
-    return sessionToken ? null : false;
-  });
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
+  const isMountedRef = useRef(true);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    isMountedRef.current = true;
+    const abortController = new AbortController();
 
+    // 1. Purge deprecated legacy credentials from storage
     try {
       localStorage.removeItem('cinefuel_admin_pass');
       localStorage.removeItem('cinefuel_admin_key');
@@ -41,41 +37,83 @@ export default function AdminPage() {
       sessionStorage.removeItem('cinefuel_admin_user');
     } catch {}
 
-    const sessionToken =
-      sessionStorage.getItem('cinefuel_admin_token') ||
-      localStorage.getItem('cinefuel_admin_token') ||
-      localStorage.getItem('cinefuel_id_token');
+    let sessionToken = '';
+    try {
+      sessionToken =
+        sessionStorage.getItem('cinefuel_admin_token') ||
+        localStorage.getItem('cinefuel_admin_token') ||
+        '';
+    } catch {}
 
-    if (!sessionToken) {
-      setIsAuthenticated(false);
-      return;
+    const headers: Record<string, string> = {};
+    if (sessionToken) {
+      headers['Authorization'] = `Bearer ${sessionToken}`;
     }
 
+    // 2. Verify session via cookie or bearer token
     fetch('/api/admin/auth', {
-      headers: { Authorization: `Bearer ${sessionToken}` },
+      headers,
+      credentials: 'include',
+      signal: abortController.signal,
     })
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
+        if (!isMountedRef.current) return;
         if (data?.authenticated) {
           setIsAuthenticated(true);
         } else {
-          sessionStorage.removeItem('cinefuel_admin_token');
-          localStorage.removeItem('cinefuel_admin_token');
+          try {
+            sessionStorage.removeItem('cinefuel_admin_token');
+            localStorage.removeItem('cinefuel_admin_token');
+          } catch {}
           setIsAuthenticated(false);
         }
       })
-      .catch(() => {
+      .catch((err) => {
+        if (err.name === 'AbortError') return;
+        if (!isMountedRef.current) return;
         setIsAuthenticated(false);
       });
+
+    return () => {
+      isMountedRef.current = false;
+      abortController.abort();
+    };
   }, []);
 
   if (isAuthenticated === null) {
-    return <AdminLoginGate checkingAuth={true} />;
+    return <AdminLoginShell checkingAuth={true} onLoginSuccess={() => setIsAuthenticated(true)} />;
   }
 
   if (!isAuthenticated) {
-    return <AdminLoginGate onLoginSuccess={() => setIsAuthenticated(true)} />;
+    return <AdminLoginShell onLoginSuccess={() => setIsAuthenticated(true)} />;
   }
 
-  return <AdminDashboard onLogout={() => setIsAuthenticated(false)} />;
+  return (
+    <AdminDashboard
+      initialAuthenticated={true}
+      onLogout={async () => {
+        try {
+          const res = await fetch('/api/admin/auth/logout', {
+            method: 'POST',
+            credentials: 'include',
+          });
+          if (!res.ok) {
+            await fetch('/api/admin/auth', { method: 'DELETE', credentials: 'include' });
+          }
+          try {
+            sessionStorage.removeItem('cinefuel_admin_token');
+            localStorage.removeItem('cinefuel_admin_token');
+          } catch {}
+          setIsAuthenticated(false);
+        } catch {
+          try {
+            sessionStorage.removeItem('cinefuel_admin_token');
+            localStorage.removeItem('cinefuel_admin_token');
+          } catch {}
+          setIsAuthenticated(false);
+        }
+      }}
+    />
+  );
 }

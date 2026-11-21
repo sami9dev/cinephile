@@ -12,6 +12,7 @@ import { getLinksFromSupabase, replaceAllLinksForTitleInSupabase } from './supab
 import { saveMultipleLinksToDatabase, upsertTitleInAllTitlesSummary, invalidateCatalogCache, getRedisClient } from './redisDb';
 import { detectServer } from './serverDetector';
 import { getTitleDetails, searchMulti, cleanTitleString, resolveCanonicalMedia } from './tmdb';
+import { matchTmdbCascading } from './tmdbMatcher';
 import { getEnv } from './env';
 
 export interface TelegramIngestInput {
@@ -115,6 +116,36 @@ async function resolveTmdbMedia(params: {
       const details = await getTitleDetails(mediaTypeHint || 'movie', imdbId);
       if (details && details.id) return details;
     } catch {}
+  }
+
+  // 2b. Cascading Multi-Pass TMDB Matcher (Direct ID, Strict, Fuzzy Sorensen-Dice, Cinemeta Bridge)
+  try {
+    const cascading = await matchTmdbCascading(
+      titleQuery,
+      cleanTitleString(titleQuery),
+      year || undefined,
+      mediaTypeHint === 'tv'
+    );
+    if (cascading.matched && cascading.candidate) {
+      return {
+        id: cascading.candidate.id,
+        title: cascading.candidate.title,
+        name: cascading.candidate.title,
+        poster_path: cascading.candidate.posterPath,
+        backdrop_path: cascading.candidate.backdropPath,
+        release_date: cascading.candidate.year ? `${cascading.candidate.year}-01-01` : '',
+        first_air_date: cascading.candidate.year ? `${cascading.candidate.year}-01-01` : '',
+        vote_average: cascading.candidate.voteAverage || 7.5,
+        media_type: cascading.candidate.mediaType || mediaTypeHint || 'movie',
+        overview: cascading.candidate.overview,
+      } as any;
+    }
+    // Ambiguous candidates: defer to processTelegramMessage for interactive inline confirmation
+    if (cascading.candidates && cascading.candidates.length > 0) {
+      return null;
+    }
+  } catch (err: any) {
+    console.warn('Cascading TMDB match error in ingestion:', err.message);
   }
 
   // 3. Fallback to TMDB Multi-Search (Strictly reject URLs and non-media domains)
@@ -270,7 +301,7 @@ export async function processTelegramIngestion(
           }
         }
 
-        const scanStartIndex = urlCleanIndex > 0 ? urlCleanIndex - 1 : sanitized.cleanLines.length - 1;
+        const scanStartIndex = urlCleanIndex !== -1 ? urlCleanIndex - 1 : sanitized.cleanLines.length - 1;
         for (let j = scanStartIndex; j >= 0; j--) {
           const stripped = sanitized.cleanLines[j]
             .replace(/^(?:Name|Title|Release|File(?:\s*Name)?)\s*[:=-]+\s*/i, '')
@@ -402,7 +433,7 @@ export async function processTelegramIngestion(
   // STAGE 5: Database Deduplication & Quality Auto-Upgrade (Upsert)
   // ===========================================================================
   // Use the cleanest title and year from the highest-scoring release to match TMDB
-  const primaryRelease = [...preparedReleases].sort(
+  const primaryRelease = preparedReleases.toSorted(
     (a, b) => b.parsed.qualityScore - a.parsed.qualityScore
   )[0];
 

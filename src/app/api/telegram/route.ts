@@ -9,6 +9,9 @@ import {
   sendTelegramMessage,
   getSiteUrl,
 } from '@/lib/telegramNotifications';
+import { getRedisClient } from '@/lib/redisDb';
+import { dualWriteSaveMultipleLinks } from '@/lib/dualWrite';
+import { createCustomFallbackEntry } from '@/lib/tmdbMatcher';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,18 +27,22 @@ function escapeHtml(str: string) {
     .replace(/>/g, '&gt;');
 }
 
-async function sendTelegramReply(chatId: number, text: string) {
+async function sendTelegramReply(chatId: number, text: string, replyMarkup?: any) {
   try {
     const token = getBotToken();
+    const payload: any = {
+      chat_id: chatId,
+      text,
+      parse_mode: 'Markdown',
+      disable_web_page_preview: false,
+    };
+    if (replyMarkup) {
+      payload.reply_markup = replyMarkup;
+    }
     const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text,
-        parse_mode: 'Markdown',
-        disable_web_page_preview: false,
-      }),
+      body: JSON.stringify(payload),
     });
     return await res.json();
   } catch (e) {
@@ -143,6 +150,170 @@ export async function POST(request: NextRequest) {
 
   try {
     const update = await request.json();
+
+    // Handle Inline Keyboard Callback Queries (Stage 3 & 4 resolution)
+    if (update.callback_query) {
+      const cb = update.callback_query;
+      const cbFromId = cb.from?.id;
+      const cbData = cb.data || '';
+      const cbChatId = cb.message?.chat?.id || cbFromId;
+      const botToken = getBotToken();
+
+      if (!AUTHORIZED_TELEGRAM_IDS.includes(cbFromId)) {
+        if (botToken) {
+          await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              callback_query_id: cb.id,
+              text: '⛔ Unauthorized admin action',
+              show_alert: true,
+            }),
+          });
+        }
+        return NextResponse.json({ ok: true, unauthorized: true });
+      }
+
+      if (cbData.startsWith('ingest_confirm:')) {
+        const parts = cbData.split(':');
+        const jobId = parts[1];
+        const selectedTmdbId = parts[2];
+        const redis = getRedisClient();
+        if (redis && jobId) {
+          // Atomic resolution guard to prevent concurrent double-publish
+          const lockKey = `ingest:lock:${jobId}`;
+          const locked = await redis.set(lockKey, '1', { nx: true, ex: 30 });
+          if (!locked) {
+            if (botToken) {
+              await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  callback_query_id: cb.id,
+                  text: '⚡ Already processed by administrator.',
+                }),
+              });
+            }
+            return NextResponse.json({ ok: true, alreadyProcessed: true });
+          }
+
+          const rawJob = await redis.get<string>(`ingest:pending:${jobId}`);
+          if (rawJob) {
+            const jobData = typeof rawJob === 'string' ? JSON.parse(rawJob) : rawJob;
+            const targetCandidate = (jobData.candidates || []).find((c: any) => String(c.id) === String(selectedTmdbId));
+            const linksToSave = (jobData.links || []).map((l: any) => ({
+              ...l,
+              movieId: String(selectedTmdbId),
+              movieTitle: targetCandidate?.title || jobData.cleanTitle,
+              mediaType: targetCandidate?.mediaType || 'movie',
+              posterPath: targetCandidate?.posterPath || null,
+              backdropPath: targetCandidate?.backdropPath || null,
+              releaseDate: targetCandidate?.year ? `${targetCandidate.year}-01-01` : '2024-01-01',
+            }));
+
+            const saveRes = await dualWriteSaveMultipleLinks(linksToSave);
+            if (!saveRes.success) {
+              await redis.del(lockKey); // release lock on failure so admin can retry
+              if (botToken) {
+                await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    callback_query_id: cb.id,
+                    text: `❌ Error saving links: ${saveRes.error || 'Database error'}`,
+                    show_alert: true,
+                  }),
+                });
+              }
+              return NextResponse.json({ ok: false, error: saveRes.error }, { status: 500 });
+            }
+
+            await redis.del(`ingest:pending:${jobId}`);
+            await redis.del(lockKey);
+
+            if (botToken) {
+              await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  callback_query_id: cb.id,
+                  text: `✅ Release linked to TMDB #${selectedTmdbId}!`,
+                }),
+              });
+
+              await sendTelegramReply(cbChatId, `✅ *Successfully Published to TMDB #${selectedTmdbId}!*\nTitle: *${targetCandidate?.title || jobData.cleanTitle}*\nLinks are now live on CineFuel.`);
+            }
+            return NextResponse.json({ ok: true, confirmed: true });
+          } else {
+            await redis.del(lockKey);
+          }
+        }
+      } else if (cbData.startsWith('ingest_custom:')) {
+        const parts = cbData.split(':');
+        const jobId = parts[1];
+        const redis = getRedisClient();
+        if (redis && jobId) {
+          // Atomic resolution guard to prevent concurrent double-publish
+          const lockKey = `ingest:lock:${jobId}`;
+          const locked = await redis.set(lockKey, '1', { nx: true, ex: 30 });
+          if (!locked) {
+            if (botToken) {
+              await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  callback_query_id: cb.id,
+                  text: '⚡ Already processed by administrator.',
+                }),
+              });
+            }
+            return NextResponse.json({ ok: true, alreadyProcessed: true });
+          }
+
+          const rawJob = await redis.get<string>(`ingest:pending:${jobId}`);
+          if (rawJob) {
+            const jobData = typeof rawJob === 'string' ? JSON.parse(rawJob) : rawJob;
+            const customRes = await createCustomFallbackEntry(jobData.cleanTitle, jobData.links || []);
+            if (!customRes || !customRes.movieId) {
+              await redis.del(lockKey);
+              if (botToken) {
+                await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    callback_query_id: cb.id,
+                    text: '❌ Error generating custom title fallback.',
+                    show_alert: true,
+                  }),
+                });
+              }
+              return NextResponse.json({ ok: false, error: 'Custom creation failed' }, { status: 500 });
+            }
+
+            await redis.del(`ingest:pending:${jobId}`);
+            await redis.del(lockKey);
+
+            if (botToken) {
+              await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  callback_query_id: cb.id,
+                  text: `✅ Published as Custom Unmatched Title (${customRes.movieId})!`,
+                }),
+              });
+
+              await sendTelegramReply(cbChatId, `⚠️ *Published as Custom Title!*\nID: \`${customRes.movieId}\`\nTitle: *${jobData.cleanTitle}*\nYou can reassign this anytime in the Admin Control Panel.`);
+            }
+            return NextResponse.json({ ok: true, customCreated: true });
+          } else {
+            await redis.del(lockKey);
+          }
+        }
+      }
+
+      return NextResponse.json({ ok: true, note: 'Callback query processed' });
+    }
 
     const message = update.message || update.edited_message;
     if (!message || (!message.text && !message.caption && !message.document && !message.video)) {
@@ -305,7 +476,7 @@ I deliver instant updates on your movie & TV requests and broken link reports.
     } else if (result.card) {
       await sendTelegramPhotoCard(chatId, result.card);
     } else {
-      await sendTelegramReply(chatId, result.replyText);
+      await sendTelegramReply(chatId, result.replyText, (result as any).replyMarkup);
     }
 
     return NextResponse.json({ ok: true, processed: result.success });

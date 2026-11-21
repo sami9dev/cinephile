@@ -3,7 +3,8 @@ import { getEnv } from '@/lib/env';
 import { timingSafeEqualStrings } from '@/lib/security';
 import { extractBearerToken, verifyFirebaseIdToken } from '@/lib/firebaseTokenVerifier';
 
-const SESSION_TTL_SECONDS = 24 * 60 * 60; // 24 hours
+export const ADMIN_COOKIE_NAME = 'cinephile_admin_session';
+export const SESSION_TTL_SECONDS = 24 * 60 * 60; // 24 hours
 
 /**
  * Derives the server-side signing secret for admin session tokens.
@@ -121,7 +122,7 @@ export async function verifyAdminSessionToken(token: string): Promise<{ valid: b
 /**
  * Checks if a given email is listed in the authorized admin emails environment variable.
  */
-function isAuthorizedAdminEmail(email?: string): boolean {
+export function isAuthorizedAdminEmail(email?: string): boolean {
   if (!email) return false;
   const cleanEmail = email.toLowerCase().trim();
   const configured = getEnv('ADMIN_EMAILS') || getEnv('ADMIN_EMAIL') || '';
@@ -137,53 +138,134 @@ function isAuthorizedAdminEmail(email?: string): boolean {
 }
 
 /**
- * Validates whether the incoming request is authorized to perform admin mutations.
- *
- * Supported verification methods:
- * 1. Server-signed HMAC admin session token (from `Authorization: Bearer <token>` or `x-admin-key: <token>`)
- * 2. Firebase ID token with custom claim `admin === true` or verified email in `ADMIN_EMAILS`
- * 3. Server-to-server secret key matching `ADMIN_SECRET_KEY` / `ADMIN_PASSWORD` via timing-safe comparison
- *
- * Strictly rejects:
- * - Missing or invalid credentials
- * - Hardcoded fallback passwords
- * - Non-admin users
+ * Helper to extract the session token from cookie, header, or bearer token.
  */
-export async function validateAdminAuth(req: NextRequest | Request): Promise<boolean> {
-  const headerKey = req.headers.get('x-admin-key');
+function extractTokenFromRequest(req: NextRequest | Request): {
+  cookieToken: string;
+  headerToken: string;
+} {
+  let cookieToken = '';
+  let headerToken = '';
+
+  // 1. Check Bearer Token in Authorization header
   const bearerToken = extractBearerToken(req);
-  const providedToken = (bearerToken || headerKey || '').trim();
+  if (bearerToken) headerToken = bearerToken.trim();
 
-  if (!providedToken) {
-    return false;
+  // 2. Check x-admin-key header
+  if (!headerToken) {
+    const headerKey = req.headers.get('x-admin-key');
+    if (headerKey) headerToken = headerKey.trim();
   }
 
-  // 1. Check Server-to-Server Admin Secret Key (Timing-safe comparison)
-  const configuredSecret = (getEnv('ADMIN_SECRET_KEY') || getEnv('ADMIN_PASSWORD') || '').trim();
-  if (configuredSecret && timingSafeEqualStrings(providedToken, configuredSecret)) {
-    return true;
+  // 3. Check NextRequest cookies
+  if ('cookies' in req && req.cookies && typeof req.cookies.get === 'function') {
+    const sessionCookie = req.cookies.get(ADMIN_COOKIE_NAME)?.value;
+    if (sessionCookie) cookieToken = sessionCookie.trim();
   }
 
-  // 2. Check HMAC-signed Admin Session Token (issued by /api/admin/auth)
-  if (providedToken.includes('.') && providedToken.split('.').length === 2) {
-    const sessionRes = await verifyAdminSessionToken(providedToken);
-    if (sessionRes.valid) {
-      return true;
+  // 4. Check raw Cookie header for standard Request objects safely
+  if (!cookieToken) {
+    try {
+      const cookieHeader = req.headers.get('cookie') || '';
+      if (cookieHeader) {
+        const match = cookieHeader.match(new RegExp(`(?:^|;\\s*)${ADMIN_COOKIE_NAME}=([^;]+)`));
+        if (match && match[1]) {
+          cookieToken = decodeURIComponent(match[1]).trim();
+        }
+      }
+    } catch {
+      // Ignore decode error and treat cookie as invalid
     }
   }
 
-  // 3. Check Firebase ID Token (Bearer RS256 with Google JWKS verification)
-  if (providedToken.includes('.') && providedToken.split('.').length === 3) {
-    try {
-      const claims = await verifyFirebaseIdToken(providedToken);
-      // Verify admin role via custom claim OR verified authorized admin email
-      if (claims.rawClaims?.admin === true || isAuthorizedAdminEmail(claims.email)) {
+  return { cookieToken, headerToken };
+}
+
+/**
+ * Validates whether the incoming request is authorized to perform admin mutations.
+ *
+ * Checks both HttpOnly cookie and header/bearer tokens so an expired or malformed
+ * header token does not prematurely reject a request with a valid cookie.
+ */
+export async function validateAdminAuth(req: NextRequest | Request): Promise<boolean> {
+  const { cookieToken, headerToken } = extractTokenFromRequest(req);
+  const candidateTokens = [cookieToken, headerToken].filter(Boolean);
+
+  if (candidateTokens.length === 0) {
+    return false;
+  }
+
+  const configuredSecret = (getEnv('ADMIN_SECRET_KEY') || getEnv('ADMIN_PASSWORD') || '').trim();
+
+  for (const token of candidateTokens) {
+    // 1. Check Server-to-Server Admin Secret Key (Timing-safe comparison)
+    if (configuredSecret && timingSafeEqualStrings(token, configuredSecret)) {
+      return true;
+    }
+
+    // 2. Check HMAC-signed Admin Session Token (issued by /api/admin/auth/login)
+    if (token.includes('.') && token.split('.').length === 2) {
+      const sessionRes = await verifyAdminSessionToken(token);
+      if (sessionRes.valid) {
         return true;
       }
-    } catch {
-      // Invalid Firebase token signature or expired
+    }
+
+    // 3. Check Firebase ID Token (Bearer RS256 with Google JWKS verification)
+    if (token.includes('.') && token.split('.').length === 3) {
+      try {
+        const claims = await verifyFirebaseIdToken(token);
+        if (claims.rawClaims?.admin === true || isAuthorizedAdminEmail(claims.email)) {
+          return true;
+        }
+      } catch {
+        // Continue to test other candidate tokens
+      }
     }
   }
 
   return false;
+}
+
+/**
+ * Returns admin session details (subject identity and authorized status)
+ */
+export async function getAdminSessionDetails(req: NextRequest | Request): Promise<{
+  authorized: boolean;
+  subject?: string;
+  role?: string;
+}> {
+  const { cookieToken, headerToken } = extractTokenFromRequest(req);
+  const candidateTokens = [cookieToken, headerToken].filter(Boolean);
+
+  if (candidateTokens.length === 0) {
+    return { authorized: false };
+  }
+
+  const configuredSecret = (getEnv('ADMIN_SECRET_KEY') || getEnv('ADMIN_PASSWORD') || '').trim();
+  const configuredUser = (getEnv('ADMIN_USER') || getEnv('ADMIN_USERNAME') || 'master-admin').trim();
+
+  for (const token of candidateTokens) {
+    if (configuredSecret && timingSafeEqualStrings(token, configuredSecret)) {
+      return { authorized: true, subject: configuredUser, role: 'admin' };
+    }
+
+    if (token.includes('.') && token.split('.').length === 2) {
+      const sessionRes = await verifyAdminSessionToken(token);
+      if (sessionRes.valid) {
+        return { authorized: true, subject: sessionRes.subject || 'master-admin', role: 'admin' };
+      }
+    }
+
+    if (token.includes('.') && token.split('.').length === 3) {
+      try {
+        const claims = await verifyFirebaseIdToken(token);
+        if (claims.rawClaims?.admin === true || isAuthorizedAdminEmail(claims.email)) {
+          return { authorized: true, subject: claims.email || claims.firebaseUid, role: 'admin' };
+        }
+      } catch {}
+    }
+  }
+
+  return { authorized: false };
 }

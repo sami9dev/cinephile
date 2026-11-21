@@ -4,6 +4,9 @@ import { timingSafeEqualStrings } from '@/lib/security';
 import {
   validateAdminAuth,
   createAdminSessionToken,
+  getAdminSessionDetails,
+  ADMIN_COOKIE_NAME,
+  SESSION_TTL_SECONDS,
 } from '@/lib/adminAuth';
 import { verifyFirebaseIdToken } from '@/lib/firebaseTokenVerifier';
 
@@ -11,12 +14,12 @@ export const dynamic = 'force-dynamic';
 
 /**
  * GET /api/admin/auth
- * Validates the currently supplied admin token.
+ * Validates the currently supplied admin token (via HttpOnly cookie or Authorization header).
  */
 export async function GET(req: NextRequest) {
   try {
-    const isAuthorized = await validateAdminAuth(req);
-    if (!isAuthorized) {
+    const session = await getAdminSessionDetails(req);
+    if (!session.authorized) {
       return NextResponse.json(
         { success: false, authenticated: false, error: 'Unauthorized: invalid or expired admin credentials' },
         { status: 401 }
@@ -26,6 +29,10 @@ export async function GET(req: NextRequest) {
       success: true,
       authenticated: true,
       role: 'admin',
+      user: {
+        identifier: session.subject || 'master-admin',
+        role: 'admin',
+      },
     });
   } catch (error: any) {
     console.error('API /api/admin/auth GET error:', error);
@@ -42,12 +49,14 @@ export async function GET(req: NextRequest) {
  * 1. Admin username & password (verified strictly on the server against server env)
  * 2. Firebase ID token (with admin custom claim or authorized email)
  *
- * Issues a cryptographically signed HMAC admin session token upon success.
+ * Sets HttpOnly Secure SameSite=Strict session cookie and returns token in response body.
  */
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
     const { username, password, idToken } = body;
+
+    let userIdentifier = '';
 
     // 1. Firebase ID Token Login
     if (idToken && typeof idToken === 'string') {
@@ -70,25 +79,15 @@ export async function POST(req: NextRequest) {
           );
         }
 
-        const sessionToken = await createAdminSessionToken(claims.email || claims.firebaseUid);
-        return NextResponse.json({
-          success: true,
-          token: sessionToken,
-          user: {
-            identifier: claims.email || claims.firebaseUid,
-            role: 'admin',
-          },
-        });
+        userIdentifier = claims.email || claims.firebaseUid;
       } catch (tokenErr: any) {
         return NextResponse.json(
           { success: false, error: 'Unauthorized: Invalid Firebase ID token', details: tokenErr.message },
           { status: 401 }
         );
       }
-    }
-
-    // 2. Admin Username & Password Login
-    if (username && password) {
+    } else if (username && password) {
+      // 2. Admin Username & Password Login
       const cleanUser = String(username).trim().toLowerCase();
       const cleanPass = String(password).trim();
 
@@ -105,28 +104,46 @@ export async function POST(req: NextRequest) {
       const isUserMatch = timingSafeEqualStrings(cleanUser, expectedUser);
       const isPassMatch = timingSafeEqualStrings(cleanPass, configuredPass);
 
-      if (isUserMatch && isPassMatch) {
-        const sessionToken = await createAdminSessionToken(cleanUser);
-        return NextResponse.json({
-          success: true,
-          token: sessionToken,
-          user: {
-            identifier: cleanUser,
-            role: 'admin',
-          },
-        });
+      if (!isUserMatch || !isPassMatch) {
+        return NextResponse.json(
+          { success: false, error: 'Invalid administrator username or password' },
+          { status: 401 }
+        );
       }
 
+      userIdentifier = cleanUser;
+    } else {
       return NextResponse.json(
-        { success: false, error: 'Invalid administrator username or password' },
-        { status: 401 }
+        { success: false, error: 'Username and password or Firebase ID token required' },
+        { status: 400 }
       );
     }
 
-    return NextResponse.json(
-      { success: false, error: 'Username and password or Firebase ID token required' },
-      { status: 400 }
-    );
+    // Generate cryptographic HMAC-SHA256 session token
+    const sessionToken = await createAdminSessionToken(userIdentifier);
+
+    // Build response with secure session cookie
+    const response = NextResponse.json({
+      success: true,
+      token: sessionToken,
+      user: {
+        identifier: userIdentifier,
+        role: 'admin',
+      },
+    });
+
+    const isProd = process.env.NODE_ENV === 'production';
+    response.cookies.set({
+      name: ADMIN_COOKIE_NAME,
+      value: sessionToken,
+      httpOnly: true,
+      secure: isProd,
+      sameSite: 'strict',
+      path: '/',
+      maxAge: SESSION_TTL_SECONDS,
+    });
+
+    return response;
   } catch (error: any) {
     console.error('API /api/admin/auth POST error:', error);
     return NextResponse.json(
@@ -134,4 +151,27 @@ export async function POST(req: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+/**
+ * DELETE /api/admin/auth
+ * Clears the HttpOnly admin session cookie (logout).
+ */
+export async function DELETE() {
+  const response = NextResponse.json({
+    success: true,
+    message: 'Logged out successfully',
+  });
+
+  response.cookies.set({
+    name: ADMIN_COOKIE_NAME,
+    value: '',
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'strict',
+    path: '/',
+    maxAge: 0,
+  });
+
+  return response;
 }

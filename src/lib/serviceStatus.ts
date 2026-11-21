@@ -128,17 +128,15 @@ async function fetchWithTimeout(
   options: RequestInit = {},
   timeoutMs: number = CHECK_TIMEOUT_MS
 ): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(url, {
-      ...options,
-      signal: controller.signal,
-      cache: 'no-store',
-    });
-  } finally {
-    clearTimeout(timer);
-  }
+  const signal = options.signal
+    ? AbortSignal.any([options.signal, AbortSignal.timeout(timeoutMs)])
+    : AbortSignal.timeout(timeoutMs);
+
+  return await fetch(url, {
+    ...options,
+    signal,
+    cache: 'no-store',
+  });
 }
 
 function recordResult(

@@ -29,7 +29,7 @@ export const BUILTIN_CURATED_LINKS: Record<number, CustomLink[]> = {};
  * 2. LocalStorage global custom links added by Admin
  * (NO fake or auto-generated search links!)
  */
-export function getConsolidatedCustomLinks(titleId: number, watchlistCustomLinks?: CustomLink[]): CustomLink[] {
+export function getConsolidatedCustomLinks(titleId: number | string, watchlistCustomLinks?: CustomLink[]): CustomLink[] {
   const linksMap = new Map<string, CustomLink>();
   let deletedIds = new Set<string>();
 
@@ -45,7 +45,7 @@ export function getConsolidatedCustomLinks(titleId: number, watchlistCustomLinks
   }
 
   // 1. Built-in curated links (only if not deleted by Admin)
-  const builtin = BUILTIN_CURATED_LINKS[titleId] || [];
+  const builtin = BUILTIN_CURATED_LINKS[Number(titleId)] || [];
   builtin.forEach((l) => {
     if (!deletedIds.has(l.id)) {
       linksMap.set(l.id, l);
@@ -58,7 +58,7 @@ export function getConsolidatedCustomLinks(titleId: number, watchlistCustomLinks
       const stored = safeGetLocalStorage('cinefuel_custom_links');
       if (stored) {
         const parsed = JSON.parse(stored);
-        const forTitle = parsed[String(titleId)] || parsed[titleId];
+        const forTitle = parsed[String(titleId)] || parsed[Number(titleId)];
         if (Array.isArray(forTitle)) {
           forTitle.forEach((l: CustomLink) => {
             if (!deletedIds.has(l.id)) {
@@ -108,7 +108,7 @@ export async function syncServerLinks(movieId?: number): Promise<void> {
 /**
  * Save a new custom link into global storage (Admin only)
  */
-export function saveGlobalCustomLink(movieId: number, link: CustomLink, metadata?: Record<string, any>): void {
+export function saveGlobalCustomLink(movieId: number | string, link: CustomLink, metadata?: Record<string, any>): void {
   if (typeof window === 'undefined') return;
   try {
     const stored = safeGetLocalStorage('cinefuel_custom_links');
@@ -145,7 +145,7 @@ export function saveGlobalCustomLink(movieId: number, link: CustomLink, metadata
 /**
  * Save multiple custom links in a single atomic batch (Admin only)
  */
-export function saveMultipleGlobalCustomLinks(movieId: number, newLinks: CustomLink[], metadata?: Record<string, any>): void {
+export function saveMultipleGlobalCustomLinks(movieId: number | string, newLinks: CustomLink[], metadata?: Record<string, any>): void {
   if (typeof window === 'undefined' || !newLinks || newLinks.length === 0) return;
   try {
     const stored = safeGetLocalStorage('cinefuel_custom_links');
@@ -184,7 +184,7 @@ export function saveMultipleGlobalCustomLinks(movieId: number, newLinks: CustomL
 /**
  * Update an existing custom link (Admin only)
  */
-export function updateGlobalCustomLink(movieId: number, updatedLink: CustomLink): void {
+export function updateGlobalCustomLink(movieId: number | string, updatedLink: CustomLink): void {
   if (typeof window === 'undefined') return;
   try {
     const stored = safeGetLocalStorage('cinefuel_custom_links');
@@ -236,7 +236,7 @@ export function getDeletedLinkIds(): Set<string> {
 /**
  * Delete a custom link permanently (Admin only)
  */
-export async function deleteGlobalCustomLink(movieId: number, linkId: string): Promise<void> {
+export async function deleteGlobalCustomLink(movieId: number | string, linkId: string): Promise<void> {
   if (typeof window === 'undefined') return;
   try {
     // 1. Mark as deleted in deleted links registry
@@ -299,7 +299,7 @@ export async function deleteGlobalCustomLink(movieId: number, linkId: string): P
 /**
  * Batch delete multiple custom links permanently (Admin only)
  */
-export async function deleteMultipleGlobalCustomLinks(items: Array<{ movieId: number; linkId: string }>): Promise<void> {
+export async function deleteMultipleGlobalCustomLinks(items: Array<{ movieId: number | string; linkId: string }>): Promise<void> {
   if (typeof window === 'undefined' || !items.length) return;
   try {
     const linkIds = items.map((i) => i.linkId);

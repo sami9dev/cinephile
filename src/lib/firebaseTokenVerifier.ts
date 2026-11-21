@@ -121,7 +121,7 @@ async function getGoogleJwks(): Promise<Record<string, JWKKey>> {
     if (Object.keys(cachedGoogleKeys).length > 0) {
       return cachedGoogleKeys;
     }
-    throw new Error(`Google JWKS unavailable: ${err.message}`);
+    throw new Error(`Google JWKS unavailable: ${err.message}`, { cause: err });
   }
 }
 
@@ -236,7 +236,7 @@ export async function verifyFirebaseIdToken(token: string): Promise<VerifiedFire
       ['verify']
     );
   } catch (err: any) {
-    throw new Error(`Failed to import public JWK key: ${err.message}`);
+    throw new Error(`Failed to import public JWK key: ${err.message}`, { cause: err });
   }
 
   const signedData = new TextEncoder().encode(`${headerB64}.${payloadB64}`);

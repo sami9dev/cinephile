@@ -33,8 +33,8 @@ interface WatchlistContextType {
   setPersonalRating: (id: number, rating: number, review?: string) => void;
   getItem: (id: number) => WatchlistItem | undefined;
   isItemInWatchlist: (id: number) => boolean;
-  addCustomLink: (titleId: number, link: Omit<CustomLink, 'id' | 'createdAt'>) => void;
-  removeCustomLink: (titleId: number, linkId: string) => void;
+  addCustomLink: (titleId: number | string, link: Omit<CustomLink, 'id' | 'createdAt'>) => void;
+  removeCustomLink: (titleId: number | string, linkId: string) => void;
   updateSettings: (settings: Partial<AppSettings>) => void;
 }
 
@@ -195,7 +195,7 @@ export const WatchlistProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return watchlist.some((i) => i.id === id);
   };
 
-  const addCustomLink = (titleId: number, link: Omit<CustomLink, 'id' | 'createdAt'>) => {
+  const addCustomLink = (titleId: number | string, link: Omit<CustomLink, 'id' | 'createdAt'>) => {
     const newLink: CustomLink = {
       ...link,
       id: `link-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
@@ -203,10 +203,10 @@ export const WatchlistProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     };
 
     setWatchlist((prev) => {
-      const existing = prev.find((i) => i.id === titleId);
+      const existing = prev.find((i) => String(i.id) === String(titleId));
       if (existing) {
         return prev.map((item) => {
-          if (item.id === titleId) {
+          if (String(item.id) === String(titleId)) {
             return {
               ...item,
               customLinks: [...(item.customLinks || []), newLink],
@@ -219,10 +219,10 @@ export const WatchlistProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     });
   };
 
-  const removeCustomLink = (titleId: number, linkId: string) => {
+  const removeCustomLink = (titleId: number | string, linkId: string) => {
     setWatchlist((prev) =>
       prev.map((item) => {
-        if (item.id === titleId) {
+        if (String(item.id) === String(titleId)) {
           return {
             ...item,
             customLinks: (item.customLinks || []).filter((l) => l.id !== linkId),

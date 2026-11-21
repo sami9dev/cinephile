@@ -542,11 +542,8 @@ export async function fetchHubCloudPageMetadata(
   timeoutMs: number = 7000
 ): Promise<{ filename: string | null; fileSize: string | null; pageTitle: string | null }> {
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-
     const res = await fetch(url, {
-      signal: controller.signal,
+      signal: AbortSignal.timeout(timeoutMs),
       headers: {
         'User-Agent':
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -554,7 +551,6 @@ export async function fetchHubCloudPageMetadata(
         'Accept-Language': 'en-US,en;q=0.9',
       },
     });
-    clearTimeout(timer);
 
     if (!res.ok) {
       return { filename: null, fileSize: null, pageTitle: null };
