@@ -472,34 +472,43 @@ function extractBlockMetadata(text, fallbackUrl, forcedMode = null) {
   // Strip emojis, pictographs, and decorative channel bullets from text
   const textWithoutEmojis = cleanText.replace(/[\p{Extended_Pictographic}\uFE0F\u200D]/gu, ' ');
 
+  // Detect leading year at start of text e.g. "2007.Wrong.Turn.2..." or "(2007) Wrong Turn..."
+  let leadingYear = null;
+  let textForTitle = textWithoutEmojis;
+  const leadYMatch = textWithoutEmojis.match(/^[\s(\[]*((?:19|20)\d{2})[\s)\]._-]+([a-zA-Z].*)$/i);
+  if (leadYMatch) {
+    leadingYear = parseInt(leadYMatch[1], 10);
+    textForTitle = leadYMatch[2];
+  }
+
   let titleForSearch = '';
   // Rule A: If TV Season/Episode marker present, everything BEFORE it is the show title!
-  const sMarker = textWithoutEmojis.match(/^(.*?)(?:[\s._\-[\]()]s0*\d{1,3}|[\s._\-[\]()]season[\s._-]?\d{1,3}|[\s._\-[\]()]e0*\d{1,4}|[\s._\-[\]()](?:ep|episode)[\s._-]?\d{1,4}|[\s._\-[\]()]\d{1,3}x\d{1,4})/i);
+  const sMarker = textForTitle.match(/^(.*?)(?:[\s._\-[\]()]s0*\d{1,3}|[\s._\-[\]()]season[\s._-]?\d{1,3}|[\s._\-[\]()]e0*\d{1,4}|[\s._\-[\]()](?:ep|episode)[\s._-]?\d{1,4}|[\s._\-[\]()]\d{1,3}x\d{1,4})/i);
   if (sMarker && sMarker[1].trim().length >= 2) {
     titleForSearch = sMarker[1]
       .replace(/\b(19\d\d|20\d\d)\b/g, '')
       .replace(/[\(\)\[\]\{\}\-_.:|•+~#*@/\\=]/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
-  } else if (year) {
-    // Rule B: If movie with Year, everything BEFORE the year is the movie title!
-    const yMarker = textWithoutEmojis.match(/^(.*?)(?:[\s._\-[\]()]|\b)(19\d\d|20\d\d)\b/i);
+  } else if (year || leadingYear) {
+    // Rule B: If movie with Year, everything BEFORE trailing year, dimensions, or resolution marker is the movie title!
+    const yMarker = textForTitle.match(/^(.*?)(?:[\s._\-[\]()]|\b)(?:19\d\d|20\d\d|\d{3,4}[xX]\d{3,4}|2160p|4K|1080p|720p|480p|BluRay|BDRip|REMUX)\b/i);
     if (yMarker && yMarker[1].trim().length >= 2) {
       titleForSearch = yMarker[1].replace(/[\(\)\[\]\{\}\-_.:|•+~#*@/\\=]/g, ' ').replace(/\s+/g, ' ').trim();
     }
   }
 
   if (!titleForSearch) {
-    titleForSearch = explicitTitle || textWithoutEmojis;
+    titleForSearch = explicitTitle || textForTitle;
     titleForSearch = titleForSearch.replace(/\b(19\d\d|20\d\d)\b/g, '');
     titleForSearch = titleForSearch.replace(/\bs\d{1,3}(?:\s*e\d{1,4})?\b/gi, '');
     titleForSearch = titleForSearch.replace(/\b(?:season|episode|ep)[\s._-]?\d{1,4}\b/gi, '');
     titleForSearch = titleForSearch.replace(/\b(?:director'?s\s*cut|extended(?:\s*cut)?|theatrical(?:\s*cut)?|unrated|remastered)\b/gi, '');
     titleForSearch = titleForSearch.replace(/\b(?:complete|zip\s*pack|zip|pack|batch)\b/gi, '');
-    titleForSearch = titleForSearch.replace(/\b(?:2160p|4k|1080p|720p|480p|uhd|fhd|hd|sd)\b/gi, '');
+    titleForSearch = titleForSearch.replace(/\b(?:\d{3,4}[xX]\d{3,4}|2160p|4k|1080p|720p|480p|uhd|fhd|hd|sd)\b/gi, '');
     titleForSearch = titleForSearch.replace(/\b(?:remux|bluray|blu-ray|web-dl|webrip|web|hdtv|bdrip|dsnp|nf|amzn)\b/gi, '');
     titleForSearch = titleForSearch.replace(/\b(?:hdr10\+|hdr10|hdr|dv|dolby\s*vision|10bit|hevc|x265|x264|h264|h265)\b/gi, '');
-    titleForSearch = titleForSearch.replace(/\b(?:esubs?|mkv|mp4|avi|king-bhdstudio|dtins|r3fl3x|h0ne|hybrid)\b/gi, '');
+    titleForSearch = titleForSearch.replace(/\b(?:esubs?|mkv|mp4|avi|king-bhdstudio|dtins|r3fl3x|h0ne|hybrid|4khdhub|hdhub4u)\b/gi, '');
     titleForSearch = titleForSearch.replace(/[\(\)\[\]\{\}\-_.:|•+~#*@/\\=]/g, ' ').replace(/\s+/g, ' ').trim();
   }
 

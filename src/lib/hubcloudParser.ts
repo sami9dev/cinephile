@@ -196,9 +196,17 @@ export function parseHubCloudTitle(rawInput: string): HubCloudParsedResult {
   working = working.replace(/^(\[[^\]]+\]|\([^)]+\))[\s._-]*/i, '');
   working = working.replace(/\b(Olamovies|UHDMovies|HDHub4u|VegaMovies|KatmovieHD|Pahe)\.[a-z]{2,5}\b/gi, '');
 
+  // 3b. Detect and extract leading Year e.g. "2007.Wrong.Turn.2-..." or "(2007) Wrong Turn..."
+  let leadingYear: number | null = null;
+  const leadingYearMatch = working.match(/^[\s(\[]*((?:19|20)\d{2})[\s)\]._-]+([a-zA-Z].*)$/i);
+  if (leadingYearMatch) {
+    leadingYear = parseInt(leadingYearMatch[1], 10);
+    working = leadingYearMatch[2].trim();
+  }
+
   // 4. ANCHOR SPLIT: Separate Movie Title from Technical Specs
-  // Matches first (Year), Season/Episode (S01 / S01E01), or Resolution (2160p/1080p/720p)
-  const anchorRegex = /\b((?:19|20)\d{2}|S\d{1,2}(?:E\d{1,3})?|Season\s*\d+|2160p|4K|UHD|1080p|720p|480p)\b/i;
+  // Matches first (Year), Season/Episode (S01 / S01E01), Dimensions (1920x1080), or Resolution (2160p/1080p/720p)
+  const anchorRegex = /\b((?:19|20)\d{2}|S\d{1,2}(?:E\d{1,3})?|Season\s*\d+|\d{3,4}[xX]\d{3,4}|2160p|4K|UHD|1080p|720p|480p)\b/i;
   const anchorMatch = working.match(anchorRegex);
 
   let cleanMovieTitle = working;
@@ -222,7 +230,7 @@ export function parseHubCloudTitle(rawInput: string): HubCloudParsedResult {
 
   // 5. Extract Year and Season/Episode from the anchor region
   const yearMatch = specsPart.match(/\b((?:19|20)\d{2})\b/);
-  const year = yearMatch ? parseInt(yearMatch[1], 10) : null;
+  const year = yearMatch ? parseInt(yearMatch[1], 10) : (leadingYear || null);
 
   const seMatch = specsPart.match(/\b(S\d{1,2}(?:E\d{1,3}(?:-?E?\d{1,3})?)?|Season\s*\d+(?:\s*Complete)?)\b/i);
   const seasonEpisode = seMatch ? seMatch[1].toUpperCase() : null;
@@ -235,9 +243,9 @@ export function parseHubCloudTitle(rawInput: string): HubCloudParsedResult {
 
   // 6. Resolution
   let resolution: HubCloudParsedResult['resolution'] = 'Unknown';
-  if (/\b(2160P|4K|UHD)\b/i.test(cleanSpecs)) { resolution = '4K UHD'; score += 45; }
-  else if (/\b(1080P|FHD)\b/i.test(cleanSpecs)) { resolution = '1080p FHD'; score += 30; }
-  else if (/\b(720P)\b/i.test(cleanSpecs)) { resolution = '720p HD'; score += 15; }
+  if (/\b(2160P|4K|UHD|3840[xX]2160)\b/i.test(cleanSpecs)) { resolution = '4K UHD'; score += 45; }
+  else if (/\b(1080P|FHD|1920[xX]1080)\b/i.test(cleanSpecs)) { resolution = '1080p FHD'; score += 30; }
+  else if (/\b(720P|HD|1280[xX]720)\b/i.test(cleanSpecs)) { resolution = '720p HD'; score += 15; }
   else if (/\b(480P|576P)\b/i.test(cleanSpecs)) { resolution = '480p SD'; score += 5; }
 
   // 7. Source Type

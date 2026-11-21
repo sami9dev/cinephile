@@ -109,6 +109,7 @@ async function resolveTmdbMedia(params: {
   // 0. Check Canonical dictionary first (instant & resilient offline/ISP-safe)
   const canonicalCandidate = (tmdbId && resolveCanonicalMedia(tmdbId)) ||
     (imdbId && resolveCanonicalMedia(imdbId)) ||
+    (titleQuery && year && resolveCanonicalMedia(`${titleQuery} ${year}`)) ||
     (titleQuery && resolveCanonicalMedia(titleQuery));
 
   if (canonicalCandidate) {
@@ -545,9 +546,11 @@ export async function processTelegramIngestion(
       cleanTitleForCheck === 'join channel' ||
       /^(?:direct\s*)?hubcloud(?:\s*links?)?$/i.test(cleanTitleForCheck);
 
+    // If multiple movie clusters are present in one submission, do not inherit a single global TMDB/IMDb ID across distinct titles!
+    const isMultiCluster = clusterMap.size > 1;
     const tmdb = await resolveTmdbMedia({
-      imdbId: sanitized.imdbId,
-      tmdbId: sanitized.tmdbId,
+      imdbId: !isMultiCluster ? sanitized.imdbId : null,
+      tmdbId: !isMultiCluster ? sanitized.tmdbId : null,
       titleQuery: searchTitle,
       year: searchYear,
       mediaTypeHint: isTvHint ? 'tv' : 'movie',

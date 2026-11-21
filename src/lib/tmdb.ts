@@ -656,7 +656,7 @@ export async function getPersonDetails(id: number | string): Promise<PersonDetai
 
 export function cleanTitleString(raw?: string): string {
   if (!raw) return 'Featured Title';
-  const trimmed = raw.trim();
+  let trimmed = raw.trim();
   // If the string starts with a URL protocol, domain, or contains ://, it is NEVER a title
   if (
     /^https?:\/\//i.test(trimmed) ||
@@ -665,13 +665,20 @@ export function cleanTitleString(raw?: string): string {
   ) {
     return '';
   }
+
+  // Strip leading year if present e.g. "2007.Wrong.Turn.2..." or "(2007) Wrong Turn..."
+  const leadY = trimmed.match(/^[\s(\[]*(?:19|20)\d{2}[\s)\]._-]+([a-zA-Z].*)$/i);
+  if (leadY) {
+    trimmed = leadY[1];
+  }
+
   return trimmed
     .replace(/^Name\s*:\s*/i, '')
     .replace(/\.S\d{1,2}(?:E\d{1,2})?.*$/i, '')
     .replace(/\s+S\d{1,2}(?:E\d{1,2})?.*$/i, '')
     .replace(/Season\s*\d+.*$/i, '')
-    .replace(/(?:2160p|1080p|720p|480p|BluRay|WEB-DL|REMUX|HDR|DV|Dovi|HEVC|x264|x265|DDP\d\.\d|AAC).*$/i, '')
-    .replace(/HUBCLOUD.*$/i, '')
+    .replace(/(?:\d{3,4}[xX]\d{3,4}|2160p|1080p|720p|480p|BluRay|BDRip|BRRip|WEB-DL|WEBRip|REMUX|HDR|DV|Dovi|HEVC|x264|x265|DDP\d\.\d|AAC).*$/i, '')
+    .replace(/(?:4khdhub|hdhub4u|HUBCLOUD).*$/i, '')
     .replace(/\[.*?\]/g, '')
     .replace(/\./g, ' ')
     .trim();
