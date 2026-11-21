@@ -450,20 +450,27 @@ I deliver instant updates on your movie & TV requests and broken link reports.
         senderName: message.from?.first_name || 'Admin',
       });
 
-      if (ingestRes.success && ingestRes.htmlCard) {
-        await sendTelegramPhotoCard(chatId, {
-          photoUrl: ingestRes.htmlCard.photoUrl,
-          title: ingestRes.movie?.title || 'Release',
-          year: ingestRes.movie?.year,
-          mediaType: ingestRes.movie?.mediaType,
-          movieId: ingestRes.movie?.id,
-          rating: ingestRes.movie?.rating,
-          genres: ingestRes.movie?.genres,
-          outline: ingestRes.movie?.overview,
-          pageUrl: ingestRes.movie?.pageUrl,
-          rawCaption: ingestRes.htmlCard.caption,
-        });
-        return NextResponse.json({ ok: true, processed: true, ingestion: ingestRes });
+      if (ingestRes.success) {
+        if (ingestRes.cards && ingestRes.cards.length > 0) {
+          for (const card of ingestRes.cards) {
+            await sendTelegramPhotoCard(chatId, card);
+          }
+          return NextResponse.json({ ok: true, processed: true, ingestion: ingestRes });
+        } else if (ingestRes.htmlCard) {
+          await sendTelegramPhotoCard(chatId, {
+            photoUrl: ingestRes.htmlCard.photoUrl,
+            title: ingestRes.movie?.title || 'Release',
+            year: ingestRes.movie?.year,
+            mediaType: ingestRes.movie?.mediaType,
+            movieId: ingestRes.movie?.id,
+            rating: ingestRes.movie?.rating,
+            genres: ingestRes.movie?.genres,
+            outline: ingestRes.movie?.overview,
+            pageUrl: ingestRes.movie?.pageUrl,
+            rawCaption: ingestRes.htmlCard.caption,
+          });
+          return NextResponse.json({ ok: true, processed: true, ingestion: ingestRes });
+        }
       }
     }
 

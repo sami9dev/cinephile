@@ -2555,9 +2555,16 @@ I will auto-sense the Season number, quality, audio, and publish it under the Se
 
       const result = await apiRes?.json();
 
-      if (result && result.success && result.htmlCard) {
-        await sendHtmlIngestionCard(chatId, result.htmlCard, result.replySummary);
-        return;
+      if (result && result.success) {
+        if (result.cards && result.cards.length > 0) {
+          for (const card of result.cards) {
+            await sendHtmlIngestionCard(chatId, card, card.caption);
+          }
+          return;
+        } else if (result.htmlCard) {
+          await sendHtmlIngestionCard(chatId, result.htmlCard, result.replySummary);
+          return;
+        }
       } else if (result && result.error && !result.success) {
         console.warn('Ingestion pipeline reported note:', result.error);
         if (hasDocOrVideo) {
