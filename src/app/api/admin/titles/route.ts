@@ -139,18 +139,31 @@ export async function POST(req: NextRequest) {
   try {
     const session = await getAdminSessionDetails(req);
     const body = await req.json().catch(() => ({}));
-    const { movieId, updates } = body;
+    const targetId = body.movieId || body.titleId || body.id;
+    const updates = body.updates || {
+      title: body.title,
+      year: body.year,
+      overview: body.overview,
+    };
 
-    if (!movieId || !updates) {
-      return NextResponse.json({ error: 'movieId and updates are required' }, { status: 400 });
+    if (!targetId || !updates) {
+      return NextResponse.json({ error: 'movieId/titleId and updates are required' }, { status: 400 });
     }
 
-    const res = await dualWriteUpdateMetadata(movieId, updates, session.subject);
+    const res = await dualWriteUpdateMetadata(targetId, updates, session.subject);
     return NextResponse.json(res, { status: res.success ? 200 : 400 });
   } catch (error: any) {
     console.error('API /api/admin/titles POST error:', error);
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
+}
+
+/**
+ * PATCH /api/admin/titles
+ * Alias to POST for partial title metadata updates.
+ */
+export async function PATCH(req: NextRequest) {
+  return POST(req);
 }
 
 /**
@@ -165,15 +178,17 @@ export async function DELETE(req: NextRequest) {
   try {
     const session = await getAdminSessionDetails(req);
     const body = await req.json().catch(() => ({}));
-    const { movieId, reason, titleHint } = body;
+    const targetId = body.movieId || body.titleId || body.id;
+    const reason = body.reason || 'Administrative Purge';
+    const titleHint = body.titleHint || body.title;
 
-    if (!movieId) {
-      return NextResponse.json({ error: 'movieId is required' }, { status: 400 });
+    if (!targetId) {
+      return NextResponse.json({ error: 'movieId or titleId is required' }, { status: 400 });
     }
 
     const res = await dualWriteDeleteEntireTitle(
-      movieId,
-      reason || 'Administrative Purge',
+      targetId,
+      reason,
       session.subject || 'master-admin',
       titleHint
     );

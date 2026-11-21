@@ -652,21 +652,30 @@ export default function AdminDashboard({
     }
     setIsPurgingTitle(true);
     try {
+      const targetId = safePurgeTarget.id || safePurgeTarget.movieId;
       const res = await fetch('/api/admin/titles', {
         method: 'DELETE',
         headers: getAdminAuthHeaders(),
         body: JSON.stringify({
-          titleId: safePurgeTarget.id,
+          movieId: targetId,
+          titleId: targetId,
           reason: safePurgeReason.trim(),
+          titleHint: safePurgeTarget.title,
         }),
       });
-      if (!res.ok) throw new Error('Safe purge API failed');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Safe purge API failed');
+      }
 
       addAuditEntry(
         'TITLE_PURGE',
-        `${safePurgeTarget.title} (TMDB #${safePurgeTarget.id})`,
+        `${safePurgeTarget.title} (TMDB #${targetId})`,
         `Purged title & ${safePurgeTarget.linksCount || 0} links from Supabase & Upstash Redis. Reason: "${safePurgeReason.trim()}". Logged to audit_title_deletions.`
       );
+
+      // Optimistically remove from titles state
+      setLinkedCatalogTitles((prev) => prev.filter((t) => String(t.id) !== String(targetId) && String(t.movieId) !== String(targetId)));
 
       showAdminToast('Title Safely Purged', `Deleted "${safePurgeTarget.title}" and recorded immutable audit log.`, 'rose');
       setSafePurgeTarget(null);
